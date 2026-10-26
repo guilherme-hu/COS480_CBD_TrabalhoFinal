@@ -1,2 +1,2 @@
-# COS480_Constru-o-de-Banco-de-Dados
+# COS480_CBD_TrabalhoFinal
 Trabalho final da disciplina de Construção de Banco de Dados
