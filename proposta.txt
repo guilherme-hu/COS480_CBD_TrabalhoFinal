@@ -1,0 +1,413 @@
+Avaliação 2 – Indexação e Processamento de Consultas
+Universidade Federal do Rio de Janeiro
+
+             Disciplina                            Construção de Banco de Dados - 2026.2
+
+             Professor                           Milton R. Ramirez
+
+             Trabalho                             Avaliação 2 – Indexação e Processamento de Consultas
+
+             Prazo de entrega             22 de novembro de 2026
+
+ 
+
+O trabalho consiste em construir, com auxílio de IA, uma bancada de teste para avaliação do desempenho do processamento de operações relacionais. A bancada deve permitir a análise comparativa entre as diversas possibilidades de organização primária dos arquivos de dados, de utilização de índices (métodos de acesso) e de configuração da gerência do buffer pool, tendo como medida principal o número de blocos transferidos entre memória secundária e buffer pool. A pergunta a ser respondida neste trabalho é: quais as configurações físicas do SBD são as mais adequadas (processamento eficiente) para cada carga de trabalho e tipo de base de dados?
+
+1. Arquitetura sugerida
+Sugerimos o desenvolvimento da bancada de teste em quatro camadas, cada uma servindo-se apenas da interface da camada imediatamente inferior, como descrito a seguir.
+
+1.       Driver de experimentos: gera ou carrega a base de dados, instancia cada configuração a ser avaliada, executa a carga de operações, coleta os contadores e registra os resultados em formato tabular (CSV, por exemplo).
+
+2.       Mini Monitor de Execução: biblioteca de primitivas de avaliação, uma por algoritmo de operação relacional, invocadas com o caminho de acesso escolhido explicitamente pelo experimento. Não há processador de SQL, otimizador nem geração de plano de execução; os algoritmos são justamente o objeto da comparação.
+
+3.       Gerente de Armazenamento: oferece as organizações primárias dos arquivos de registros e os métodos de acesso auxiliares, e mantém o catálogo (dicionário de dados) com o esquema de cada tabela, sua organização e seus índices.
+
+4.       Gerente de Arquivos e Gerente de Buffer Pool: o primeiro realiza as transferências de blocos com o disco simulado; o segundo é o caminho pelo qual as camadas superiores obtêm páginas em memória.
+
+Para que as contagens sejam comparáveis entre configurações, recomenda-se que nenhuma camada acima do Gerente de Buffer Pool acesse blocos diretamente.
+
+2. Gerente de Arquivos e Gerente de Buffer Pool
+2.1 Gerente de Arquivos
+O disco pode ser simulado por arquivos do sistema operacional divididos em blocos de tamanho fixo. O grupo deve especificar:
+
+•         o tamanho do bloco e a técnica de alocação de blocos do arquivo (contígua, encadeada, por extents ou indexada);
+
+•         a estrutura do cabeçalho do arquivo (descritor) e a gerência de blocos livres;
+
+•         os contadores de leituras e gravações físicas, por arquivo e globais, distinguindo, se conveniente, acessos sequenciais de acessos aleatórios (seeks).
+
+2.2 Gerente de Buffer Pool
+O tamanho e a composição do buffer pool devem ser especificados: número total de quadros e sua repartição em áreas (área de dados, área de índices, área de metadados e catálogo, área de trabalho reservada às operações de ordenação e junção etc.), fixas ou compartilhadas.
+
+Recomenda-se testar todas as configurações da gerência do buffer pool mencionadas nos livros-texto e outras que o grupo julgar convenientes:
+
+•         políticas de substituição LRU, MRU, FIFO e Clock (segunda chance);
+
+•         toss-immediate;
+
+•         blocos fixados (pinned blocks) e gravação forçada (forced output);
+
+•         substituição com prioridade ou retenção preferencial de páginas de índice e de catálogo;
+
+•         repartição do pool por tipo de página ou por operação, e leitura antecipada (prefetching) de blocos.
+
+Métricas do buffer a registrar: requisições, acertos, faltas, taxa de acerto, gravações de páginas sujas na expulsão e gravações forçadas.
+
+3. Organizações primárias dos arquivos de dados
+Recomenda-se que cada organização ofereça as operações de arquivo registro a registro (Open, Reset, Find, FindNext, Read, Insert, Delete, Close, Scan) e conjunto a conjunto (FindAll, FindOrdered, Reorganize).
+
+3.1 Formato de registros e blocagem
+•         Registros de tamanho fixo e de tamanho variável, com campos opcionais e repetidos.
+
+•         Representação de registros variáveis por caracteres separadores ou por cabeçalho de registro com pares (deslocamento, tamanho) e null bitmap.
+
+•         Página com slots (slotted page) e marca de deleção.
+
+•         Blocagem não estendida (unspanned) e estendida (spanned).
+
+•         Armazenamento de objetos grandes (BLOB, CLOB) no próprio registro ou em área separada.
+
+Sugere-se testar pelo menos três tamanhos de bloco (pequeno, médio e grande), cada um combinado com registros:
+
+•         pequenos, típicos de bases relacionais normalizadas;
+
+•         médios, típicos de bases relacionais não normalizadas;
+
+•         grandes, que contenham, por exemplo, imagens.
+
+3.2 Arquivo heap (não ordenado)
+•         Registros de tamanho fixo com lista de registros livres (free list).
+
+•         Registros de tamanho variável em páginas com slots.
+
+•         Compactação disparada por critério declarado.
+
+•         Mapa de espaço livre (free-space map).
+
+3.3 Arquivo ordenado (sequencial)
+•         Busca binária sobre blocos no campo de ordenação.
+
+•         Arquivo de extensão (overflow) para inserções e marca de deleção.
+
+•         Reorganização periódica por intercalação com o arquivo principal, com custo medido à parte.
+
+3.4 Organização de arquivo em B+-tree
+•         Registros armazenados nas folhas, encadeadas para varredura ordenada.
+
+•         Ocupação mínima dos nós, divisão, redistribuição e fusão.
+
+•         Carga em massa (bulk loading) comparada à inserção registro a registro.
+
+•         Índices secundários sobre o arquivo apontando pela chave de busca, e não pelo RID.
+
+3.5 Arquivo hash
+•         Hash externo estático, com buckets de overflow e fator de carga declarado.
+
+•         Hash dinâmico (extensível ou linear), à escolha do grupo.
+
+•         Funções de hash usuais (divisão, dobramento, seleção de dígitos) e, opcionalmente, função que preserva a ordem.
+
+Outras organizações descritas nos livros-texto, como o arquivo de agrupamento multitabela e o particionamento de tabelas, podem ser incluídas.
+
+Os livros-texto apresentam fórmulas de custo para cada organização e operação. Elas podem ser usadas para validar as medidas obtidas e constituem um bom parâmetro de validação dos códigos desenvolvidos pela IA.
+
+4. Índices (métodos de acesso)
+4.1 Terminologia
+Os dois livros-textos empregam termos distintos para conceitos coincidentes, e o mesmo termo para conceitos distintos. Adotam-se, neste trabalho, as definições a seguir, sendo F um arquivo de registros e A um campo de F.
+
+•         Campo de ordenação: campo cujo valor determina a posição física dos registros em F. Quando é também chave, denomina-se chave de ordenação. Campo de indexação (Elmasri & Navathe) e chave de busca (Silberschatz, Korth & Sudarshan) designam o atributo, ou a lista de atributos, sobre o qual um índice é construído, não necessariamente uma chave da relação.
+
+•         Índice primário (Elmasri & Navathe): índice sobre a organização primária do arquivo de dados.
+
+•         Índice de agrupamento (Elmasri & Navathe): índice ordenado sobre um campo de ordenação não chave, com uma entrada por valor distinto, cujo ponteiro designa o primeiro bloco que contém o valor.
+
+•         Índice de agrupamento (clustering) ou primário (Silberschatz, Korth & Sudarshan): todo índice cuja chave de busca define a ordem sequencial do arquivo. Abrange, portanto, o índice primário e o índice de agrupamento de Elmasri & Navathe, seja a chave de busca chave da relação ou não.
+
+•         Índice secundário ou de não agrupamento (ambos os livros): índice cuja chave de busca não determina a ordem física de F. É denso; sobre campo não chave, exige entradas com múltiplos ponteiros ou um nível de indireção (blocos de ponteiros de registro).
+
+•         Índice sobre a chave primária (PK): índice, de qualquer tipo, cuja chave de busca é a chave primária da relação. Distingue-se do índice primário: só coincide com ele quando F está ordenado pela PK; em heap ou hash por outro campo, é secundário. O uso de “índice primário” com esse sentido, comum em SGBDs comerciais, é aqui evitado.
+
+•         Índice denso: possui uma entrada para cada valor da chave de busca presente em F (e, para chave, para cada registro). Índice esparso: possui entradas apenas para alguns valores, tipicamente um por bloco.
+
+•         Índice multinível: índice cujo primeiro nível é ele próprio indexado por um índice esparso, recursivamente, até um nível de um único bloco; seu fan-out é o fator de blocagem das entradas.
+
+•         Índice composto (multichave): índice cuja chave de busca é uma lista de atributos, sob ordem lexicográfica ou outra estrutura multidimensional.
+
+•         Índice de cobertura: índice que armazena, além da chave de busca, atributos adicionais que permitem responder a uma consulta sem acesso ao arquivo de dados.
+
+Um arquivo admite no máximo um índice primário ou de agrupamento e um número arbitrário de índices secundários.
+
+4.2 Métodos de acesso que podem ser contemplados
+Método de acesso
+
+Variantes
+
+Papéis
+
+Índice ordenado
+
+nível único; multinível estático (ISAM)
+
+primário, de agrupamento, secundário
+
+Árvore balanceada
+
+B-tree; B+-tree; carga em massa
+
+primário, de agrupamento, secundário
+
+Hash
+
+estático; extensível; linear
+
+secundário
+
+Bitmap
+
+simples; comprimido; bitmap de existência; bitmaps nas folhas de B+-tree
+
+secundário
+
+Multichave
+
+índice composto ordenado; hash particionado; grid file
+
+secundário
+
+Escrita intensiva
+
+LSM-tree; buffer tree
+
+secundário
+
+Espacial
+
+k-d tree; quadtree; R-tree
+
+secundário
+
+Outros
+
+índice baseado em função; índice de cobertura
+
+secundário
+
+4.3 Combinações possíveis
+Cada combinação é o produto das seguintes dimensões:
+
+1.       Configuração da gerência do buffer pool: política, tamanho e composição das áreas.
+
+2.       Blocagem: tamanho do bloco (pequeno, médio, grande) × tamanho do registro (pequeno, médio, grande) × spanned ou unspanned.
+
+3.       Organização primária: heap fixo, heap variável, ordenado, B+-tree, hash estático, hash dinâmico.
+
+4.       Índice primário ou de agrupamento: presente ou ausente.
+
+5.       Índice sobre a PK: ausente, ordenado, B+-tree ou hash.
+
+6.       Índices secundários em campo não chave: ausente; em campo de alta cardinalidade; em campo de baixa cardinalidade.
+
+7.       Acesso multichave: índice composto, grid file, hash particionado ou combinação de bitmaps (AND, OR, NOT) sobre dois ou mais campos.
+
+Combinações sugeridas, cada uma avaliada sob as configurações de buffer pool e de blocagem escolhidas:
+
+•         K1: heap, sem índices (linha de base).
+
+•         K2: heap com índice B+-tree sobre a PK.
+
+•         K3: heap com índice hash sobre a PK.
+
+•         K4: heap com índice sobre a PK e índice secundário B+-tree em campo de alta cardinalidade.
+
+•         K5: heap com índice sobre a PK e bitmap em campo de baixa cardinalidade.
+
+•         K6: heap com bitmaps em dois ou mais campos de baixa cardinalidade, para consultas multichave.
+
+•         K7: ordenado pela PK, sem índice (busca binária).
+
+•         K8: ordenado pela PK com índice primário de nível único e multinível.
+
+•         K9: ordenado pela PK com índice primário e secundários em campos de alta e de baixa cardinalidade.
+
+•         K10: ordenado por campo não chave com índice de agrupamento e índice secundário sobre a PK.
+
+•         K11: B+-tree pela PK, sem índices secundários.
+
+•         K12: B+-tree pela PK com índices secundários apontando pela chave lógica.
+
+•         K13: hash (estático ou dinâmico) pela PK, com e sem B+-tree secundária sobre a PK para buscas por faixa.
+
+•         K14: hash pela PK com índices secundários e bitmaps.
+
+•         K15: qualquer das anteriores com índice composto ou grid file sobre um campo de alta e outro de baixa cardinalidade.
+
+5. Operações relacionais
+A junção é a operação que melhor discrimina o desempenho de uma configuração, pois exercita simultaneamente a organização primária, os índices disponíveis e a gerência do buffer pool. Deve, por isso, ocupar o centro da avaliação; as demais operações entram em segundo plano.
+
+Sugere-se que cada primitiva do Mini Monitor seja nomeada pela operação e pelo algoritmo (por exemplo, join_block_nested_loop, semijoin_hash) e que adote a interface de iterador open / next / close, contando à parte as gravações de resultados materializados.
+
+5.1 Junção
+Algoritmos recomendados pelos livros-texto
+
+•         Nested-loop registro a registro e nested-loop em blocos.
+
+•         Indexed nested-loop, com índice ordenado, B+-tree ou hash sobre o atributo de junção da relação interna.
+
+•         Sort-merge join, com e sem ordenação prévia, e sua variante híbrida com índice secundário.
+
+•         Hash join particionado e hybrid hash join, incluindo o tratamento de transbordamento de partições.
+
+Tipos de junção
+
+•         Equijunção e junção natural.
+
+•         Junção theta (condições de desigualdade e conjuntivas).
+
+•         Junções externas: LEFT, RIGHT e FULL OUTER JOIN.
+
+•         Junções múltiplas (três ou mais relações), comparando ordens de junção e pipelining.
+
+•         Semijunção e antijunção, como algoritmos de avaliação de subconsultas aninhadas:
+
+o        EXISTS e IN (subconsulta) por semijunção; NOT EXISTS e NOT IN por antijunção;
+
+o        x θ ANY (SOME) por semijunção com condição θ;
+
+o        x θ ALL por antijunção com a condição complementar, atentando para a semântica de valores nulos.
+
+Situações a explorar: troca dos papéis de relação externa e interna; relação menor que cabe inteiramente na área de buffer reservada; ambas as relações maiores que essa área; seletividade e fator de junção variados; atributo de junção que coincide ou não com o campo de ordenação ou de hashing.
+
+5.2 Demais operações
+•         Manutenção: inserção de um registro, inserção em massa e remoção por PK e por critério, com o custo de manter cada índice; UPDATE pode ser tratado como remoção seguida de inserção.
+
+•         Seleção: igualdade na PK, lista IN, faixa, igualdade em campo não chave, condições conjuntivas e disjuntivas; interseção e união de RIDs; ordenação dos RIDs por endereço de bloco antes da busca.
+
+•         Projeção e eliminação de duplicatas: por ordenação e por hashing.
+
+•         Ordenação externa: sort-merge com número variável de quadros e leitura ordenada pelo caminho de acesso.
+
+•         Operações de conjunto: UNION, INTERSECT e EXCEPT, por ordenação e por hashing.
+
+•         Agrupamento e agregação: com e sem GROUP BY, por ordenação e por hashing, com agregação em tempo real e respostas apenas pelo índice.
+
+Recomenda-se verificar o resultado de cada primitiva contra uma implementação de referência (por exemplo, a mesma consulta no SQLite ou no PostgreSQL sobre os mesmos dados).
+
+6. Metodologia de avaliação
+Sugere-se que cada experimento varie um fator por vez em torno de uma configuração-base declarada, e que cada medição seja repetida até que a variação entre repetições fique abaixo de 5%, com no mínimo três repetições.
+
+6.1 Indicadores
+1.       Ocupação de memória secundária: total de blocos do arquivo de dados (incluindo extensão e overflow) e de cada estrutura auxiliar (níveis de índice, diretório, bitmaps, matriz do grid file), antes e depois das cargas de manutenção.
+
+2.       Acessos a blocos por operação: leituras físicas, gravações físicas, requisições ao buffer pool, acertos e taxa de acerto e, se o grupo modelar, número de seeks. O tempo de relógio pode ser registrado, mas não substitui a contagem.
+
+3.       Custo estimado × medido: para cada operação, o valor da fórmula correspondente dos livros-texto, calculado com os parâmetros reais, ao lado do valor medido, com explicação das diferenças.
+
+6.2 Fatores a variar
+Fator
+
+Níveis sugeridos
+
+Configuração da gerência do buffer pool
+
+políticas e composições da seção 2.2
+
+Tamanho do buffer pool
+
+do mínimo aceito pelo algoritmo até um valor que comporte a menor relação inteira
+
+Blocagem
+
+três tamanhos de bloco × três tamanhos de registro, spanned e unspanned
+
+Organização primária
+
+heap fixo, heap variável, ordenado, B+-tree, hash estático, hash dinâmico
+
+Índices
+
+combinações da seção 4.3
+
+Tamanho das tabelas
+
+pequenas (cabem na área de buffer reservada), médias e grandes (não cabem na área de buffer reservada)
+
+Seletividade
+
+cerca de 0,1%, 1%, 10% e 50% dos registros
+
+Distribuição de valores
+
+uniforme e assimétrica (por exemplo, Zipf) nos campos de baixa cardinalidade
+
+Estado do arquivo
+
+recém-carregado × após carga de inserções e remoções, antes da reorganização
+
+6.3 Matriz de experimentos
+Sugere-se cobrir todas as junções da seção 5.1 em todas as organizações primárias, com e sem o índice pertinente, sob todas as configurações da gerência do buffer pool avaliadas, para as tabelas grandes. As demais operações e fatores podem ser estudados em um subconjunto representativo, escolhido e justificado pelo grupo.
+
+6.4 Base de dados
+Sugere-se o esquema de uma universidade, comentado no livro e em sala de aula, contendo entidades como:
+
+•         Aluno (CPF, nome, data de nascimento, sexo, endereço, lista de e-mails, curso, coeficiente de rendimento – CR etc.)
+
+•         Curso (código, nome, escola ou faculdade, carga horária total, professor coordenador, e-mail, endereço da secretaria, lista de telefones etc.)
+
+•         Disciplina (código, nome, ementa, carga horária, lista de pré-requisitos)
+
+•         Turma (número, semestre e ano, horário, sala, professor)
+
+•         Inscrição_Aluno_Turma (CPF do aluno, número da turma, frequência, média final)
+
+As chaves estrangeiras, os atributos adicionais e os volumes de cada tabela ficam a critério do grupo. O esquema oferece naturalmente tabelas pequenas (Curso), médias (Disciplina, Turma) e grandes (Aluno, Inscrição_Aluno_Turma); campos de alta (CPF, nome) e de baixa cardinalidade (sexo, curso); atributos multivalorados e textos longos para registros variáveis; e, com a inclusão de atributos como a foto do aluno, registros grandes. Para as operações de conjunto, podem ser usados pares de tabelas compatíveis com interseção controlada (por exemplo, inscrições de dois semestres).
+
+7. Uso de IA, entrega e avaliação
+O código deve ser desenvolvido no ambiente do grupo com geração assistida por IA. A autoria do grupo é avaliada pela capacidade de encontrar, explicar e corrigir os defeitos do código gerado, e não pelo volume de código.
+
+7.1 Pontos de atenção para o Code Review
+Erros que costumam aparecer em código gerado para este tema e que o grupo deve procurar ativamente:
+•         leitura de blocos fora do Gerente de Buffer Pool (contagem subestimada);
+•         pin sem unpin correspondente, ou página alterada sem ligar o dirty bit;
+•         busca binária sobre registros em vez de sobre blocos;
+•         B+-tree que não mantém a ocupação mínima, não encadeia as folhas ou não propaga divisões até a raiz;
+•         hash que ignora a cadeia de overflow na busca ou na remoção;
+•         bitmap NOT sem interseção com o bitmap de existência;
+•         ordenação externa que carrega o arquivo inteiro na memória;
+•         junções e operações de conjunto que usam estruturas da linguagem (listas, dicionários) maiores que a área de buffer reservada;
+•         deslocamentos e tamanhos de campos variáveis acessados fora da faixa do bloco.
+7.2 Produtos a entregar
+1.       Repositório (GitHub Classroom ou GitLab CI) com todo o código, scripts de geração da base e de execução da bancada de teste, e os arquivos de resultados.
+
+2.       Relatório técnico com:
+
+a.       todas as opções adotadas no projeto: tamanhos de bloco, blocagem, descrição da base, dos campos e das chaves, estruturas dos arquivos e dos cabeçalhos, campos de ordenação, funções de hash, ordem das árvores, configurações da gerência do buffer pool e demais escolhas do grupo.
+
+b.       Tabelas e gráficos com os indicadores medidos ao lado dos custos estimados.
+
+c.       Conclusão: seção de análise dos resultados, comparando os resultados de todos os testes e a lista de recomendações de configuração física do SBD conforme a carga de trabalho, contendo recomendação sobre qual organização primária, quais índices e qual configuração da gerência do buffer pool adotar em quais casos.
+
+3.       Relatório de IA, contendo:
+
+a.       Log dos prompts utilizados e o código bruto gerado pela IA.
+
+b.       Code Review do código da IA, identificando onde foi gerado código ineficiente ou errado, falhas de eficiência, complexidade de algoritmo, vazamentos de memória, acessos fora da faixa etc.;
+
+c.       bateria de testes efetuados em busca de problemas, incluindo testes de estresse.
+
+d.       Análise Crítica e Post-Mortem de IA. principal critério de avaliação da autoria, contendo:
+
+a.       Arquivo POST_MORTEM.md na raiz do repositório
+
+b.       Code Review crítico: Os prompts-chave e os fragmentos de código brutos devolvidos pela IA, antes de qualquer modificação manual;
+
+c.       Justificativa de refatoração: as alterações feitas para atender aos requisitos de desempenho, correção e estresse;
+
+d.       Evidência de testes: relatório dos testes de estresse mostrando que o código refatorado supera o código ingênuo gerado inicialmente.
+
+ 
+
+7.3 Postagem dos resultados
+Os relatórios em PDF devem conter folha de rosto com os nomes completos e o DRE de todos os integrantes.
+Os produtos são postados no AVA@UFRJ por apenas um integrante do grupo; os demais postam apenas a folha de rosto em PDF. O aluno que não postar nada, mesmo estando no grupo, terá a nota reduzida, podendo ser zero.
+Cada grupo fará uma apresentação oral do trabalho em sala de aula, sendo necessário também a postagem dos slides como resultado no AVA@UFRJ
+Em caso de indisponibilidade do AVA@UFRJ no dia do prazo, será considerado entregue o trabalho (PDF e slides) enviado dentro do prazo para milton@matematica.ufrj.br.
