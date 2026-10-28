@@ -6,7 +6,7 @@ Repositório destinado ao desenvolvimento, instrumentação e análise experimen
 
 ---
 
-## 👥 Integrantes
+## Integrantes
 
 | Nome Completo | DRE | Camada / Responsabilidade |
 | :--- | :---: | :--- |
