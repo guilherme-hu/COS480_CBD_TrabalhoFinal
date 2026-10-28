@@ -12,7 +12,7 @@ Repositório destinado ao desenvolvimento, instrumentação e análise experimen
 | :--- | :---: | :--- |
 | **Bernardo Brandão Pozzato C. Costa** | `123289593` | *A definir na reunião de arquitetura* |
 | **Enzo de Carvalho Sampaio** | `123386206` | *A definir na reunião de arquitetura* |
-| **Gabriel Schmitz Corrêa Rizawinsk** | `123225573` | *A definir na reunião de arquitetura* |
+| **Gabriel Schmitz Corrêa Rizawinsk** | `123225573` | *LIDER* |
 | **Guilherme En Shih Hu** | `123224674` | *A definir na reunião de arquitetura* |
 | **Raphael Henrique da Silva Pereira** | `123420783` | *A definir na reunião de arquitetura* |
 | **Vivian Maria da Silva e Souza** | `123205793` | *A definir na reunião de arquitetura* |
