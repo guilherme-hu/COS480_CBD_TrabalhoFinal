@@ -38,5 +38,6 @@ Enunciado completo: [proposta.md](proposta.md).
 | :--- | :--- |
 | `proposta.md` | Enunciado transcrito em Markdown |
 | `proposta.pdf` | Enunciado original em PDF |
+| `docs/implementacao/` | Arquitetura geral e contratos (`00_ARQUITETURA_GERAL.md`) + um guia de implementação por integrante (`P1` a `P6`). Cada um passa à IA o geral + o seu |
 | `refs/` | Livros-texto (Silberschatz–Korth–Sudarshan, Elmasri–Navathe). **Não versionado** |
 | `POST_MORTEM.md` | Análise crítica do uso de IA (a criar, exigido na entrega) |
