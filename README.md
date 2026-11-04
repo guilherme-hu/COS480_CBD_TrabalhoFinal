@@ -32,6 +32,23 @@ Arquitetura sugerida, em quatro camadas (cada uma usa só a interface da camada 
 
 Enunciado completo: [proposta.md](proposta.md).
 
+## Base e carga de trabalho
+
+Preparação implementada em Python 3.11+, sem dependências externas:
+
+```sh
+python3 -m bench.build --scale 0.1
+python3 -m pytest -q
+```
+
+Para a base final calibrada: `python3 -m bench.build --scale 1 --rows turma=100000`.
+Os comandos geram os dados universitários, subconjuntos, consultas com respostas
+SQLite e planos de carga heap/B+/hash em `data/prepared/`, além de
+`results/base_stats.csv`. Use `--force` para recriar uma preparação existente.
+
+Instruções, decisões sobre volumes e integração com P1–P3:
+[Base de dados e carga de trabalho](docs/dados_e_carga.md).
+
 ## Estrutura do repositório
 
 | Caminho | Conteúdo |
