@@ -1,0 +1,10 @@
+# livros-texto: material protegido por direito autoral, nao vai para o repositorio
+refs/
+
+# dados gerados pela bancada
+data/
+*.db
+*.sqlite
+__pycache__/
+*.pyc
+.venv/
