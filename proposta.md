@@ -42,7 +42,7 @@ O grupo deverá definir o tamanho e a organização do buffer pool, ou seja:
 1. o número total de páginas (e quanto blocos por página)
 2. Se a repartição do buffer pool repartição será por "tipo" de página ou por operação e quais as áreas (para dados, índices, metadados e catálogo, trabalho reservada às operações de ordenação e junção etc.),
 3. Se as áreas são fixas, ou autoajustáveis (dado limite), ou compartilhadas
-4. Quais as duas "políticas de substituição" de página a serem comparadas, entre: LRU, MRU, FIFO e Clock (segunda chance)
+4. Quais "políticas de substituição" de página a serem comparadas, entre: LRU, MRU, FIFO e Clock (segunda chance) a serem usadas nos testes
 5. Se haverá ou não o emprego de toss-immediate
 6. Como se dará a fixação de blocos (pinned blocks)
 7. Se haverá gravação forçada (forced output)
@@ -102,11 +102,11 @@ A junção é a operação que melhor discrimina o desempenho de uma configuraç
 
 ### 5.1 Operações de Junção
 
-Cada grupo deverá avaliar a execução dos seguintes três tipos de junções:
+Cada grupo deverá avaliar pelo menos o NATURAL JOIN e, opcionalmente, os dois seguintes equijoins:
 
 1. NATURAL JOIN entre tabelas mestre-detalhe (master e detail tables), usando a chave primário (PK) da tabela mestre e a sua correspondente chave estrangeira (FK) na tabela de detalhe,
-2. Equijoin entre duas tabelas usando campos UNIQUE que não ditam a organização primária
-3. Equijoin entre duas tabelas usando campos NOT UNIQUE que não ditam a organização primária
+2. (opcional) Equijoin entre duas tabelas usando campos UNIQUE que não ditam a organização primária
+3. (opcional) Equijoin entre duas tabelas usando campos NOT UNIQUE que não ditam a organização primária
 
 Cada um deles deverá ser comparado usando os seguintes algoritmos de execução do JOIN:
 
@@ -127,11 +127,11 @@ Para cada combinação de operação e algoritmos, as seguintes configurações 
 
 ### 5.2 Operações de Seleção
 
-Cada grupo deverá avaliar a execução dos seguintes dois tipos de seleção:
+Cada grupo deverá avaliar a execução dos seguintes dois tipos de seleção, sendo o terceiro opcional:
 
 1. Seleção por campo UNIQUE, ou igualdade em campo chave
-2. Seleção por faixa de valores em desigualdade (<, <=, >, >=) de campo UNIQUE
-3. Seleção por faixa de valores em desigualdade (<, <=, >, >=) de campo NOT UNIQUE
+2. Seleção por faixa de valores em desigualdade (<, <=, >, >=) de campo NOT UNIQUE
+3. (opcional) Seleção por faixa de valores em desigualdade (<, <=, >, >=) de campo UNIQUE
 
 Para cada um dos algoritmos, as seguintes configurações deverão ser testadas:
 
@@ -139,7 +139,7 @@ Para cada um dos algoritmos, as seguintes configurações deverão ser testadas:
    - a. Não possuem método de acesso primário ou secundário (não possuem índices)
    - b. É o campo da organização primária (campo chave da árvore B+, ou a chave do hashing)
    - c. Possuem um índice secundário
-2. Duas seletividades da operação: baixa (0,1%) e alta (50%)
+2. Duas seletividades da operação: baixa (1%) e alta (50%)
 
 Recomenda-se verificar o resultado de cada primitiva contra uma implementação de referência (por exemplo, a mesma consulta no SQLite ou no PostgreSQL sobre os mesmos dados).
 
@@ -159,9 +159,10 @@ Os livros-texto apresentam fórmulas de custo para cada organização e operaç�
 
 | Fator | Níveis sugeridos |
 |---|---|
-| Política de substituição de página do buffer pool | Duas entre: LRU, MRU, FIFO e Clock (segunda chance) |
 | Tamanho das tabelas | pequenas (cabem na área de buffer reservada), médias e grandes (não cabem na área de buffer reservada) |
-| Seletividade (tamanho da resposta) | cerca de 0,1% e 50% dos registros |
+| Seletividade (tamanho da resposta) | cerca de 1% e 50% dos registros |
+
+A Política de substituição de página do buffer pool deve ser escolhida pelo grupo de tal maneira que seja a mais apropriada a execução do teste, entre: LRU, MRU, FIFO e Clock (segunda chance).
 
 ### 6.4 Base de dados
 
@@ -207,7 +208,7 @@ Erros que costumam aparecer em código gerado para este tema e que o grupo deve 
 
 1. Repositório (GitHub Classroom ou GitLab CI) com todo o código, scripts de geração da base e de execução da bancada de teste, e os arquivos de resultados.
 2. Relatório técnico com:
-   - a. todas as opções adotadas no projeto: tamanhos de bloco, blocagem, descrição da base, dos campos e das chaves, estruturas dos arquivos e dos cabeçalhos, campos de ordenação, funções de hash, ordem das árvores, configurações da gerência do buffer pool e demais escolhas do grupo.
+   - a. **TODAS** as opções adotadas no projeto devem ser justificadas, tomando, quando pertinente, a comparação com as configurações preteridas. O grupo deve justificar as escolhas de: tamanhos de bloco, blocagem, descrição da base, dos campos e das chaves, estruturas dos arquivos e dos cabeçalhos, campos de ordenação, funções de hash, ordem das árvores, configurações da gerência do buffer pool e demais escolhas do grupo etc.
    - b. Tabelas e gráficos com os indicadores medidos ao lado dos custos estimados.
    - c. Conclusão: seção de análise dos resultados, comparando os resultados de todos os testes e a lista de recomendações de configuração física do SBD conforme a carga de trabalho, contendo recomendação sobre qual organização primária, quais índices e qual configuração da gerência do buffer pool adotar em quais casos.
 3. Relatório de IA, contendo:
