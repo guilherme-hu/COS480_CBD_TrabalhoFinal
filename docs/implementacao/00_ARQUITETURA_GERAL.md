@@ -2,7 +2,9 @@
 
 > **Como usar este documento.** Cada integrante entrega à IA **este arquivo + o arquivo da sua parte** (`P1_...md` a `P6_...md`). Com os dois, a parte deve poder ser implementada por inteiro e integrar com as demais sem conversa extra.
 >
-> Este arquivo é a **fonte da verdade** para tudo o que cruza a fronteira entre módulos: nomes de pacotes, assinaturas, tipos, unidades, contadores e convenções. Quando o arquivo da sua parte e este discordarem, **vale este**. Detalhes internos de cada módulo ficam no arquivo da parte.
+> Este arquivo é a **referência comum** para tudo o que cruza a fronteira entre módulos: nomes de pacotes, assinaturas, tipos, unidades, contadores e convenções. Quando o arquivo da sua parte e este discordarem, **vale este**. Detalhes internos de cada módulo ficam no arquivo da parte.
+>
+> **Referência, não decisão fechada.** As escolhas daqui e dos guias P1–P6 são recomendações iniciais. Cada integrante debate as da sua parte com o agente ([`AGENTS.md`](../../AGENTS.md) §3) e pode mudar o que decidir. Quando a mudança afeta outra parte (assinatura, tipo, convenção), atualize este documento e avise quem consome a interface.
 
 Enunciado completo: [`proposta.md`](../../proposta.md). A pergunta do trabalho é: **qual configuração do SBD processa com mais eficiência uma dada carga de trabalho sobre uma dada base?** A medida principal é o **número de blocos transferidos entre disco e buffer pool**.
 
@@ -20,7 +22,37 @@ Enunciado completo: [`proposta.md`](../../proposta.md). A pergunta do trabalho �
 - **`contracts.py` (§4):** um arquivo de tipos que todos usam igual. O P1 cria no dia 1 e ninguém altera sem combinar com o grupo.
 - **Memória limitada:** os algoritmos só podem usar M páginas (a área de trabalho). Não vale carregar uma tabela inteira numa lista do Python.
 - **Onde está a sua interface:** a de P1 no §3, a de P2/P3 nos §5 e §6, a de P4/P5 no §7, e o que o P6 usa no §8. Datas e Git no §10. Log de IA e checklist de revisão no §11.
-- **Como ler:** §1 e §2 todo mundo. Depois, a seção da sua camada e a da camada logo abaixo, que é a que você vai usar.
+- **Escopo:** só o que o enunciado novo marca como obrigatório (§0). Os itens opcionais ficam de fora.
+- **Como ler:** §0, §1 e §2 todo mundo. Depois, a seção da sua camada e a da camada logo abaixo, que é a que você vai usar.
+
+---
+
+## 0. Escopo (revisado com a versão nova do enunciado)
+
+O enunciado foi atualizado e passou a marcar alguns itens como opcionais. **O grupo não fará os opcionais.**
+
+| Item do enunciado | Situação | O que fazemos |
+| :--- | :--- | :--- |
+| Organizações primárias (§3) | obrigatório | 5: heap, B+ UNIQUE, B+ NOT UNIQUE, hash UNIQUE, hash NOT UNIQUE |
+| Métodos de acesso (§4.2) | obrigatório | os da tabela do §5.3 |
+| NATURAL JOIN mestre-detalhe, PK→FK (§5.1.1) | obrigatório | curso ⋈ disciplina, curso ⋈ aluno, aluno ⋈ inscricao (as 3 combinações de tamanho) |
+| Equijoin em campo UNIQUE fora da organização (§5.1.2) | **opcional: não faremos** | — |
+| Equijoin em campo NOT UNIQUE fora da organização (§5.1.3) | **opcional: não faremos** | — |
+| Algoritmos de join | obrigatório | nested-loop em blocos, sort-merge, partition-hash |
+| Configurações a–e do join | obrigatório | todas (§7.4) |
+| Seleção por igualdade em campo UNIQUE (§5.2.1) | obrigatório | `aluno.dre` |
+| Seleção por faixa em campo NOT UNIQUE (§5.2.2) | obrigatório | `aluno.cr` |
+| Seleção por faixa em campo UNIQUE (§5.2.3) | **opcional: não faremos** | — |
+| Seletividades | obrigatório | **1%** e 50% (era 0,1% na versão antiga) |
+| Política de substituição (§2.2.4, §6.2) | mudou | deixou de ser um fator a comparar em toda a matriz: o grupo escolhe, **por tipo de operação**, a política mais adequada e justifica (§8.2) |
+| Justificativa das escolhas (§7.2.2.a) | reforçado | o relatório justifica **todas** as opções, comparando com as preteridas quando pertinente |
+
+Consequências práticas:
+
+- não há subconjuntos (`aluno_p`, `detalhes_p`, `turma_p`): as tabelas reais já cobrem as três combinações de tamanho (§8.3);
+- `turma` e `detalhes` continuam na base lógica (integridade e SQLite), mas não ganham variantes físicas;
+- o índice B+ secundário UNIQUE deixa de ser necessário (§5.3);
+- o sort-merge só precisa tratar chaves repetidas de um lado (§7.2).
 
 ---
 
@@ -565,7 +597,7 @@ class Catalog:
 
 "Índice secundário clustering" (§4.2): interpretamos como índice B+ sobre campo NOT UNIQUE em que **todos os ponteiros de uma mesma chave ficam agrupados** num só bloco ou lista de ponteiros (a chave aparece uma vez na folha). **Confirmar com o professor** e registrar no relatório.
 
-Fora da tabela, o código pode aceitar outras combinações (ex.: B+ UNIQUE secundário), mas a bancada só mede as da tabela.
+Pela tabela, todo índice B+ secundário é NOT UNIQUE e todo índice secundário UNIQUE é hash (só sobre heap). Por isso o `BTreeIndex` **não precisa** de modo UNIQUE. Se algum dia for preciso, o formato NOT UNIQUE com 1 ponteiro por chave já atende.
 
 ### 5.4 Ponteiros
 
@@ -669,6 +701,8 @@ def hash_join(eng, r: JoinSide, s: JoinSide, build: str = "auto", info=None) -> 
 def hash_join_cost(eng, r, s, build="auto") -> Cost
 ```
 
+**Escopo do sort-merge:** como só fazemos o join PK→FK (§0), um dos lados é UNIQUE na coluna do join. O sort-merge pode assumir isso (P5 §3.2) e levantar `NotApplicable` se nenhum lado for UNIQUE.
+
 ### 7.3 Formato da saída dos joins
 
 Cada tupla de saída é **`r_rec + s_rec`** (concatenação na ordem dos argumentos `r`, `s`), **mesmo que o algoritmo inverta internamente** quem é externo ou construtor. No NATURAL JOIN a coluna repetida **não** é removida (a bancada compara o mesmo formato no SQLite). A ordem das tuplas é livre.
@@ -682,6 +716,8 @@ Cada tupla de saída é **`r_rec + s_rec`** (concatenação na ordem dos argumen
 | c | PRIMARY | PRIMARY | ambas organizadas pela coluna do join |
 | d | PRIMARY | SECONDARY | r organizada pela coluna; s com índice secundário nela |
 | e | SECONDARY | SECONDARY | ambas com índice secundário na coluna |
+
+Nas configurações b e d, "um dos campos" pode ser o do mestre ou o do detalhe. A bancada roda **as duas orientações** (ex.: b com `curso` organizado por `codigo`, e b com `aluno` organizado por `curso`). Qual lado vale a pena organizar ou indexar é uma das recomendações que o relatório precisa dar. Nos dois casos `r` continua sendo o mestre, para a saída `r + s` manter o formato.
 
 Para seleção (§5.2): a → `SCAN`, b → `PRIMARY`, c → `SECONDARY`.
 
@@ -745,12 +781,13 @@ Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) s
 | :--- | :--- | :--- | :--- |
 | P1 | `StorageConfig.block_size` | tamanho do bloco | 2048, **4096**, 8192 |
 | P1 | `BufferConfig.areas` | frames por área | ex.: `CATALOG 8, INDEX 64, DATA 128, WORK 64` |
-| P1 | `BufferConfig.policy` | política de substituição | LRU, MRU, CLOCK (FIFO opcional) |
+| P1 | `BufferConfig.policy` | política de substituição | LRU, MRU, CLOCK, FIFO. **Escolhida por tipo de operação** num experimento curto (P6 §4.4), não variada em toda a matriz |
 | P1 | `BufferConfig.toss_immediate` | toss-immediate | `False`/`True` |
 | P1 | `BufferConfig.prefetch` | leitura antecipada | 0, 4, 8 |
-| P2 | `OrgSpec.params["buckets"]` (HASH) | nº de buckets | padrão: `ceil(n_r / (bfr · 0.8))` |
+| P2 | `OrgSpec.params["buckets"]` (HASH) | nº de buckets | padrão: `ceil(n_r / (bfr · 0.8))`; em NOT UNIQUE, no máximo `V(A)` (P2 §6.1) |
 | P2 | `OrgSpec.params["load"]` (HASH) | fator de carga alvo | 0.8 |
 | P2 | `OrgSpec.params["expected_records"]` (HASH) | base para calcular N quando `buckets` não é dado | n_r da tabela |
+| P2 | `OrgSpec.params["distinct"]` (HASH NOT UNIQUE) | `V(A)` da chave, para limitar N | a bancada passa |
 | P2 | `OrgSpec.params["seed"]` (HASH) | seed da função de hash | 0; igual em duas tabelas para o *bucket-join* do P5 |
 | P2 | `OrgSpec.params["compact_at"]` (HEAP) | fração apagada que dispara reorganize | 0.2 |
 | P2 | `IndexSpec.params["buckets"]` (índice HASH) | nº de buckets | idem |
@@ -801,16 +838,15 @@ DETALHES = Schema("detalhes", (
 
 Estes esquemas ficam em `bench/schema.py` (P6). Os demais importam de lá nos testes de integração. Nos testes unitários, use esquemas pequenos próprios.
 
-Joins de referência:
+Joins de referência (só o NATURAL mestre-detalhe, §0):
 
-| Tipo (enunciado §5.1) | Junção | Coluna |
-| :--- | :--- | :--- |
-| 1. NATURAL mestre-detalhe (PK→FK) | aluno ⋈ inscricao | `dre` |
-| 1. NATURAL mestre-detalhe | curso ⋈ disciplina / curso ⋈ aluno | `codigo` = `curso` |
-| 2. Equijoin UNIQUE fora da organização | aluno ⋈ detalhes | `cpf` |
-| 3. Equijoin NOT UNIQUE fora da organização | aluno ⋈ turma | `orientador` = `professor` |
+| Combinação de tamanho | Junção (mestre ⋈ detalhe) | Coluna | Blocos com B = 4096 (estimativa de `results/base_stats.csv`) |
+| :--- | :--- | :--- | :--- |
+| menor ⋈ menor | curso ⋈ disciplina | `codigo` = `curso` | 2 ⋈ 27 |
+| menor ⋈ maior | curso ⋈ aluno | `codigo` = `curso` | 2 ⋈ 1 962 |
+| maior ⋈ maior | aluno ⋈ inscricao | `dre` | 1 962 ⋈ 4 588 |
 
-Para cobrir as 3 combinações de tamanho em cada tipo, o P6 pode criar subconjuntos (ex.: `aluno_p`, com os alunos de poucos cursos) em vez de forçar tabelas reais. O enunciado (§6.4) permite.
+"Menor" = cabe em `M − 2 = 62` páginas. As tabelas reais já cobrem as três combinações, então não há subconjuntos. `turma` e `detalhes` ficam na base lógica, mas não entram nos experimentos. Seleções: igualdade em `aluno.dre` e faixa em `aluno.cr`.
 
 ---
 
@@ -859,7 +895,7 @@ Antes de a camada de baixo ficar pronta, **escreva contra a interface** e teste 
 ### 10.2 Git
 
 - Uma branch por pessoa e funcionalidade (`p3/btree-split`), com PR para o `main`. Precisa de 1 revisão de quem consome a interface (P2 revisa P3 e vice-versa; P4/P5 revisam P2/P3; P6 revisa P4/P5; qualquer um revisa P1).
-- Mudança em `contracts.py` ou neste documento: PR próprio, avisado no grupo, aprovado por todos os afetados.
+- Mudança em `contracts.py` ou neste documento: pode acontecer sempre que o grupo decidir. Faça em PR próprio, avise e peça revisão de quem é afetado.
 - `pytest -q` precisa passar no `main`.
 
 ---

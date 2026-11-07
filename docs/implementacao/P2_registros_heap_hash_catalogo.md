@@ -1,6 +1,6 @@
 # P2 — Registros, Slotted Page, Heap, Hash Estático, Tabela e Catálogo
 
-> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§4, §5, §6) e **não podem mudar** sem PR do grupo. Aqui está o *como* implementar.
+> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§4, §5, §6) e só mudam combinando com quem usa a interface. Aqui está uma proposta de *como* implementar. **As tabelas de decisão trazem recomendações, não decisões fechadas:** o agente debate cada uma com você antes de codar ([`AGENTS.md`](../../AGENTS.md) §3), e este arquivo pode ser atualizado com o que for decidido.
 
 **Peso:** ~17%. Você **consome** a camada 4 (P1: `BufferPool`, `FileManager`) e **fornece** a camada 3 para P4/P5/P6. O P3 usa seu `RecordCodec`, `SlottedPage` e `encode_key`, e o seu catálogo instancia os arquivos e índices B+ dele.
 
@@ -144,7 +144,7 @@ def hash_value(v, seed: int = 0) -> int:
 
 - **Nunca** `hash()` do Python: para `str` ele muda a cada processo (PYTHONHASHSEED). Teste obrigatório: rodar `hash_value("abc")` em dois subprocessos dá o mesmo valor.
 - Seeds diferentes dão funções independentes. O P5 usa `seed=1, 2, ...` nos níveis de particionamento, diferentes da seed do arquivo hash.
-- **Escolha da função (enunciado §3.5.3):** meça a dispersão. Teste `test_dispersion` com qui-quadrado dos tamanhos de bucket para DRE (inteiros sequenciais), CPF (strings) e `orientador` (com repetição), e coloque os números no relatório. Para inteiros sequenciais, `k mod N` também dispersa perfeitamente; discuta por que o FNV + splitmix é mais robusto para domínios gerais.
+- **Escolha da função (enunciado §3.5.3):** meça a dispersão. Teste `test_dispersion` com qui-quadrado dos tamanhos de bucket para as chaves de hash que a bancada usa: `aluno.dre` e `curso.codigo` (inteiros sequenciais, UNIQUE), `inscricao.dre` (~10 por chave) e `aluno.curso`/`disciplina.curso` (50 valores, NOT UNIQUE). Coloque os números no relatório. Como **todas** as nossas chaves de hash são inteiras, `k mod N` é uma alternativa real: dispersa perfeitamente inteiros sequenciais e é mais simples de explicar. É uma decisão a debater, comparando as duas funções no mesmo teste.
 
 ---
 
@@ -217,7 +217,7 @@ Nomes únicos: `f"__tmp_{os.getpid()}_{contador}"`. As páginas de temporário s
 | Endereçamento | o bucket `i` está no bno `2 + i` (pré-alocados em sequência no `create`); sem diretório |
 | Função | `hash_value(key, seed) % N`, com `seed = params.get("seed", 0)` salva no meta. O P5 precisa forçar N e seed iguais em duas tabelas para o *bucket-join* |
 | Colisão (overflow) | encadeamento de blocos de overflow, alocados sob demanda; inserção no primeiro bloco da cadeia com espaço |
-| Skew | NOT UNIQUE de baixa cardinalidade concentra registros num bucket (todos os iguais caem juntos, independentemente de N). Relate em `stats()` `max_chain` e `avg_chain`, e recomende no relatório usar hash NOT UNIQUE só em campos de cardinalidade média/alta (ex.: `inscricao.dre`, com ~10 por chave) |
+| Skew | NOT UNIQUE de baixa cardinalidade concentra registros num bucket (todos os iguais caem juntos, independentemente de N). **Caso real da nossa matriz:** `aluno` organizado por hash em `curso` (50 valores, ~1 000 alunos por curso). Com o N padrão (~2 500 buckets) sobrariam ~2 450 buckets vazios que o `scan` lê à toa. Recomendação: em NOT UNIQUE, `N = min(N_padrão, V(A))`, com `V(A)` de `params["distinct"]` (a bancada passa). Relate em `stats()` `max_chain` e `avg_chain` |
 | Fator de carga | `stats()["load_x1000"] = 1000·n_records / (N·bfr_est)`. `reorganize()` refaz o hash com N recalculado para o n atual |
 
 ### 6.2 `HashFile` (organização primária)
@@ -288,7 +288,7 @@ Conteúdo:
    "schema": {"name": "aluno", "fields": [["dre","INT",0,false,true], ...]},
    "spec": {"org": "HEAP", "key": null, "unique": false, "params": {}},
    "file": "aluno",
-   "indexes": [{"column": "cpf", "kind": "HASH", "unique": true, "params": {}, "file": "aluno__cpf"}],
+   "indexes": [{"column": "dre", "kind": "HASH", "unique": true, "params": {}, "file": "aluno__dre"}],
    "stats": {"n_records": 100000, "n_blocks": 4000, "bfr": 25.0, "record_size": 150.2,
              "distinct": {...}, "min": {...}, "max": {...}}
 }}}
@@ -342,7 +342,7 @@ A ordenação em memória e os `set`s do `load_table`/`analyze` são **preparaç
 | `test_hash_unique` | `DuplicateKey`; `search` acha registro em overflow; `delete` em overflow |
 | `test_hash_overflow_chain` | N=1, 10 blocos de registros: o `search` de cada chave acha todas |
 | `test_hash_search_cost` | sem overflow, cold: `search(k)` = 1 leitura |
-| `test_hash_index` | heap + `HashIndex` em CPF: busca = 1 bloco de índice + 1 de dados |
+| `test_hash_index` | heap + `HashIndex` em `dre`: busca = 1 bloco de índice + 1 de dados |
 | `test_catalog_persist` | criar, fechar o `Engine`, reabrir: tabelas, índices e stats iguais |
 | `test_temp` | `append` de 1000 registros, `finish`, `scan` devolve os mesmos; `drop` remove o arquivo; `bp.pinned() == 0` |
 

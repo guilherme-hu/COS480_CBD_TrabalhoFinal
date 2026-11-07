@@ -1,5 +1,7 @@
 # Base de dados e carga de trabalho
 
+> **Escopo revisado.** Esta preparação foi feita antes da versão nova do enunciado e ainda inclui itens que viraram opcionais e que o grupo não fará: joins tipos 2 (CPF) e 3 (orientador = professor), os subconjuntos `aluno_p`/`detalhes_p`/`turma_p`, faixas em `dre`/`cpf` e a seletividade de 0,1% (agora 1%). O escopo atual está em [`00_ARQUITETURA_GERAL.md`](implementacao/00_ARQUITETURA_GERAL.md) §0 e a pendência de código em [P6 §2.3](implementacao/P6_bancada_relatorio.md).
+
 Esta entrega implementa a preparação dos dados da universidade do enunciado
 (`proposta.pdf`, início e §6.4) e do P6 (§2, §3 e §5), seguindo os tipos e
 interfaces de `00_ARQUITETURA_GERAL.md`. Não executa a matriz de desempenho,
