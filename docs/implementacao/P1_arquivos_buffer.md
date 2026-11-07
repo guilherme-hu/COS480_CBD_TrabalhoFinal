@@ -1,6 +1,6 @@
 # P1 — Camada 4: Gerente de Arquivos e Gerente de Buffer Pool
 
-> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão lá (§3 e §4) e **não podem mudar** sem PR do grupo. Aqui está o *como* implementar.
+> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão lá (§3 e §4) e só mudam combinando com quem usa a interface. Aqui está uma proposta de *como* implementar. **As tabelas de decisão trazem recomendações, não decisões fechadas:** o agente debate cada uma com você antes de codar ([`AGENTS.md`](../../AGENTS.md) §3), e este arquivo pode ser atualizado com o que for decidido.
 
 **Peso:** ~17%. **Primeiro na fila:** P2 e P3 dependem de você. O marco de **05/11** é entregar `contracts.py`, o esqueleto do repositório e um `FileManager` + `BufferPool` mínimo funcionando (só LRU, uma área). O resto até **12/11**. Depois disso você coordena os **testes de estresse** e consolida o **`POST_MORTEM.md`**.
 
@@ -16,7 +16,7 @@
 - **Extras pedidos pelo enunciado:** toss-immediate, leitura antecipada (prefetch), gravação forçada e reserva de memória para os algoritmos.
 - **Urgente:** o esqueleto do repositório, o `contracts.py` e uma versão mínima (só LRU) **até 05/11**. Todo mundo depende disso para começar.
 - **Depois:** você coordena os testes de estresse e junta tudo no `POST_MORTEM.md`.
-- **Sugestão para o grupo:** comparar LRU × MRU mostra muito mais diferença que LRU × Clock.
+- **Política de substituição:** o enunciado novo não pede mais comparar duas políticas na matriz inteira. O grupo escolhe a mais adequada para cada operação e justifica com um experimento curto (P6 §4.4). LRU × MRU no nested-loop é o caso que mais diferencia.
 
 ---
 
@@ -132,14 +132,14 @@ def _count(self, fid, bno, write: bool):
 | 1 | Nº de páginas / blocos por página | soma de `BufferConfig.areas`; **1 bloco por página** |
 | 2 | Repartição | **por tipo de página**: `CATALOG`, `INDEX`, `DATA`, `WORK` (área de trabalho de ordenação e junção) |
 | 3 | Áreas fixas, autoajustáveis ou compartilhadas | **fixas**: medidas reproduzíveis; uma operação não rouba a área da outra |
-| 4 | Políticas comparadas | **LRU** e **Clock** (plano do grupo). Implemente também **MRU** (≈15 linhas) e FIFO; a bancada escolhe 2 |
-| 5 | Toss-immediate | sim, por configuração (`toss_immediate`) e dica no `unpin(toss=True)` |
+| 4 | Políticas | o enunciado novo pede que o grupo **escolha, por teste, a mais adequada** entre LRU, MRU, FIFO e Clock. Recomendação: implementar as quatro (MRU e FIFO têm ~15 linhas cada, Clock ~30) para que o experimento de escolha (P6 §4.4) justifique com números a política de cada operação. Alternativa mais curta: só LRU e MRU, justificando Clock (aproxima o LRU) e FIFO (ignora reuso) pela teoria |
+| 5 | Toss-immediate | sim, por configuração (`toss_immediate`) e dica no `unpin(toss=True)`. O enunciado só pergunta *se* haverá: "não" também vale, com justificativa |
 | 6 | Fixação (pin) | contador `pin_count` por frame; só frame com `pin_count == 0` pode ser vítima |
 | 7 | Gravação forçada | `force(page)`; usada pelo catálogo (write-through) |
 | 8 | Retenção preferencial | garantida pelas áreas fixas: índice e catálogo têm frames próprios |
-| 9 | Prefetch | sim, por configuração (`prefetch = k`), disparado por `pin(seq=True)` em *miss* |
+| 9 | Prefetch | sim, por configuração (`prefetch = k`), disparado por `pin(seq=True)` em *miss*. Também é "se haverá": "não" vale, com justificativa |
 
-> **Aviso ao grupo sobre a política:** o Clock é uma aproximação do LRU, então os números de LRU × Clock tendem a sair quase iguais. O contraste clássico dos livros é **LRU × MRU** no nested-loop: o LRU sofre *sequential flooding* e o MRU acerta. Como o MRU custa pouco, implemente as três e deixe a bancada decidir quais duas entram no relatório.
+> **Aviso ao grupo sobre a política:** o Clock é uma aproximação do LRU, então os números de LRU × Clock tendem a sair quase iguais. O contraste clássico dos livros é **LRU × MRU** no nested-loop: o LRU sofre *sequential flooding* e o MRU acerta. Por isso a escolha esperada é **MRU no nested-loop em blocos** (o interno é varrido várias vezes) e **LRU no resto**, mas quem decide é o experimento de escolha.
 
 ### 3.2 Estruturas
 

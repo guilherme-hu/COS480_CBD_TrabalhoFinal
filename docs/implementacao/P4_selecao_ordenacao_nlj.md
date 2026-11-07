@@ -1,6 +1,6 @@
 # P4 — Seleções, Ordenação Externa e Nested-Loop Join (em blocos e indexado)
 
-> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§7.1) e **não podem mudar** sem PR do grupo. Aqui está o *como* implementar.
+> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§7.1) e só mudam combinando com quem usa a interface. Aqui está uma proposta de *como* implementar. **As tabelas de decisão trazem recomendações, não decisões fechadas:** o agente debate cada uma com você antes de codar ([`AGENTS.md`](../../AGENTS.md) §3), e este arquivo pode ser atualizado com o que for decidido.
 
 **Peso:** ~15%. Você **consome** a camada 3 (P2/P3: `Table`, `DataFile`, `Index`, `TempFile`, `Catalog.temp`) e o `BufferPool` (P1: `reserve_work`, `capacity`). Você **fornece** os operadores de seleção e o NLJ para P6, e `access.py` + `external_sort` para o P5, que depende deles.
 
@@ -104,10 +104,12 @@ def fetch_cost(table) -> float:           # blocos de um DataFile.fetch (geral �
 | Tipo | `SCAN` (config. a) | `PRIMARY` (config. b) | `SECONDARY` (config. c) |
 | :--- | :--- | :--- | :--- |
 | Igualdade UNIQUE | `scan` + filtro; **para no 1º** se `schema.get(col).unique` | `data.search(v)` | `index.search(v)` → `fetch` |
-| Faixa UNIQUE | `scan` + filtro | BTREE: `data.range(lo, hi)`; HASH: **`NotApplicable`** | índice BTREE: `index.range` → `fetch`; índice HASH: **`NotApplicable`** |
+| Igualdade NOT UNIQUE (só para o INL, §6.3) | `scan` + filtro | `data.search(v)` (BTREE ou HASH NOT UNIQUE) | índice BTREE: `index.search(v)` → `fetch` |
 | Faixa NOT UNIQUE | `scan` + filtro | BTREE NOT UNIQUE: `data.range` | índice BTREE: `index.range` → `fetch` |
 
 - `PRIMARY` em HEAP → `NotApplicable` (heap não tem chave de organização).
+- **Faixa em campo UNIQUE:** opcional no enunciado novo, fora do escopo. O `select_range` é genérico na coluna, mas a bancada não mede esse caso.
+- **Igualdade em NOT UNIQUE** não é um teste de seleção da matriz, mas o INL precisa dela: faz `lookup` no lado detalhe (`inscricao.dre`, `aluno.curso`) e usa `select_eq_cost` como custo de cada busca.
 - `NotApplicable` vira "N/A" no CSV da bancada; não trate como erro.
 - **`sort_ptrs=True`** (só `SECONDARY`, só quando o `Ptr` é `RID`): dentro de `reserve_work(k)`, junte ponteiros em lotes de até `k · (B // 8)`, ordene por `(block, slot)` e faça o `fetch` em ordem. Blocos repetidos viram *hit*, e o custo cai de `n` para ~`min(n, b_r)` (fórmula de Cardenas). É a variante "bitmap/RID sort" dos livros (SKS 15.3.2). Para `Ptr` de B+ (`(k, seq)`) ignore, porque ordenar não ajuda a descida.
 - Preencha `info`: `{"variant": "scan|scan-stop|primary-hash|primary-btree|secondary-hash|secondary-btree|…", "matches": n}`.
@@ -137,7 +139,7 @@ Seeks (`Cost.seeks`): scan = 1; descida de árvore = 1 por nível; cada `fetch` 
 
 ### 4.3 Parâmetro de seletividade
 
-A bancada escolhe `lo`/`hi` para obter 0,1% e 50% (§5.2.2 do enunciado). A estimativa pela uniformidade pode errar se a distribuição não for uniforme (ex.: CR). **Não corrija isso no custo**: o erro vira análise no relatório. Se `info` vier com `"sel"`, preencha **também** `Cost` com o `n` real numa segunda linha da fórmula, para mostrar as duas.
+A bancada escolhe `lo`/`hi` para obter 1% e 50% (§5.2.2 do enunciado). A estimativa pela uniformidade pode errar se a distribuição não for uniforme (ex.: CR). **Não corrija isso no custo**: o erro vira análise no relatório. Se `info` vier com `"sel"`, preencha **também** `Cost` com o `n` real numa segunda linha da fórmula, para mostrar as duas.
 
 ---
 
@@ -253,7 +255,7 @@ with bp.reserve_work(M - 2) as k:                  # bloco externo: M-2 páginas
 
 - O dicionário sobre o bloco externo **não muda o I/O**: o algoritmo continua sendo nested-loop em blocos, porque o interno é varrido `⌈b_ext / (M − 2)⌉` vezes. Sem ele, a CPU do Python inviabiliza tabelas grandes (comparações `n_r × n_s`). Explique isso no relatório.
 - O `outer_it` fica suspenso com 1 página `DATA` fixada enquanto o interno é varrido (outra página `DATA`). Na conta: `M − 2` (`WORK`) + 2 (`DATA`) = `M` páginas de trabalho.
-- **Interação com o buffer (o resultado mais interessante para o relatório):** o interno é lido pelo `DATA`. Se `b_inner ≤ capacity(DATA)`, as varreduras depois da 1ª viram *hits*, e o medido cai muito abaixo da fórmula. Se `b_inner` for um pouco maior, LRU sofre *sequential flooding* (todo acesso é miss) e MRU acerta quase tudo. Avise o P6 para incluir esse caso na matriz.
+- **Interação com o buffer (o resultado mais interessante para o relatório):** o interno é lido pelo `DATA`. Se `b_inner ≤ capacity(DATA)`, as varreduras depois da 1ª viram *hits*, e o medido cai muito abaixo da fórmula. Se `b_inner` for um pouco maior, LRU sofre *sequential flooding* (todo acesso é miss) e MRU acerta quase tudo. Avise o P6: é esse caso que justifica a política escolhida para o BNL (P6 §4.4).
 
 ### 6.3 INL (indexed nested-loop)
 

@@ -1,6 +1,6 @@
 # P5 — Sort-Merge Join e Partition-Hash Join
 
-> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§7.2) e **não podem mudar** sem PR do grupo. Aqui está o *como* implementar.
+> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§7.2) e só mudam combinando com quem usa a interface. Aqui está uma proposta de *como* implementar. **As tabelas de decisão trazem recomendações, não decisões fechadas:** o agente debate cada uma com você antes de codar ([`AGENTS.md`](../../AGENTS.md) §3), e este arquivo pode ser atualizado com o que for decidido.
 
 **Peso:** ~16%. Você **consome** o P4 (`access.py`, `external_sort`, `select_eq_cost`), a camada 3 (P2/P3: `Table`, `HashFile.bucket_of/scan_bucket`, `Catalog.temp`, `hash_value`) e o P1 (`reserve_work`). Você **fornece** os dois joins e suas funções de custo para o P6.
 
@@ -13,7 +13,7 @@
 - **Você faz dois dos três algoritmos de join** (o terceiro, nested-loop, é do P4).
 - **Sort-merge join:** ordena as duas tabelas pela coluna do join e as percorre lado a lado, como num zíper.
   - Se uma tabela já está em ordem (organizada por B+ nessa coluna), não precisa ordenar.
-  - Cuidado com **chaves repetidas nos dois lados**: é preciso combinar todos com todos.
+  - Como só fazemos o join PK→FK, as chaves só repetem no lado detalhe: o registro do mestre fica parado enquanto passam os detalhes com a mesma chave.
 - **Hash join (partition-hash / GRACE):** divide as duas tabelas em **partições** pequenas com uma função de hash, de forma que cada par de partições caiba na memória, e junta par a par.
   - Se a partição ainda não cabe, divide de novo (**recursão**).
   - Se todas as chaves são iguais (**skew**), cai para nested-loop.
@@ -57,41 +57,38 @@ Para cada lado:
 | `SECONDARY` com índice BTREE | `read_ordered(side)` → `index.range` + `fetch` (acesso aleatório por registro). **Este é o ponto a medir nas configurações d/e** | sim |
 | `PRIMARY` em HASH, `SECONDARY` HASH, `SCAN` | `external_sort(eng, read_all(side), schema, col, n_blocks_hint=b, mem=m)` | não |
 
-**Divisão da memória:** as duas fusões finais rodam **ao mesmo tempo** (cada uma com até `mem` runs abertos) e o grupo de duplicatas precisa de 2 frames (§3.2). Portanto:
+**Divisão da memória:** as duas fusões finais rodam **ao mesmo tempo** (cada uma com até `mem` runs abertos). Como a fusão não guarda grupo de duplicatas (§3.2), toda a área `WORK` fica para os sorts. Portanto:
 
 ```python
 need = [side for side in (r, s) if read_ordered(side) is None]
-mem_each = (eng.M - 2) // max(1, len(need))
+mem_each = eng.M // max(1, len(need))
 if need and mem_each < 3:
-    raise ValueError(f"sort-merge precisa de M >= {2 + 3 * len(need)}")
+    raise ValueError(f"sort-merge precisa de M >= {3 * len(need)}")
 ```
 
 Isso aumenta o número de passadas de cada sort em relação à fórmula com `M` inteiro. O `*_cost` usa o **mesmo** `mem_each`, então estimado e medido continuam comparáveis. Explique no relatório.
 
-### 3.2 Fusão com duplicatas dos dois lados
+### 3.2 Fusão (um lado UNIQUE)
 
-O tipo 3 do enunciado (`aluno.orientador = turma.professor`) tem chaves repetidas **nos dois lados**. Para cada chave `k` igual:
-
-1. Junte o **grupo de `s`** com chave `k` num buffer dentro de `reserve_work(1)` (até `bfr_s` registros).
-2. Se o grupo passar disso, **despeje** o grupo inteiro (o já lido mais o restante) num `TempFile`, usando o último frame livre.
-3. Para cada `r` com chave `k`, percorra o grupo (lista ou `temp.scan()`) e emita `r + s`.
-4. `drop()` no temporário do grupo, se houver.
+Só fazemos o join PK→FK (geral §0): o lado mestre é UNIQUE na coluna do join, então cada chave aparece **no máximo uma vez** nele. A fusão fica simples e não precisa guardar grupo de duplicatas. O SKS 15.5.4 trata o caso geral, com repetição dos dois lados, que está fora do escopo.
 
 ```python
-r, s = next(rit, END), next(sit, END)
-while r is not END and s is not END:
-    kr, ks = r[ir], s[is_]
-    if kr < ks: r = next(rit, END)
-    elif kr > ks: s = next(sit, END)
+# u = lado UNIQUE (mestre), d = detalhe; uit/dit = fluxos ordenados de cada um
+ue, de = next(uit, END), next(dit, END)
+while ue is not END and de is not END:
+    ku, kd = ue[iu], de[id_]
+    if ku < kd:
+        ue = next(uit, END)
+    elif ku > kd:
+        de = next(dit, END)
     else:
-        group, s = _collect_group(sit, s, ks)     # lista OU TempFile; s = primeiro com chave > ks
-        while r is not END and r[ir] == ks:
-            for t in _iter_group(group): yield r + t   # (ou t + r, conforme a orientação original)
-            r = next(rit, END)
-        _drop_group(group)
+        yield orient(ue, de)        # r_rec + s_rec na ordem dos argumentos (geral §7.3)
+        de = next(dit, END)         # o mestre fica: o próximo detalhe pode ter a mesma chave
 ```
 
-As comparações entre tipos são sempre do mesmo tipo (mesma coluna em esquemas compatíveis). Os `None` já foram filtrados (§2).
+- O lado UNIQUE vem de `schema.get(col).unique`. Se **nenhum** lado for UNIQUE, levante `NotApplicable("sort-merge: só PK→FK no escopo")`.
+- Memória: um registro de cada lado, dentro das páginas já fixadas dos fluxos. Nenhuma reserva extra.
+- Os `None` já foram filtrados (§2).
 
 ### 3.3 Custo (`sort_merge_join_cost`)
 
@@ -102,7 +99,6 @@ custo = Σ_lados  C(lado)
 C(lado) = external_sort_cost(eng, b_lado, mem=mem_each)           se precisa ordenar  (já inclui a leitura da fusão final)
         = h − 1 + b_lado                                          se PRIMARY BTREE (folhas)
         = h_i − 1 + folhas_índice + n_lado · fetch_cost(tabela)   se SECONDARY BTREE
-+ (grupos despejados: 2 · blocos do grupo)                         normalmente 0; cite na fórmula se ocorrer
 ```
 
 Compare com a fórmula do livro `b_r + b_s + custo dos sorts` (SKS), que materializa a saída do sort. Explique a diferença de `b_r + b_s` no relatório: o pipeline economiza uma gravação e uma leitura de cada lado.
@@ -168,6 +164,8 @@ O `HashFile` já divide os dados por `bucket_of(k) = hash_value(k, seed) % N`. A
 
 ### 4.4 Recursão e skew
 
+Com o build no lado mestre (UNIQUE), não há skew: chaves distintas se espalham entre as partições. O skew só aparece se o build for forçado para o lado detalhe (`build=` explícito), como no experimento do lado construtor (P6 §4.2).
+
 Se uma partição de build não couber (`_Overflow`):
 
 1. reparticione **o par** (build_i, probe_i) com `seed = 100 + nível + 1` e `n_h' = min(M − 1, ⌈1.2 · b_i / (M − 2)⌉)`;
@@ -194,7 +192,7 @@ Seeks (SKS): `2(⌈b_r / b_b⌉ + ⌈b_s / b_b⌉) + 2·n_h` com `b_b = 1`. Pree
 
 ## 5. Matriz que você precisa suportar (enunciado §5.1)
 
-3 tipos de join × 2 algoritmos (os seus) × configurações a–e × 3 combinações de tamanho. O NLJ é do P4. Para cada configuração, a variante que o seu código escolhe:
+1 tipo de join (NATURAL PK→FK) × 2 algoritmos (os seus) × configurações a–e × 3 combinações de tamanho, com b e d nas duas orientações (geral §7.4). O NLJ é do P4. Para cada configuração, a variante que o seu código escolhe:
 
 | Config | Sort-merge | Hash join |
 | :--- | :--- | :--- |
@@ -212,13 +210,13 @@ Deixe esta tabela, preenchida com o que o código realmente faz, em `ai/P5/varia
 
 | Teste | Verifica |
 | :--- | :--- |
-| `test_smj_vs_bruteforce` | tabelas pequenas aleatórias (com duplicatas nos dois lados e `None`): multiconjunto da saída = laço duplo Python |
+| `test_smj_vs_bruteforce` | tabelas pequenas aleatórias (mestre UNIQUE, detalhe com repetições e `None`): multiconjunto da saída = laço duplo Python |
 | `test_hj_vs_bruteforce` | idem para hash join |
 | `test_orientation` | `build="s"` e `build="r"` dão a mesma saída `r + s` |
 | `test_smj_btree_no_sort` | r e s BTREE PRIMARY na coluna: nenhum temporário criado (`info["sorted_r"] is False`) |
-| `test_smj_big_group` | 1 chave com 10·bfr registros nos dois lados: o grupo vai para temporário; resultado correto; `pinned() == 0` |
+| `test_smj_no_unique` | nenhum lado UNIQUE na coluna → `NotApplicable` |
 | `test_hj_recursion` | `M = 4`, build 20× maior que M: `levels ≥ 1`, resultado correto |
-| `test_hj_skew` | todas as chaves iguais: `skew_fallback ≥ 1`, resultado = produto cartesiano |
+| `test_hj_skew` | build forçado no lado detalhe, todas as chaves iguais: `skew_fallback ≥ 1`, resultado = produto cartesiano |
 | `test_hj_prepartitioned` | r HASH na coluna: só s gera temporários; leituras ≈ fórmula |
 | `test_hj_bucket_join` | r e s HASH com N/seed iguais: `io.writes == 0` |
 | `test_costs` | área `WORK` pequena (força as gravações): medido ≈ estimado, ±10%, para grace e smj com sort |
@@ -233,8 +231,7 @@ O P6 compara tudo também com o SQLite. Os testes acima pegam os erros antes, em
 - **Dict de build com a tabela inteira** ("partition" de mentira): estrutura Python maior que a área reservada. É o erro que o enunciado cita.
 - Particionamento recursivo com a **mesma** função de hash (não separa nada; laço infinito ou estouro).
 - `hash()` do Python nas partições (muda entre execuções; os resultados ficam não reprodutíveis).
-- Sort-merge que trata duplicatas só de um lado: perde tuplas no join NOT UNIQUE × NOT UNIQUE.
-- Sort-merge que guarda o grupo de duplicatas sem limite.
+- Sort-merge que avança o mestre junto com o detalhe quando as chaves batem: perde os demais detalhes da mesma chave.
 - Duas fusões finais abertas ao mesmo tempo, cada uma com `M` runs (passa de M; `BufferFullError` ou, sem a checagem, contagem irreal).
 - Partições abertas (`n_h`) maiores que `M − 1`.
 - Temporários não apagados quando o gerador é abandonado.
