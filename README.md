@@ -53,6 +53,7 @@ Instruções, decisões sobre volumes e integração com P1–P3:
 
 | Caminho | Conteúdo |
 | :--- | :--- |
+| `AGENTS.md` | Guia para os agentes de IA do grupo: estrutura, protocolo de decisões, testes, revisão e post-mortem (`CLAUDE.md` só importa este arquivo) |
 | `proposta.md` | Enunciado transcrito em Markdown |
 | `proposta.pdf` | Enunciado original em PDF |
 | `docs/implementacao/` | Arquitetura geral e contratos (`00_ARQUITETURA_GERAL.md`) + um guia de implementação por integrante (`P1` a `P6`). Cada um passa à IA o geral + o seu |

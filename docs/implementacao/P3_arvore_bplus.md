@@ -1,10 +1,10 @@
 # P3 — Árvore B+: Arquivo Primário (UNIQUE e NOT UNIQUE) e Índice Secundário
 
-> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§4, §5, §6) e **não podem mudar** sem PR do grupo. Aqui está o *como* implementar.
+> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§4, §5, §6) e só mudam combinando com quem usa a interface. Aqui está uma proposta de *como* implementar. **As tabelas de decisão trazem recomendações, não decisões fechadas:** o agente debate cada uma com você antes de codar ([`AGENTS.md`](../../AGENTS.md) §3), e este arquivo pode ser atualizado com o que for decidido.
 
 **Peso:** ~18%, a parte de algoritmo mais difícil. Você **consome** a camada 4 (P1) e utilitários do P2 (`encode_key`, `key_size`, `RecordCodec`, `SlottedPage`). Você **fornece** `BTreeFile` (organização primária) e `BTreeIndex` (índice secundário), que o catálogo do P2 instancia e que P4/P5 usam.
 
-**Marcos:** até **09/11**: `BTreeFile` com `insert`/`search`/`range`/`scan`/`fetch` e split propagando até a raiz. Até **14/11**: `delete` com redistribuição e fusão, `bulk_load`, `BTreeIndex` unique e não-unique, `reorganize`.
+**Marcos:** até **09/11**: `BTreeFile` com `insert`/`search`/`range`/`scan`/`fetch` e split propagando até a raiz. Até **14/11**: `delete` com redistribuição e fusão, `bulk_load`, `BTreeIndex` não-unique, `reorganize`.
 
 ---
 
@@ -30,7 +30,7 @@
 | `cbd/files/btree_node.py` | layout dos nós internos e das folhas, busca binária no nó, split/merge de nó (sem I/O) |
 | `cbd/files/btree_core.py` | `_BPlusTree`: descida, inserção, remoção, bulk load, iteração de folhas. Parametrizado pelo "formato de folha" |
 | `cbd/files/btree_file.py` | `BTreeFile` (DataFile BTREE) |
-| `cbd/files/btree_index.py` | `BTreeIndex` (Index BTREE, unique e não-unique) |
+| `cbd/files/btree_index.py` | `BTreeIndex` (Index BTREE NOT UNIQUE) |
 | `tests/test_btree_*.py` | testes (§8) |
 
 Até o P1 entregar (05/11), use a fixture `bp` do `tests/conftest.py`. Até o P2 entregar o `codec`/`SlottedPage` (09/11), escreva os nós com `struct` puro e só a parte de folha do `BTreeFile` depende do `SlottedPage`. Combine com o P2 para ele entregar `slotted_page.py` e `encode_key` primeiro (são pequenos).
@@ -158,9 +158,9 @@ Cada nível custa 1 `pin`. A busca custa `height` pins, mais as folhas extras de
 
 `BTreeIndex.create(bp, name, spec, key_field, data)` guarda `data.ptr_size`, `data.encode_ptr` e `data.decode_ptr`. Todas as páginas são `PageType.INDEX`.
 
-### 5.1 UNIQUE (`spec.unique=True`)
+### 5.1 UNIQUE (`spec.unique=True`): fora do escopo
 
-Entrada da folha: `CK + encode_ptr(ptr)` com `seq = 0`. `search(k)` devolve 0 ou 1 `Ptr`.
+A tabela de métodos de acesso (geral §5.3) só usa índice B+ secundário em campo NOT UNIQUE. Não implemente um modo UNIQUE separado. Se `spec.unique=True` chegar, levante `NotApplicable`, ou trate como NOT UNIQUE com 1 ponteiro por chave se o grupo decidir que precisa.
 
 ### 5.2 NOT UNIQUE: "sem repetição de chave nas folhas" (enunciado §4.2)
 

@@ -1,6 +1,6 @@
 # P6 — Camada 1: Bancada de Teste, Validação, Resultados e Relatório Técnico
 
-> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). Você é o **cliente de todas as interfaces**: o §7 e o §8 do geral são a sua API. Aqui está o *como* implementar.
+> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). Você é o **cliente de todas as interfaces**: o §7 e o §8 do geral são a sua API. Aqui está uma proposta de *como* implementar. **As escolhas daqui são recomendações, não decisões fechadas:** o agente debate cada uma com você antes de codar ([`AGENTS.md`](../../AGENTS.md) §3).
 
 **Peso:** ~17%. Você **consome** tudo: `Engine` (que você mesmo escreve), `Catalog`/`Table` (P2/P3), operadores e funções `*_cost` (P4/P5) e contadores (P1). Você **fornece** a base, a matriz de experimentos, os CSVs, os gráficos e o relatório técnico.
 
@@ -16,11 +16,11 @@
 - **`Engine`:** a peça que liga as camadas (disco + buffer + catálogo) e permite **zerar o cache e os contadores** antes de cada medição.
 - **Gerador da base:** cria os dados da universidade (alunos, cursos, turmas…) sempre iguais (determinístico), com tamanhos escolhidos para ter tabelas "pequenas" (cabem na memória) e "grandes" (não cabem).
 - **Versões físicas:** a mesma tabela é guardada de vários jeitos (heap, B+ por uma coluna, hash por uma coluna, com índices) para comparar as configurações a–e do enunciado.
-- **Matriz de experimentos:** todas as combinações de tipo de join × tamanho × algoritmo × configuração × política de buffer, mais as seleções. Cada combinação roda pelo menos 3 vezes.
+- **Matriz de experimentos:** o NATURAL JOIN mestre-detalhe nas 3 combinações de tamanho × 3 algoritmos × configurações a–e, mais as seleções. A política de buffer não é mais um fator: é escolhida por tipo de operação num experimento curto (§4.4). Cada combinação roda pelo menos 3 vezes.
 - **Medição:** cache frio, consumir o resultado inteiro e anotar os contadores. **Validação:** o mesmo resultado tem que sair no SQLite.
 - **Estimado × medido:** você **não escreve** as fórmulas, que vêm do P4/P5. Você coloca a fórmula ao lado da medida e explica as diferenças.
 - **Saídas:** CSVs, gráficos e o relatório técnico com as recomendações finais ("para tal carga, use tal configuração").
-- **Ambiguidade do enunciado a perguntar ao professor:** está no §3.
+- **Ambiguidade do enunciado a perguntar ao professor:** o que é "índice secundário clustering" (geral §5.3).
 
 ---
 
@@ -34,7 +34,7 @@
 | `bench/build.py` | monta as bases físicas (variantes de organização e índices) por tamanho de bloco (§3) |
 | `bench/sqlite_ref.py` | carrega os mesmos dados no SQLite e calcula os resultados de referência (§5) |
 | `bench/matrix.py` | lista de experimentos (§4) |
-| `bench/run.py` | orquestrador: mede, valida e grava o CSV (§6). CLI: `python -m bench.run --scale 0.1 --only joins --policies LRU,MRU` |
+| `bench/run.py` | orquestrador: mede, valida e grava o CSV (§6). CLI: `python -m bench.run --scale 0.1 --only joins` |
 | `bench/compare_cost.py` | tabela estimado × medido, com razão e motivo das diferenças (§7) |
 | `bench/plots.py` | gráficos (`matplotlib`) em `results/figs/` |
 | `tests/integration/` | testes ponta a ponta em escala minúscula (§8) |
@@ -64,22 +64,21 @@ Calibre com `B = 4096` e `M = 64`. A tabela **pequena** cabe em `M − 2 = 62` b
 | inscricao | 500 000 | `dre` uniforme em alunos (≈ 10/aluno); `turma` uniforme |
 | detalhes | 50 000 | `cpf` = cpf dos alunos (embaralhado); LIST com 0–8 itens |
 
-Para cada tabela, **imprima e grave** `n`, `b` (blocos), `bfr` e `V(A)` das colunas usadas (`results/base_stats.csv`) e confira os tamanhos: pequena ≤ 62 blocos, grande ≥ 1 280. Ajuste os volumes se o `bfr` real fugir muito do esperado.
+Para cada tabela, **imprima e grave** `n`, `b` (blocos), `bfr` e `V(A)` das colunas usadas (`results/base_stats.csv`) e confira os tamanhos: pequena ≤ 62 blocos, grande ≥ 1 280. Ajuste os volumes se o `bfr` real fugir muito do esperado. `turma` e `detalhes` não entram nos experimentos (geral §0). O `--rows turma=100000` do código atual existia para o join tipo 3 e não é mais necessário.
 
 Comece com `--scale 0.1` para desenvolver. Meça o tempo de 1 join grande e escolha a escala final para que a matriz inteira rode em **≤ 4 h** (§6.4).
 
-### 2.3 Subconjuntos para as combinações de tamanho
+### 2.3 Combinações de tamanho
 
-O enunciado (§5.1.2) pede *menor ⋈ menor*, *menor ⋈ maior* e *maior ⋈ maior* para **cada** tipo de join. Crie tabelas derivadas (permitido pelo §6.4 do enunciado):
+Só o NATURAL JOIN mestre-detalhe está no escopo (geral §0), e as tabelas reais já cobrem as três combinações do enunciado (§5.1.2):
 
-| Tipo de join | menor ⋈ menor | menor ⋈ maior | maior ⋈ maior |
-| :--- | :--- | :--- | :--- |
-| 1. NATURAL PK→FK (`codigo` = `curso`, `dre`) | curso ⋈ disciplina | curso ⋈ aluno | aluno ⋈ inscricao |
-| 2. UNIQUE (`cpf`) | aluno_p ⋈ detalhes_p | aluno_p ⋈ detalhes | aluno ⋈ detalhes |
-| 3. NOT UNIQUE (`orientador` = `professor`) | aluno_p ⋈ turma_p | aluno_p ⋈ turma | aluno ⋈ turma |
+| menor ⋈ menor | menor ⋈ maior | maior ⋈ maior |
+| :--- | :--- | :--- |
+| curso ⋈ disciplina (`codigo` = `curso`) | curso ⋈ aluno (`codigo` = `curso`) | aluno ⋈ inscricao (`dre`) |
 
-- `aluno_p`: alunos de **2 cursos** (≤ 62 blocos); `detalhes_p`: detalhes dos CPFs de `aluno_p`; `turma_p`: turmas dos professores que aparecem em `aluno_p`, cortadas para ≤ 62 blocos.
-- Confirme por `stats()` que cada "menor" tem `b ≤ M − 2` e registre isso na tabela do relatório.
+Não há subconjuntos. Confirme por `stats()` que cada "menor" tem `b ≤ M − 2` **em todos os tamanhos de bloco medidos** (com B = 2048, `disciplina` fica perto do limite: ~55 blocos estimados) e registre isso na tabela do relatório.
+
+**Pendência no código atual** (`bench/workload.py`, `bench/schema.py`, `bench/build.py` e `tests/test_data_preparation.py`): ainda gera os joins tipos 2 e 3, os subconjuntos `aluno_p`/`detalhes_p`/`turma_p`, as faixas em `dre`/`cpf` e a seletividade de 0,1%. Ajuste para o escopo novo antes da integração.
 
 ---
 
@@ -97,18 +96,14 @@ As colunas por tabela vêm dos joins e das seleções:
 
 | Tabela | Colunas |
 | :--- | :--- |
-| aluno, aluno_p | `dre` (U), `cpf` (U), `curso` (NU), `orientador` (NU), `cr` (NU) |
+| aluno | `dre` (U: join com inscricao e seleção por igualdade), `curso` (NU: join com curso), `cr` (NU: seleção por faixa) |
 | inscricao | `dre` (NU) |
 | curso | `codigo` (U) |
 | disciplina | `curso` (NU) |
-| detalhes, detalhes_p | `cpf` (U) |
-| turma, turma_p | `professor` (NU) |
 
 **Por que isso basta:** o caminho de acesso é **escolhido explicitamente** (`Path`). Com `Path.SCAN`, o operador ignora os índices que existirem. Uma variante heap com todos os índices serve para as configurações a, d (lado secundário) e e. Só "estar organizado pela coluna" exige uma variante física própria.
 
-**Ambiguidade do enunciado a registrar:** os tipos 2 e 3 dizem "campos que **não** ditam a organização primária", mas as configurações b–d pedem "um dos campos é o da organização primária". Interpretamos assim: nos tipos 2 e 3 a coluna **não é a PK** da tabela (CPF não é a PK de aluno; `orientador` não é PK), e nas configurações b–d o arquivo é organizado por ela mesmo assim. **Pergunte ao professor** e cite a resposta no relatório.
-
-Variantes HASH: passe `OrgSpec.params["expected_records"] = n` (ou `buckets` explícito) para o P2 dimensionar N. Para o *bucket-join* do P5, crie um par de variantes com `buckets` e `seed` **iguais** (ex.: `aluno__hs_cpf_eq` e `detalhes__hs_cpf_eq`).
+Variantes HASH: passe `OrgSpec.params["expected_records"] = n` (ou `buckets` explícito) para o P2 dimensionar N. Para o *bucket-join* do P5, crie um par de variantes com `buckets` e `seed` **iguais** (ex.: `curso__hs_codigo_eq` e `aluno__hs_curso_eq`). Em NOT UNIQUE, passe também `params["distinct"] = V(A)` (P2 §6.1).
 
 Carga: `Catalog.load_table(..., bulk=True)` para a base de medição. Para o experimento de carga (§4.4), crie também `aluno__bt_dre_inc` com `bulk=False`.
 
@@ -120,14 +115,18 @@ Carga: `Catalog.load_table(..., bulk=True)` para a base de medição. Para o exp
 
 ### 4.1 Configuração-base (o enunciado §6 pede um fator por vez)
 
-`B = 4096`, `areas = {CATALOG: 8, INDEX: 64, DATA: 128, WORK: 64}`, `policy = LRU`, `toss_immediate = False`, `prefetch = 0`, carga em bulk.
+`B = 4096`, `areas = {CATALOG: 8, INDEX: 64, DATA: 128, WORK: 64}`, `policy` = a escolhida para a operação no experimento de escolha (§4.4; esperado: MRU no BNL, LRU no resto), `toss_immediate = False`, `prefetch = 0`, carga em bulk.
 
 ### 4.2 Joins (núcleo da avaliação)
 
 Produto completo de:
 
-- **tipo** (3) × **tamanho** (3) × **algoritmo** (`nl_join`, `sort_merge_join`, `hash_join`) × **configuração** a–e × **política** (as 2 escolhidas);
-- para b, c e d, a organização do lado PRIMARY varia em {BTREE, HASH} (2 variantes). Configuração c com HASH nos dois: rode **duas vezes**, com N e seed iguais (`bucket-join` do P5) e diferentes.
+- **tamanho** (3) × **algoritmo** (`nl_join`, `sort_merge_join`, `hash_join`) × **configuração** a–e, só para o NATURAL JOIN mestre-detalhe;
+- b e d nas **duas orientações**: PRIMARY no mestre ou no detalhe (geral §7.4);
+- em b e d, a organização do lado PRIMARY varia em {BTREE, HASH}. Na c, rode BTREE-BTREE, HASH-HASH com N e seed diferentes, e HASH-HASH com N e seed iguais (`bucket-join` do P5);
+- política: a escolhida para o algoritmo (§4.4), registrada na coluna `policy`.
+
+São 13 configurações físicas (a 1, b 4, c 3, d 4, e 1) × 3 algoritmos × 3 tamanhos = 117 linhas por repetição.
 
 Mapa configuração → `JoinSide` (geral §7.4), com `r` = 1ª tabela do par e `s` = 2ª:
 
@@ -139,30 +138,34 @@ Mapa configuração → `JoinSide` (geral §7.4), com `r` = 1ª tabela do par e 
 | d | `__bt_col`/`__hs_col`, PRIMARY | `__heap`, SECONDARY |
 | e | `__heap`, SECONDARY | `__heap`, SECONDARY |
 
+Na orientação invertida de b e d, troque os papéis: r em `__heap` (SCAN ou SECONDARY) e s organizado pela coluna. `r` continua sendo o mestre.
+
 Algumas combinações não existem (ex.: `curso.codigo` só tem 50 valores; ou um caminho que dá `NotApplicable`). Gere a linha mesmo assim, com `status = "N/A"` e o motivo.
 
-**Experimento de buffer a incluir obrigatoriamente** (P4 §6.2): BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`), comparando LRU × MRU (× Clock). É onde a política faz diferença; nos demais casos LRU e Clock tendem a empatar.
+**Lado externo e construtor:** o enunciado pede atenção a qual tabela é a interna e qual é a externa. Na combinação menor ⋈ maior, config a, rode também `outer`/`build` forçados para o lado oposto ao `auto`. É a evidência de que a regra do `auto` está certa.
 
 ### 4.3 Seleções
 
 | Tipo | Coluna | Valores |
 | :--- | :--- | :--- |
 | igualdade UNIQUE | `aluno.dre` | 20 DREs sorteados (relate a média) |
-| faixa UNIQUE | `aluno.dre` (e `aluno.cpf`) | `dre ≤ q`, com `q` = quantil 0,1% e 50% calculado nos **dados reais** |
-| faixa NOT UNIQUE | `aluno.cr` | `cr ≥ q` (0,1% → CR alto, "acima de 9"); `cr ≤ q` (50%) |
+| faixa NOT UNIQUE | `aluno.cr` | `cr ≥ q` (1%, CR alto) e `cr ≤ q` (50%), com `q` = quantil calculado nos **dados reais** |
 
-× caminhos a/b/c (SCAN em `__heap`; PRIMARY em `__bt_col` e `__hs_col`; SECONDARY em `__heap`) × 2 seletividades × 2 políticas. Para SECONDARY, rode com `sort_ptrs` False e True. Passe `info={"sel": sel_real}` para o P4 colocar o `n` real na fórmula.
+× caminhos a/b/c (SCAN em `__heap`; PRIMARY em `__bt_col` e `__hs_col`; SECONDARY em `__heap`) × 2 seletividades (só na faixa; a igualdade UNIQUE devolve 1 registro). Para SECONDARY, rode com `sort_ptrs` False e True. Passe `info={"sel": sel_real}` para o P4 colocar o `n` real na fórmula.
 
-### 4.4 Fatores extras (um de cada vez, sobre a base, num subconjunto representativo)
+### 4.4 Experimentos de justificativa (um fator de cada vez, sobre a base, num subconjunto representativo)
+
+O relatório tem de justificar **todas** as escolhas comparando com as preteridas (enunciado §7.2.2.a). Estes experimentos curtos dão os números. Os de política e de manutenção são exigidos pelo enunciado. Os demais só existem se a decisão correspondente for tomada (ex.: se o P1 decidir não ter prefetch, não há experimento de prefetch).
 
 | Fator | Níveis | Experimentos |
 | :--- | :--- | :--- |
+| **política de substituição** (obrigatório) | as implementadas pelo P1 (LRU, MRU, Clock, FIFO) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
 | tamanho de bloco | 2048, 4096, 8192 | joins tipo 1 (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
 | toss-immediate | off/on | os scans e o BNL |
 | prefetch | 0, 8 | os scans (o efeito aparece em `io.seeks`) |
 | memória (`WORK`) | 16, 64, 256 | sort-merge e hash join grandes (passadas, recursão) |
 | bulk × incremental | `bulk=True/False` | ocupação e altura da B+ e tempo de carga (indicador §6.1.1) |
-| carga de manutenção | +10% inserts, −10% deletes aleatórios via `Table` | `stats()` de dados e índices antes e depois (indicador §6.1.1) |
+| carga de manutenção (obrigatório, indicador §6.1.1) | +10% inserts, −10% deletes aleatórios via `Table` | `stats()` de dados e índices antes e depois (indicador §6.1.1) |
 
 ---
 
@@ -275,8 +278,8 @@ Estrutura:
 2. **Opções de projeto (item a):** colete as tabelas "Decisões" de cada parte, prontas nos arquivos P1 §2.1/§3.1, P2 §2.1/§5.1/§6.1, P3 §2 e P4/P5 (variantes): tamanhos de bloco, blocagem, registro e cabeçalhos, campos de ordenação, função de hash, ordem (fan-out) das árvores, buffer. Mais a descrição da base: esquema físico, volumes, `b`, `bfr`, `V(A)`, subconjuntos e a interpretação das ambiguidades do enunciado.
 3. **Metodologia:** configuração-base, fatores, protocolo de medição, repetições, validação SQLite.
 4. **Resultados (item b):** tabelas e gráficos com **medido ao lado do estimado** (`est.formula`). Mínimo:
-   - por tipo de join: barras agrupadas, algoritmo × configuração a–e, uma figura por combinação de tamanho;
-   - LRU × MRU/Clock no BNL com *flooding*;
+   - joins: barras agrupadas, algoritmo × configuração a–e, uma figura por combinação de tamanho;
+   - experimento de escolha da política (inclui LRU × MRU no BNL com *flooding*);
    - seleções: caminho × seletividade;
    - memória (`WORK`) × passadas/recursão;
    - tamanho de bloco;
