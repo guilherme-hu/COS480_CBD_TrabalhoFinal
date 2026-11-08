@@ -8,12 +8,12 @@ Repositório destinado ao desenvolvimento, instrumentação e análise experimen
 
 | Nome Completo | DRE | Camada / Responsabilidade |
 | :--- | :---: | :--- |
-| **Bernardo Brandão Pozzato C. Costa** | `123289593` | *P1* |
+| **Bernardo Brandão Pozzato C. Costa** | `123289593` | *P6* |
 | **Enzo de Carvalho Sampaio** | `123386206` | *P5* |
 | **Gabriel Schmitz Corrêa Rizawinsk** | `123225573` | *P3* |
 | **Guilherme En Shih Hu** | `123224674` | *P2* |
 | **Raphael Henrique da Silva Pereira** | `123420783` | *P4* |
-| **Vivian Maria da Silva e Souza** | `123205793` | *P6* |
+| **Vivian Maria da Silva e Souza** | `123205793` | *P1* |
 
 ---
 
