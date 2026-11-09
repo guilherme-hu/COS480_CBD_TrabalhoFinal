@@ -41,3 +41,6 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    - #4: carga de trabalho reduzida ao escopo novo (3 joins mestre-detalhe,
      20 igualdades em `dre`, faixas em `cr` com metas 1% e 50%). Alteração
      pequena em código existente; sem versão bruta separada em `raw/`.
+   - #5: removidos subconjuntos e variantes fora do escopo (23 variantes);
+     `distinct = V(A)` nas variantes hash NOT UNIQUE; regra do N comum dos pares
+     bucket-join (D-P6-01, provisória). Defeito da 1ª versão registrado em `review.md`.

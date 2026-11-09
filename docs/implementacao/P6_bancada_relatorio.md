@@ -78,7 +78,7 @@ Só o NATURAL JOIN mestre-detalhe está no escopo (geral §0), e as tabelas reai
 
 Não há subconjuntos. Confirme por `stats()` que cada "menor" tem `b ≤ M − 2` **em todos os tamanhos de bloco medidos** (com B = 2048, `disciplina` fica perto do limite: ~55 blocos estimados) e registre isso na tabela do relatório.
 
-**Pendência no código atual** (`bench/workload.py`, `bench/schema.py`, `bench/build.py` e `tests/test_data_preparation.py`): ainda gera os joins tipos 2 e 3, os subconjuntos `aluno_p`/`detalhes_p`/`turma_p`, as faixas em `dre`/`cpf` e a seletividade de 0,1%. Ajuste para o escopo novo antes da integração.
+**Pendência resolvida (08/11, issues #4 e #5):** a carga de trabalho só tem os 3 NATURAL JOINs, as igualdades em `dre` e as faixas em `cr` a 1% e 50%; os subconjuntos e as variantes fora do escopo foram removidos. N comum dos pares bucket-join: D-P6-01 (`docs/decisoes/P6.md`).
 
 ---
 
