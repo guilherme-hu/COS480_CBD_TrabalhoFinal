@@ -29,7 +29,7 @@
 | `cbd/contracts.py` | **cópia exata** do §4 do documento geral |
 | `cbd/storage/file_manager.py` | `FileManager` |
 | `cbd/storage/buffer_pool.py` | `Page`/`Frame`, `BufferPool`, áreas |
-| `cbd/storage/policies.py` | `LRU`, `MRU`, `Clock`, `FIFO` |
+| `cbd/storage/policies.py` | `LRU`, `MRU` (`D-P1-08`: Clock e FIFO preteridas e justificadas em `docs/decisoes/P1.md`) |
 | `tests/conftest.py` | fixture `eng` (geral §11) + fixture `bp` só da camada 4 (abaixo) |
 | `tests/test_file_manager.py`, `tests/test_buffer_pool.py`, `tests/test_policies.py` | testes da sua camada |
 | `tests/stress/` | testes de estresse do sistema (§6) |
@@ -132,7 +132,7 @@ def _count(self, fid, bno, write: bool):
 | 1 | Nº de páginas / blocos por página | soma de `BufferConfig.areas`; **1 bloco por página** |
 | 2 | Repartição | **por tipo de página**: `CATALOG`, `INDEX`, `DATA`, `WORK` (área de trabalho de ordenação e junção) |
 | 3 | Áreas fixas, autoajustáveis ou compartilhadas | **fixas**: medidas reproduzíveis; uma operação não rouba a área da outra |
-| 4 | Políticas | o enunciado novo pede que o grupo **escolha, por teste, a mais adequada** entre LRU, MRU, FIFO e Clock. Recomendação: implementar as quatro (MRU e FIFO têm ~15 linhas cada, Clock ~30) para que o experimento de escolha (P6 §4.4) justifique com números a política de cada operação. Alternativa mais curta: só LRU e MRU, justificando Clock (aproxima o LRU) e FIFO (ignora reuso) pela teoria |
+| 4 | Políticas | **decidido (`D-P1-08`):** implementadas **LRU** e **MRU** (FIFO e Clock preteridas e justificadas em `docs/decisoes/P1.md`; `LRU` escolhida para a bateria geral e `MRU` para o comparativo de *Nested-Loop Join*) |
 | 5 | Toss-immediate | sim, por configuração (`toss_immediate`) e dica no `unpin(toss=True)`. O enunciado só pergunta *se* haverá: "não" também vale, com justificativa |
 | 6 | Fixação (pin) | contador `pin_count` por frame; só frame com `pin_count == 0` pode ser vítima |
 | 7 | Gravação forçada | `force(page)`; usada pelo catálogo (write-through) |
@@ -177,8 +177,8 @@ def pin(self, fid, bno, ptype, seq=False):
         f.pin_count += 1
         area.policy.accessed(f)
         return f
+    f = self._victim(area)                       # BufferFullError se não houver (antes de incrementar misses!)
     area.stats.misses += 1; self.stats.misses += 1
-    f = self._victim(area)                       # BufferFullError se não houver
     f.data[:] = self.fm.read(fid, bno)
     self._install(f, area, fid, bno, ptype)      # _table, pin_count=1, dirty=False, policy.loaded(f)
     if seq and self.cfg.prefetch:
@@ -193,7 +193,7 @@ def pin(self, fid, bno, ptype, seq=False):
 4. Se a vítima está suja: `fm.write`, `dirty_evictions += 1`. Remova-a de `_table` e chame `policy.removed(f)`.
 5. Se nada sobrar, levante `BufferFullError(f"área {ptype}: {n} frames, todos fixados")`.
 
-`_prefetch(area, fid, start, k)`: para `b` em `start .. start+k-1`, pare no primeiro bloco que já está residente, que passa do `high_water` ou para o qual não há vítima sem esperar. Leia com `fm.read`, instale **sem pin** (`pin_count = 0`) e conte `prefetched += 1`. A leitura sai sequencial naturalmente.
+`_prefetch(area, fid, start, k)`: para `b` em `start .. start+k-1`, pare no primeiro bloco que já está residente, que passa do `high_water` ou para o qual não há vítima sem esperar **fora do conjunto `batch_frames` instalado na própria chamada de `_prefetch` (`D-P1-12`)**. Leia com `fm.read`, instale **sem pin** (`pin_count = 0`) e conte `prefetched += 1`. A leitura sai sequencial naturalmente.
 
 ### 3.4 `unpin`, `new_page`, `force`, `flush_*`, `drop_file`, `clear`
 
@@ -281,7 +281,7 @@ O caminho do `pin` com hit roda milhões de vezes. Mantenha-o curto: uma busca n
 | `test_dirty_eviction` | área com 2 frames: suja A, carrega B e C; A é gravado (`dirty_evictions == 1`); ao reler, o conteúdo novo está lá |
 | `test_not_dirty_no_write` | página alterada **sem** `mark_dirty` é perdida. Prova que o contador não inventa gravação e serve de exemplo do bug do enunciado |
 | `test_buffer_full` | todos os frames fixados → `BufferFullError` |
-| `test_lru_mru_clock_fifo` | sequência de referência clássica com 3 frames: compare a sequência de vítimas com a calculada à mão (coloque o cálculo no comentário) |
+| `test_lru_vs_mru_victims` | sequência de referência clássica com 3 frames: compare a sequência de vítimas de LRU e MRU com a calculada à mão (coloque o cálculo no comentário) |
 | `test_sequential_flooding` | área de 4 frames; varrer 5 blocos 3×. LRU: 15 misses. MRU: bem menos. É o resultado que vai para o relatório |
 | `test_toss` | com `toss_immediate=True`, a página desafixada com `toss` é a próxima vítima |
 | `test_prefetch` | `prefetch=4`: um pin `seq` em bloco frio lê 5 blocos; os 4 pins seguintes são hits |

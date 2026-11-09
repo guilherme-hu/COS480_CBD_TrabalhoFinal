@@ -19,9 +19,6 @@ A tabela abaixo mostra o impacto do tamanho de bloco de $4096\text{ bytes}$ sobr
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
 | **Pequenas** | `curso` | $50$ | $156,2\text{ B}$ | $25,0\text{ reg/bloco}$ | **$2$** | $5$ | $1$ |
 | *(cabem em $M-2=62$)* | `disciplina` | $1\,000$ | $103,2\text{ B}$ | $37,0\text{ reg/bloco}$ | **$27$** | $55$ | $14$ |
-| | `detalhes_p` | $640$ | $114,1\text{ B}$ | $33,7\text{ reg/bloco}$ | **$19$** | $40$ | $10$ |
-| | `turma_p` | $1\,821$ | $51,0\text{ B}$ | $72,8\text{ reg/bloco}$ | **$25$** | $51$ | $13$ |
-| | `aluno_p` | $640$ | $152,4\text{ B}$ | $24,6\text{ reg/bloco}$ | **$26$** | $52$ | $13$ |
 | **Grandes** | `turma` | $100\,000$ | $51,0\text{ B}$ | $73,0\text{ reg/bloco}$ | **$1\,370$** | $2\,778$ | $676$ |
 | *($> 10 \times \text{DATA} = 1280$)* | `detalhes` | $50\,000$ | $120,8\text{ B}$ | $31,9\text{ reg/bloco}$ | **$1\,565$** | $3\,216$ | $772$ |
 | | `aluno` | $50\,000$ | $152,4\text{ B}$ | $25,5\text{ reg/bloco}$ | **$1\,962$** | $4\,037$ | $968$ |
@@ -31,7 +28,7 @@ A tabela abaixo mostra o impacto do tamanho de bloco de $4096\text{ bytes}$ sobr
 1. **Por que $2\text{ KB}$ ($2048\text{ B}$) foi preterido:**
    - Reduz o fator de blocagem ($bfr$) pela metade e **dobra o número de blocos** de todas as tabelas (ex.: `aluno` passa de $1\,962$ para $4\,037$ blocos; `inscricao` passa de $4\,588$ para $9\,260$ blocos), dobrando o custo de I/O em todas as varreduras sequenciais (*Table Scans*, *Sort-Merge* e *Hash Join*).
    - Aumenta o *overhead* proporcional de cabeçalhos de página (*Slotted Page* de $28\text{ B}$ consome $1,37\%$ em $2\text{ KB}$ contra $0,68\%$ em $4\text{ KB}$) e reduz pela metade o *fan-out* (ordem) dos nós da Árvore B+, aumentando a altura da árvore.
-   - Nas tabelas pequenas (`disciplina` $= 55$, `aluno_p` $= 52$, `turma_p` $= 51$), os tamanhos ficam muito próximos do limite da memória de trabalho ($M - 2 = 62$ blocos), deixando pouca margem para variações de ocupação em B+ e Hash.
+   - Na tabela `disciplina` ($55$ blocos em $2\text{ KB}$), o tamanho fica muito próximo do limite da memória de trabalho ($M - 2 = 62$ blocos), deixando pouca margem para variações de ocupação em B+ e Hash.
 2. **Por que $8\text{ KB}$ ($8192\text{ B}$) foi preterido:**
    - Em **buscas pontuais e acessos aleatórios via índice** (ex.: seleção pontual por `aluno.dre`, lookup em *Index Nested-Loop Join* ou `fetch(ptr)` em índice secundário sem ordenação de ponteiros), o SGBD precisa de apenas 1 registro ($\sim 152\text{ B}$), mas é obrigado a transferir $8\,192\text{ B}$ do disco — desperdiçando o dobro de largura de banda e de espaço por frame em comparação a $4\text{ KB}$.
    - Além disso, com $8\text{ KB}$, as tabelas `turma` ($676$ blocos), `detalhes` ($772$ blocos) e `aluno` ($968$ blocos) deixam de ter folga de $10\times$ sobre a área `DATA` ($128$ blocos), reduzindo a pressão sobre o Buffer Pool nos testes de junção grande $\bowtie$ grande.
@@ -138,7 +135,7 @@ Offset (bytes)  Tamanho   Tipo    Campo        Descrição
 - **Justificativa e comparação com alternativas preteridas:**
   - **Por que $1\text{ página} = 1\text{ bloco}$:** Mapear 1 frame diretamente a 1 bloco físico elimina fragmentação interna de frame e permite comparar diretamente 1 *miss* do buffer com 1 leitura física nas fórmulas teóricas dos livros-texto. Páginas compostas por múltiplos blocos foram preteridas porque o efeito de ler blocos vizinhos de uma só vez já é obtido de forma mais flexível e configurável pelo mecanismo de **prefetching**.
   - **Por que $264$ páginas com `DATA = 128` e `WORK = 64`:** O enunciado (§5.1.2 e §6.2) exige que as tabelas pequenas **caibam inteiramente na área de buffer reservada** ($b_r \le M - 2 = 62$ páginas) e que as tabelas grandes **não caibam** no buffer. Com $M = \text{WORK} = 64$ e $\text{DATA} = 128$:
-    - Todas as tabelas pequenas/subconjuntos (`curso` $= 2$, `detalhes_p` $= 19$, `turma_p` $= 25$, `aluno_p` $= 26$, `disciplina` $= 27$ blocos) cabem com folga em $M - 2 = 62$ páginas.
+    - Todas as tabelas pequenas (`curso` $= 2$, `disciplina` $= 27$ blocos) cabem com folga em $M - 2 = 62$ páginas.
     - Todas as tabelas grandes (`turma` $= 1\,370$, `detalhes` $= 1\,565$, `aluno` $= 1\,962$, `inscricao` $= 4\,588$ blocos) são mais de **$10\times$ maiores** que `DATA` ($128$) e $> 20\times$ maiores que `WORK` ($64$), exercitando intensamente a substituição de páginas, particionamento em *Hash Join* e múltiplas *runs* no *Sort-Merge Join*.
 
 ---
