@@ -10,7 +10,7 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - Carga de trabalho no escopo novo (#4): `test_all_workload_results_against_python`.
 - Plano físico com as 23 variantes do escopo (#5): `test_plan_and_catalog_adapter`.
 - Engine documentado e testado com dublês (#7): `tests/test_engine.py`.
-- Matriz: 117 joins + 4 de lado forçado (#9) e 90 seleções (#10): `tests/test_matrix.py`.
+- Matriz: 117 joins + 4 de lado forçado (#9) e 98 seleções (#10: 80 igualdades + 18 faixas, com o B+ secundário clustering sobre B+ e hash): `tests/test_matrix.py`.
 - Protocolo de medição, CSV §6.3, validação SQLite, repetições, `--resume`,
   `summary.csv` (#11, #12, #13): `tests/test_run.py`.
 
@@ -32,9 +32,10 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 | §5.1 NATURAL JOIN, 3 combinações de tamanho | `bench/workload.py` (`JOINS`) | `test_all_workload_results_against_python` |
 | §5.1 algoritmos × configurações a–e | `bench/matrix.py` (`join_experiments`) | `test_join_matrix_size`, `test_config_paths_match_architecture` |
 | §5.1.3 interna × externa | linhas `outer_*`/`build_*` da matriz | `test_join_matrix_size` |
-| §5.2 seleções (UNIQUE =, NOT UNIQUE faixa), caminhos a–c, 1% e 50% | `bench/workload.py`, `bench/matrix.py` | `test_select_matrix_counts`, `test_select_values_come_from_workload` |
+| §5.2 seleções (UNIQUE =, NOT UNIQUE faixa), caminhos a–c, 1% e 50%; §4.2 secundário clustering sobre B+ e hash | `bench/workload.py`, `bench/matrix.py` | `test_select_matrix_counts`, `test_select_values_come_from_workload` |
 | §5 verificação contra referência (SQLite) | `bench/sqlite_ref.py`, `bench/run.py` (`valid`) | `test_validation_detects_extra_or_missing_tuple_without_touching_counters` |
-| §6 repetições até < 5%, mínimo 3 | `bench/run.py` (`stable`, `run`) | `test_stable_measure_stops_at_three`, `test_unstable_time_repeats_until_ten` |
+| §6 repetições até < 5% no tempo, mínimo 3, contadores idênticos | `bench/run.py` (`stable`, `run`) | `test_stable_measure_stops_at_three`, `test_unstable_time_repeats_until_ten`, `test_io_divergence_is_flagged_nondeterministic` |
+| §6 retomada da rodada sem misturar bases | `bench/run.py` (`dataset`, `load_previous`, `last_attempt`) | `test_rows_carry_dataset_and_resume_refuses_other_dataset`, `test_resume_retries_error_but_not_na`, `test_resume_drops_truncated_last_line_and_checks_header`, `test_summary_refuses_mixed_datasets_and_filters_by_dataset` |
 | §6.1.2 contagem de blocos/buffer por operação | `bench/run.py` (`measure`) + `cbd/engine.py` | `test_row_counts_whole_output_inside_window`, `test_cold_flushes_before_resetting` |
 | §6.1.1 ocupação antes/depois da manutenção | — (#17) | — |
 | §6.1.3 estimado × medido | colunas `est.*` no CSV; análise em #22 | `test_row_counts_whole_output_inside_window` (só grava) |
@@ -49,7 +50,11 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 ## Armadilhas conhecidas / bugs abertos
 - Tempos de execução muito curtos (ms) tendem a nunca estabilizar em 5% e vão
   até 10 repetições; avaliar na #20 (P6 §6.4 opção 3).
-- `POLICY_BY_ALGORITHM` está LRU em tudo até a #16.
+- `POLICY_BY_ALGORITHM` está LRU em tudo até a #16. O P1 implementa só LRU e
+  MRU (D-P1-08, PR #2): a #16 compara só as duas.
+- Limitação a citar no relatório (revisão do PR #33): a validação compara
+  `(count, soma dos hash_value da PK lógica)`. Um join com as PKs certas e outra
+  coluna errada passa. Segue o P6 §5; não é bug, mas vai como limitação.
 
 ## Decisões provisórias a rever
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
