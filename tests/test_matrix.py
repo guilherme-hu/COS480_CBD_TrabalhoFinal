@@ -1,0 +1,99 @@
+"""Testes da matriz de experimentos (P6 §4, issues #9 e #10)."""
+from collections import Counter
+
+import pytest
+
+from bench.build import physical_plan
+from bench.matrix import JOIN_ALGORITHMS, join_configs, join_experiments
+from bench.schema import ACCESS_COLUMNS, SCHEMAS
+from bench.workload import JOINS
+from cbd.contracts import Path
+
+
+@pytest.fixture(scope='module')
+def plan_by_name():
+    # Estatísticas mínimas só para gerar os nomes e specs do plano (sem base real).
+    stats = {t: dict(n=100, estimated_bfr=10,
+                     distinct={c: 10 for c in ACCESS_COLUMNS.get(t, ())}) for t in SCHEMAS}
+    return {item['name']: item for item in physical_plan(stats)}
+
+
+def test_join_matrix_size():
+    exps = join_experiments()
+    regular = [e for e in exps if 'outer' not in e.args and 'build' not in e.args]
+    # 3 combinações × 13 configurações físicas × 3 algoritmos (P6 §4.2).
+    assert len(regular) == 3 * 13 * 3 == 117
+    forced = [e for e in exps if e not in regular]
+    # menor ⋈ maior, config a: nl_join com outer r|s e hash_join com build r|s.
+    assert sorted((e.op, e.args.get('outer') or e.args.get('build')) for e in forced) == [
+        ('hash_join', 'r'), ('hash_join', 's'), ('nl_join', 'r'), ('nl_join', 's')]
+    assert {e.size_combo for e in forced} == {'small_large'} and {e.config for e in forced} == {'a'}
+
+
+def test_exp_ids_unique_and_stable():
+    ids = [e.exp_id for e in join_experiments()]
+    assert len(ids) == len(set(ids))
+    assert ids == [e.exp_id for e in join_experiments()]
+
+
+def test_config_counts_per_join():
+    for combo, *rest in JOINS:
+        counts = Counter(config for _, config, _, _ in join_configs(combo, *rest))
+        assert counts == {'a': 1, 'b': 4, 'c': 3, 'd': 4, 'e': 1}
+
+
+@pytest.mark.parametrize('combo,r,rc,s,sc', JOINS)
+def test_config_paths_match_architecture(combo, r, rc, s, sc):
+    """Arquitetura §7.4: a=SCAN/SCAN, b=PRIMARY/SCAN, c=PRIMARY/PRIMARY,
+    d=PRIMARY/SECONDARY, e=SECONDARY/SECONDARY — b e d nas duas orientações."""
+    expected = {'a': {(Path.SCAN, Path.SCAN)},
+                'b': {(Path.PRIMARY, Path.SCAN), (Path.SCAN, Path.PRIMARY)},
+                'c': {(Path.PRIMARY, Path.PRIMARY)},
+                'd': {(Path.PRIMARY, Path.SECONDARY), (Path.SECONDARY, Path.PRIMARY)},
+                'e': {(Path.SECONDARY, Path.SECONDARY)}}
+    seen = {}
+    for label, config, rs, ss in join_configs(combo, r, rc, s, sc):
+        assert (rs.table, rs.column, ss.table, ss.column) == (r, rc, s, sc)  # r = mestre sempre
+        seen.setdefault(config, set()).add((rs.path, ss.path))
+        if config in ('b', 'd'):
+            organized = rs if rs.path == Path.PRIMARY else ss
+            assert label.split('_')[1] == ('r' if organized is rs else 's')
+    assert seen == expected
+    c_orgs = sorted((rs.org, ss.org) for _, cfg, rs, ss in join_configs(combo, r, rc, s, sc) if cfg == 'c')
+    assert c_orgs == [('BTREE', 'BTREE'), ('HASH', 'HASH'), ('HASH_EQ', 'HASH_EQ')]
+
+
+def test_every_side_exists_in_physical_plan(plan_by_name):
+    for exp in join_experiments():
+        for side in (exp.args['r'], exp.args['s']):
+            item = plan_by_name[side.variant]           # KeyError = variante inexistente
+            assert item['source'] == side.table
+            org = item['org']
+            if side.path == Path.PRIMARY:
+                assert org['key'] == side.column
+                assert org['org'] == ('HASH' if side.org == 'HASH_EQ' else side.org)
+            elif side.path == Path.SECONDARY:
+                assert org['org'] == 'HEAP'
+                assert side.column in {i['column'] for i in item['indexes']}
+            else:
+                assert org['org'] == 'HEAP'
+
+
+def test_bucket_join_pairs_share_n_and_seed(plan_by_name):
+    for exp in join_experiments():
+        r, s = exp.args['r'], exp.args['s']
+        if r.org == 'HASH_EQ':
+            pr, ps = plan_by_name[r.variant]['org']['params'], plan_by_name[s.variant]['org']['params']
+            assert (pr['buckets'], pr['seed']) == (ps['buckets'], ps['seed'])
+        elif (r.org, s.org) == ('HASH', 'HASH'):
+            # c_hash = caso "sem bucket-join": seeds diferentes entre as tabelas.
+            assert plan_by_name[r.variant]['org']['params']['seed'] != plan_by_name[s.variant]['org']['params']['seed']
+
+
+def test_operators_referenced_by_name_only():
+    # A matriz não importa cbd.exec: gerar a lista não depende de P4/P5 existirem.
+    import bench.matrix as matrix
+    assert 'cbd.exec' not in open(matrix.__file__).read()
+    for exp in join_experiments():
+        assert exp.cost_fn == JOIN_ALGORITHMS[exp.op]
+        assert exp.query_id == f'join_{exp.size_combo}'
