@@ -107,7 +107,7 @@ def measure(eng, exp, rep=1, functions=None):
 
     `functions` (nome -> callable) substitui os operadores reais nos testes.
     Status: 'ok'; 'N/A' (NotApplicable no custo ou no operador, motivo em note); ou
-    'error' (exceção do operador, registrada para o dono corrigir). Levanta PinLeak se
+    'error' (outra exceção no custo ou no operador, registrada para o dono corrigir). Levanta PinLeak se
     sobrar página fixada, porque o estado do buffer contaminaria as medições seguintes.
     """
     get = (functions or {}).get
@@ -122,6 +122,9 @@ def measure(eng, exp, rep=1, functions=None):
             row['note'] = 'cost_fn alterou contadores (avisar o dono); medição isolada por cold()'
     except NotApplicable as error:
         row.update(status='N/A', note=f'cost_fn: {error}')
+        return row
+    except Exception as error:  # bug no cost_fn: mesmo tratamento do bug no operador
+        row.update(status='error', note=f'cost_fn: {type(error).__name__}: {error}')
         return row
 
     info = {}

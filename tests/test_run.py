@@ -178,3 +178,22 @@ def test_operator_bug_is_recorded_not_fatal_unless_pins_leak():
 
     with pytest.raises(PinLeak):
         measure(eng, select_exp(), functions={'select_range': buggy_leak, 'select_range_cost': ok_cost})
+
+
+def test_cost_fn_bug_is_recorded_like_operator_bug():
+    # Revisão do PR #33: KeyError no cost_fn derrubava a rodada inteira, enquanto o
+    # mesmo erro no operador virava status=error. As duas falhas são do dono do
+    # operador e devem ser tratadas igual; o operador nem chega a rodar.
+    eng = FakeEngine()
+    ran = []
+
+    def broken_cost(*a, **k):
+        raise KeyError('n_blocks')
+
+    def op(eng_, **k):
+        ran.append(1)
+        yield from ()
+
+    row = measure(eng, select_exp(), functions={'select_range': op, 'select_range_cost': broken_cost})
+    assert row['status'] == 'error' and row['note'].startswith('cost_fn: KeyError')
+    assert ran == [] and row.get('result_rows') is None
