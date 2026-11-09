@@ -15,10 +15,10 @@ Na raiz do repositório, para desenvolvimento:
 python3 -m bench.build --scale 0.1
 ```
 
-Base final calibrada para a configuração-base (B=4096, WORK=64, DATA=128):
+Base final (B=4096 com WORK=64 e DATA=128, e as mesmas memórias em bytes nos outros blocos):
 
 ```sh
-python3 -m bench.build --scale 1 --rows turma=100000 --output data/prepared
+python3 -m bench.build --scale 1 --output data/prepared
 ```
 
 Se a base já existe, o comando recusa sobrescrevê-la. Acrescente `--force`
@@ -37,8 +37,8 @@ python3 -m pytest -q
 É possível ajustar volumes com `--rows tabela=N` (repetível). `detalhes`
 sempre acompanha `aluno`, preservando a correspondência por CPF. Para escalas
 minúsculas, `inscricao` é limitada ao número de pares distintos aluno/turma.
-`--work-pages` (M, mínimo 3) define o limite usado para conferir se a tabela
-menor cabe em M − 2 páginas.
+`--work-pages` (M em B = 4096, mínimo 3) define o limite usado para conferir se a
+tabela menor cabe em M − 2 páginas; nos outros blocos ele escala (D-P6-02).
 
 ## Arquivos produzidos
 
@@ -89,12 +89,14 @@ anterior): as tabelas reais já cobrem as três combinações de tamanho
 (arquitetura §0). `turma` e `detalhes` ficam só na base lógica, para integridade
 referencial e para a referência SQLite; não ganham variantes físicas.
 
-Os 10 mil registros de turma originalmente sugeridos não atingem 1280 blocos
-na configuração-base. Por isso, a base final usa 100 mil turmas, documentadas
-no manifesto. Escalas menores servem para desenvolvimento e podem não ter
-tabelas grandes. O manifesto informa explicitamente toda combinação que
-não atende pequena ≤ WORK−2 ou grande ≥ 10×DATA; a CLI destaca a situação
-para B=4096. O critério mais forte de 10×DATA é calibrado para B=4096.
+A base final usa os volumes padrão (`--scale 1`, 10 mil turmas). O override
+`--rows turma=100000` da versão anterior existia para um join com `turma` que
+saiu do escopo. O manifesto confere, para cada tamanho de bloco, pequena ≤ M − 2
+e grande ≥ 10 × DATA com as áreas daquele bloco: a memória do buffer é a mesma
+em bytes nos três tamanhos (D-P6-02), então M e DATA em páginas escalam com B
+(WORK = 128/64/32 e DATA = 256/128/64 páginas em 2/4/8 KiB). Com isso a escala 1
+é adequada nos três tamanhos. Escalas menores servem para desenvolvimento e podem
+não ter tabelas grandes; a CLI avisa cada combinação inadequada.
 
 ## Consultas de referência
 
@@ -149,7 +151,7 @@ comparar também o caso sem particionamento compatível.
 Quando P1/P2/P3 estiverem implementados, execute:
 
 ```sh
-python3 -m bench.build --scale 1 --rows turma=100000 --force --physical
+python3 -m bench.build --scale 1 --force --physical
 ```
 
 `cbd/engine.py` já liga as interfaces acordadas e oferece `cold`, `snapshot`,

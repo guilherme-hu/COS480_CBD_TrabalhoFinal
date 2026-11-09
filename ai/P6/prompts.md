@@ -123,3 +123,8 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
      estimado; `matplotlib` como dependência opcional `.[plots]`. Bruto em
      `ai/P6/raw/plots_v1.py`; defeito de parsing do `exp_id` achado por teste
      (`review.md`). Desenho conferido com summary sintético (não é medição).
+
+6. Debate da #6 (volumes): opções A (aumentar a base), B (manter e justificar),
+   C (memória constante em bytes no experimento de bloco). Pedido do usuário:
+   "Vai de C". Resultado: D-P6-02, `areas_for_block`, `size_checks_for_block`,
+   base sem `--rows turma=100000`, `base_stats.csv` regenerado (adequado nos 3 B).

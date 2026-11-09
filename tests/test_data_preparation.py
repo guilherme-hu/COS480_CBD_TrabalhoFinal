@@ -243,3 +243,13 @@ def test_row_override():
     assert dataset.counts['detalhes'] == dataset.counts['aluno'] == 100
     with pytest.raises(ValueError):
         Dataset(1, (('detalhes', 2),))
+
+
+def test_size_checks_use_areas_of_each_block_size():
+    # D-P6-02: o critério acompanha as áreas do bloco (memória constante em bytes).
+    from bench.build import size_checks_for_block
+    stats = {'curso': dict(estimated_blocks=1), 'disciplina': dict(estimated_blocks=14),
+             'aluno': dict(estimated_blocks=968), 'inscricao': dict(estimated_blocks=2273)}
+    assert all(c['status'] == 'ok' for c in size_checks_for_block(stats, 8192))
+    # Com as áreas fixas em páginas (DATA = 128) o mesmo aluno seria "pequeno demais".
+    assert any(c['status'] == 'inadequate' for c in size_checks(stats))

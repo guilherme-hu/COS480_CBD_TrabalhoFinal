@@ -24,6 +24,20 @@ from cbd.contracts import Path, PageType, Policy
 BASE_BLOCK_SIZE = 4096
 BASE_AREAS = {PageType.CATALOG: 8, PageType.INDEX: 64, PageType.DATA: 128, PageType.WORK: 64}
 
+
+def areas_for_block(block_size, work=None):
+    """Áreas do buffer para o tamanho de bloco `block_size`, com a MESMA memória em bytes
+    da configuração-base (D-P6-02, ver docs/decisoes/P6.md).
+
+    Em B = 4096 são as BASE_AREAS; em 8192 cada área tem metade das páginas e em 2048
+    o dobro. Assim o experimento de tamanho de bloco não mistura "bloco maior" com
+    "buffer maior". `work` = páginas de WORK em B = 4096, se diferente da base.
+    """
+    base = dict(BASE_AREAS)
+    if work is not None:
+        base[PageType.WORK] = work
+    return {area: pages * BASE_BLOCK_SIZE // block_size for area, pages in base.items()}
+
 # Algoritmos de junção do enunciado §5.1: nome do operador -> função de custo irmã.
 JOIN_ALGORITHMS = {
     'nl_join': 'nl_join_cost',              # P4: nested-loop em blocos (ou indexado)

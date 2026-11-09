@@ -7,7 +7,7 @@ from bench.build import physical_plan
 from bench.matrix import JOIN_ALGORITHMS, join_configs, join_experiments
 from bench.schema import ACCESS_COLUMNS, SCHEMAS
 from bench.workload import JOINS
-from cbd.contracts import Path
+from cbd.contracts import PageType, Path
 
 
 @pytest.fixture(scope='module')
@@ -149,3 +149,14 @@ def test_select_values_come_from_workload(workload, plan_by_name):
             if side.org != 'HEAP':
                 # Sobre B+/hash primário, só B+ NOT UNIQUE (arquitetura §5.3).
                 assert (index['kind'], index['unique']) == ('BTREE', False)
+
+
+def test_block_size_keeps_buffer_bytes_constant():
+    # D-P6-02: no experimento de bloco a memória em BYTES é a mesma; só o número
+    # de páginas de cada área muda (DATA = 512 KiB: 256/128/64 páginas).
+    from bench.matrix import BASE_AREAS, areas_for_block
+    assert areas_for_block(4096) == BASE_AREAS
+    for b in (2048, 4096, 8192):
+        areas = areas_for_block(b)
+        assert {k: v * b for k, v in areas.items()} == {k: v * 4096 for k, v in BASE_AREAS.items()}
+    assert areas_for_block(8192)[PageType.WORK] == 32 and areas_for_block(2048)[PageType.DATA] == 256
