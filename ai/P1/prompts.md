@@ -37,3 +37,11 @@
 ## Prompt 3 — Implementação da Camada 4 (`cbd/storage/`) e bateria de testes
 
 > agora é necessário implementar, de acordo com o que já foi definido no arquivo
+
+---
+
+## Prompt 4 — Revisão de PR, correção do bug de auto-expulsão no `_prefetch` e adequação ao `AGENTS.md` (08/11/2026)
+
+> tenhho essa porposta de mudanças: [...] referente a isso: @guilherme-hu commented: Pedi para IA revisar seu PR, e ela me deu o feedback abaixo. Uma coisa é que enquanto você fazia sua branch, eu criei umas documentações para guiar e organizar nosso repo, você poderia arrumar sua branch seguindo ela por favor?
+>
+> sim e quero manter apenas LRU e MRU
