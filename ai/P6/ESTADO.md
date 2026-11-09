@@ -48,6 +48,7 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 | §7.3 folha de rosto com nome e DRE de todos | `bench/report.py` (`cover`, `members`) | `test_cover_has_every_member_with_dre` |
 | §7.2.2 relatório: base e metodologia | `docs/relatorio/03_base.md`, `04_metodologia.md`, `gerado/` | `test_base_tables_come_from_base_stats`, `test_generated_parts_are_up_to_date` |
 | §6.1.3 / §7.2.2.b estimado × medido com motivo | `bench/compare_cost.py` | `test_each_reason_rule`, `test_unexplained_listed_separately_and_rules_do_not_overreach` |
+| §7.2.2.b gráficos com medido ao lado do estimado | `bench/plots.py` | `test_one_command_writes_every_figure`, `test_join_series_takes_the_13_configs_and_marks_na` |
 | §6.1.1 ocupação antes/depois da manutenção | — (#17) | — |
 
 ## Desvios ou dúvidas sobre o contrato
@@ -69,6 +70,10 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - `compare_cost`: limiares escolhidos pelo P6 (tolerância de 10% ou 1 bloco;
   "hits altos" = 10% dos pedidos de DATA). A regra da altura da B+ depende de
   P4/P5 porem `height`/`expected_height` no `info` (conferir na #36).
+
+- `bench/plots.py` (#23, parcial): joins por combinação e seleções. Faltam as
+  figuras de política (#16), fatores (#19) e manutenção/bulk (#17), que dependem
+  dos `exp_id` desses experimentos. Cores: slots 1–3 da paleta de referência.
 
 ## Decisões provisórias a rever
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
