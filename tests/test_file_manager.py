@@ -60,12 +60,18 @@ def test_free_reuse(tmp_path):
 
 
 def test_seq_vs_rand(tmp_path):
-    """Ler 1..10 em ordem com cabeça zerada dá seq_reads == 9 e rand_reads == 1 (1 seek)."""
+    """Escrever e ler 1..10 em ordem com cabeça zerada dá seq == 9 e rand == 1 (1 seek)."""
     fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
     fid = fm.create("inscricao")
     for i in range(1, 11):
         bno = fm.allocate(fid)
         fm.write(fid, bno, bytes([i]) * 4096)
+
+    # Cálculo esperado na escrita: 1ª escrita (bno=1) é rand_write (1 seek); 2..10 são 9 seq_writes
+    assert fm.io.rand_writes == 1
+    assert fm.io.seq_writes == 9
+    assert fm.io.writes == 10
+    assert fm.io.seeks == 1
 
     fm.reset_stats()
     assert fm.io.reads == 0 and fm.io.writes == 0 and fm.io.seeks == 0
@@ -126,3 +132,24 @@ def test_invalid_reads_and_deletes(tmp_path):
 
     fm.delete(fid)
     assert not fm.exists("teste")
+
+
+def test_lost_free_overflow(tmp_path):
+    """Com block_size=64, cabem (64 - 32) // 4 = 8 bnos na pilha; o 9º livre incrementa lost_free e persiste."""
+    cfg = StorageConfig(root_dir=str(tmp_path), block_size=64)
+    fm = FileManager(cfg)
+    fid = fm.create("small_hdr")
+    for b in range(1, 11):
+        assert fm.allocate(fid) == b
+        fm.write(fid, b, bytes([b]) * 64)
+
+    # Libera 9 blocos: 8 entram na pilha free e 1 vai para lost_free; restam 10 - 9 = 1 bloco ocupado
+    for b in range(1, 10):
+        fm.free(fid, b)
+    assert fm.n_blocks(fid) == 1
+    fm.close_all()
+
+    fm2 = FileManager(cfg)
+    fid2 = fm2.open("small_hdr")
+    assert fm2.n_blocks(fid2) == 1
+    fm2.close_all()

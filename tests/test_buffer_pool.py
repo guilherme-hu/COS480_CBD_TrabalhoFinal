@@ -210,6 +210,67 @@ def test_prefetch(tmp_path):
     fm.close_all()
 
 
+@pytest.mark.parametrize("policy,data", [(Policy.LRU, 3), (Policy.MRU, 8)])
+def test_prefetch_nao_expulsa_o_que_acabou_de_ler(tmp_path, policy, data):
+    """Em um scan sequencial de 20 blocos com prefetch=4 e toss=True, o prefetch não pode
+    expulsar páginas que ele mesmo acabou de trazer na mesma chamada.
+    Cálculo esperado: 20 blocos lidos em sequência -> cada bloco sai do disco exatamente 1 vez (io.reads == 20).
+    """
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path)))
+    fid = fm.create("t")
+    for _ in range(20):
+        fm.write(fid, fm.allocate(fid), bytes(fm.block_size))
+    fm.reset_stats()
+    bp = BufferPool(
+        fm,
+        BufferConfig(
+            areas={PageType.DATA: data, PageType.WORK: 2},
+            policy=policy,
+            prefetch=4,
+        ),
+    )
+    for b in range(1, 21):
+        bp.unpin(bp.pin(fid, b, PageType.DATA, seq=True), toss=True)
+    assert fm.io.reads == 20  # cada bloco sai do disco exatamente 1 vez
+    assert bp.pinned() == 0
+    bp.flush_all()
+    fm.close_all()
+
+
+def test_buffer_full_nao_incrementa_misses(tmp_path):
+    """Se _victim levantar BufferFullError, nenhuma leitura física ocorre e misses não deve ser incrementado."""
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
+    fid = fm.create("t")
+    for b in (1, 2, 3):
+        fm.allocate(fid)
+        fm.write(fid, b, bytes([b]) * 4096)
+    fm.reset_stats()
+
+    pool = BufferPool(
+        fm,
+        BufferConfig(
+            areas={PageType.CATALOG: 1, PageType.INDEX: 1, PageType.DATA: 2, PageType.WORK: 1},
+            policy=Policy.LRU,
+        ),
+    )
+    p1 = pool.pin(fid, 1, PageType.DATA)
+    p2 = pool.pin(fid, 2, PageType.DATA)
+    assert pool.stats.misses == 2
+    assert fm.io.reads == 2
+
+    with pytest.raises(BufferFullError):
+        pool.pin(fid, 3, PageType.DATA)
+
+    # Como a leitura do bloco 3 falhou por falta de frame, misses deve continuar igual a io.reads (2)
+    assert pool.stats.misses == 2
+    assert fm.io.reads == 2
+
+    pool.unpin(p1)
+    pool.unpin(p2)
+    pool.flush_all()
+    fm.close_all()
+
+
 def test_reserve_work(tmp_path):
     """Com WORK=8, reserve_work(8) funciona e um pin(..., WORK) dentro dele levanta BufferFullError."""
     fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
@@ -326,3 +387,50 @@ def test_free_block_reuse(bp):
     assert p_reused.bno == bno
     assert p_reused.data[0] == 0
     bp.unpin(p_reused, dirty=True)
+
+
+def test_page_context_manager_unpins_on_exception(bp):
+    """O context manager bp.page() deve fazer unpin e preservar dirty mesmo se o corpo levantar exceção."""
+    fid = bp.fm.create("ctx_exc")
+    p = bp.new_page(fid, PageType.DATA)
+    bno = p.bno
+    bp.unpin(p, dirty=True)
+    bp.flush_file(fid)
+
+    with pytest.raises(RuntimeError):
+        with bp.page(fid, bno, PageType.DATA) as pg:
+            pg.data[0] = 77
+            pg.mark_dirty()
+            raise RuntimeError("erro simulado no operador")
+
+    assert bp.pinned() == 0
+    assert pg.dirty is True
+
+
+def test_reserve_work_partial_rollback(tmp_path):
+    """Se reserve_work(8) falhar no 8º frame porque 1 frame de WORK está fixado, devolve os 7 frames parciais."""
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
+    fid = fm.create("work_tmp")
+    fm.allocate(fid)
+    fm.write(fid, 1, b"W" * 4096)
+
+    pool = BufferPool(
+        fm,
+        BufferConfig(
+            areas={PageType.CATALOG: 1, PageType.INDEX: 1, PageType.DATA: 2, PageType.WORK: 8},
+            policy=Policy.LRU,
+        ),
+    )
+    # Fixa 1 frame em WORK (restam apenas 7 livres)
+    p_pinned = pool.pin(fid, 1, PageType.WORK)
+    with pytest.raises(BufferFullError):
+        with pool.reserve_work(8):
+            pass
+
+    # Os 7 frames retirados antes da falha devem ter voltado para WORK
+    pool.unpin(p_pinned)
+    with pool.reserve_work(8) as k:
+        assert k == 8
+
+    pool.flush_all()
+    fm.close_all()

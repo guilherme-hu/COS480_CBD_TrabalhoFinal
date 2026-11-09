@@ -1,10 +1,9 @@
-"""Políticas de substituição de página do Buffer Pool (Camada 4 — P1).
+"""Políticas de substituição de página do Buffer Pool (Camada 4, dono: P1 — Vivian).
 
-Implementa as duas políticas escolhidas pelo grupo para comparação:
-- LRU (Least Recently Used)
-- MRU (Most Recently Used)
-
-Garante que frames fixados (pin_count > 0) nunca sejam escolhidos como vítimas.
+Implementa: ReplacementPolicy, LRUPolicy, MRUPolicy, make_policy. Usa: cbd/contracts.py.
+Decisões: D-P1-08 (implementação de LRU e MRU; preterição de FIFO e CLOCK). Ver docs/decisoes/P1.md.
+Invariantes: frames fixados (pin_count > 0) nunca são escolhidos como vítimas.
+Custo esperado: O(1) para loaded/accessed/removed; O(k) no pior caso em victim() se houver k frames fixados.
 """
 from __future__ import annotations
 
@@ -24,16 +23,21 @@ class ReplacementPolicy(Protocol):
 
 
 class LRUPolicy:
-    """Least Recently Used (medido pelo último acesso/pin, conforme SKS §13.5)."""
+    """Least Recently Used (medido pelo último acesso/pin, conforme SKS §13.5 — D-P1-08)."""
 
     def __init__(self) -> None:
+        # OrderedDict mantém a ordem de acesso:
+        # - início do dict = frame acessado há MAIS tempo (candidato a vítima do LRU)
+        # - fim do dict    = frame acessado há MENOS tempo (mais recente)
         self._order: OrderedDict[int, Any] = OrderedDict()
 
     def loaded(self, f: Any) -> None:
+        # Quando um bloco novo entra no frame, vai para o fim da fila (mais recente)
         self._order[f.idx] = f
         self._order.move_to_end(f.idx)
 
     def accessed(self, f: Any) -> None:
+        # Em caso de hit no pin(), move o frame para o fim da fila (mais recente)
         if f.idx in self._order:
             self._order.move_to_end(f.idx)
         else:
@@ -46,6 +50,8 @@ class LRUPolicy:
         self._order.pop(f.idx, None)
 
     def victim(self) -> Any | None:
+        # D-P1-08, D-P1-10: percorre do início para o fim (do mais antigo para o mais novo)
+        # e devolve o primeiro frame que não está em uso (pin_count == 0).
         for f in self._order.values():
             if f.pin_count == 0:
                 return f
@@ -56,9 +62,11 @@ class LRUPolicy:
 
 
 class MRUPolicy:
-    """Most Recently Used (escolhe o frame não fixado acessado mais recentemente)."""
+    """Most Recently Used (escolhe o frame não fixado acessado mais recentemente — D-P1-08)."""
 
     def __init__(self) -> None:
+        # Mesma fila ordenada por último acesso do LRU, mas a vítima sai da ponta oposta (fim).
+        # Ideal para laço interno cíclico de Nested-Loop Join quando b_S > DATA (evita sequential flooding).
         self._order: OrderedDict[int, Any] = OrderedDict()
 
     def loaded(self, f: Any) -> None:
@@ -78,6 +86,8 @@ class MRUPolicy:
         self._order.pop(f.idx, None)
 
     def victim(self) -> Any | None:
+        # D-P1-08, D-P1-10: percorre de trás para frente (reversed = do mais recente para o mais antigo)
+        # e devolve o primeiro frame desafixado (pin_count == 0).
         for f in reversed(self._order.values()):
             if f.pin_count == 0:
                 return f
@@ -88,6 +98,7 @@ class MRUPolicy:
 
 
 def make_policy(policy: Policy, frames: list[Any] | None = None) -> ReplacementPolicy:
+    # D-P1-08: apenas LRU e MRU foram adotadas pelo grupo (FIFO e CLOCK preteridas em docs/decisoes/P1.md)
     if policy == Policy.LRU:
         return LRUPolicy()
     if policy == Policy.MRU:
