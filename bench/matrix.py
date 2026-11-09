@@ -6,9 +6,11 @@ e as funções de custo são referenciados por nome (`op`, `cost_fn`) e resolvid
 só na execução (`bench/run.py`), para que a matriz possa ser gerada e testada
 antes de P4/P5 existirem.
 
-Escopo (arquitetura §0, §7.4; P6 §4.2): NATURAL JOIN mestre-detalhe nas 3
+Escopo (arquitetura §0, §7.4; P6 §4.2 e §4.3): NATURAL JOIN mestre-detalhe nas 3
 combinações de tamanho × 3 algoritmos × 13 configurações físicas = 117 linhas,
 mais as linhas com lado externo/construtor forçado. `r` é sempre o mestre.
+Seleções: igualdade em aluno.dre (20 valores) e faixa em aluno.cr (1% e 50%),
+nos caminhos a (SCAN), b (PRIMARY em B+ e em hash) e c (SECONDARY).
 Combinações que o operador recusar (NotApplicable) continuam na lista: o
 orquestrador grava a linha com status N/A e o motivo, nunca a omite.
 """
@@ -28,9 +30,11 @@ JOIN_ALGORITHMS = {
     'hash_join': 'hash_join_cost',          # P5: partition-hash (GRACE)
 }
 
+SELECT_OPERATORS = {'select_eq': 'select_eq_cost', 'select_range': 'select_range_cost'}  # P4
+
 # Política por algoritmo. PROVISÓRIO: LRU em tudo até o experimento de escolha da
 # política (#16, P6 §4.4) preencher esta tabela com a de menor I/O por operação.
-POLICY_BY_ALGORITHM = {name: Policy.LRU for name in JOIN_ALGORITHMS}
+POLICY_BY_ALGORITHM = {name: Policy.LRU for name in (*JOIN_ALGORITHMS, *SELECT_OPERATORS)}
 
 
 @dataclass(frozen=True)
@@ -121,4 +125,51 @@ def join_experiments():
                         cost_fn=JOIN_ALGORITHMS[alg], args={'r': a_r, 's': a_s, param: side},
                         size_combo=combo, config='a', algorithm=alg,
                         policy=POLICY_BY_ALGORITHM[alg], query_id=query_id))
+    return out
+
+
+def _select_paths(column):
+    """Caminhos da seleção (enunciado §5.2): a = heap SCAN; b = organizado pela coluna
+    (B+ e hash, PRIMARY); c = heap com índice secundário (SECONDARY)."""
+    return [('a', 'a_scan', _heap('aluno', column, Path.SCAN)),
+            ('b', 'b_btree', _organized('aluno', column, 'BTREE', '')),
+            ('b', 'b_hash', _organized('aluno', column, 'HASH', '')),
+            ('c', 'c_secondary', _heap('aluno', column, Path.SECONDARY))]
+
+
+def select_experiments(workload):
+    """Seleções a partir das consultas de `workload.json` (valores nunca redigitados).
+
+    Igualdade UNIQUE: 20 DREs × 4 caminhos = 80 linhas (o relatório usa a média).
+    Faixa NOT UNIQUE: 2 seletividades × (SCAN, B+, hash, SECONDARY com sort_ptrs
+    False e True) = 10 linhas. Faixa em hash primário gera N/A na execução.
+    sort_ptrs só varia na faixa: a igualdade UNIQUE devolve 1 ponteiro, e ordenar
+    um ponteiro não muda nenhum acesso.
+    """
+    out = []
+    for q in workload:
+        if q['kind'] != 'select':
+            continue
+        col, op = q['column'], q['operator']
+        if q['sel_type'] == 'eq_unique':
+            operator, base = 'select_eq', dict(column=col, value=q['value'])
+        else:
+            # cr >= q -> [q, +inf); cr <= q -> (-inf, q]. None = aberto (arquitetura §7.1).
+            lo, hi = (q['value'], None) if op == '>=' else (None, q['value'])
+            operator, base = 'select_range', dict(column=col, lo=lo, hi=hi, lo_inc=True, hi_inc=True)
+        for config, label, side in _select_paths(col):
+            variants = [None]
+            if side.path == Path.SECONDARY:
+                variants = [False] if operator == 'select_eq' else [False, True]
+            for sort_ptrs in variants:
+                suffix = '' if sort_ptrs is None else ('_sorted' if sort_ptrs else '_unsorted')
+                args = dict(base, table=side, path=side.path)
+                if sort_ptrs is not None:
+                    args['sort_ptrs'] = sort_ptrs
+                out.append(Experiment(
+                    exp_id=f'select.{q["id"]}.{label}{suffix}', kind='select', op=operator,
+                    cost_fn=SELECT_OPERATORS[operator], args=args, config=config,
+                    algorithm=operator, sel_type=q['sel_type'], selectivity=q['selectivity'],
+                    path=side.path.value, sort_ptrs=sort_ptrs,
+                    policy=POLICY_BY_ALGORITHM[operator], query_id=q['id']))
     return out
