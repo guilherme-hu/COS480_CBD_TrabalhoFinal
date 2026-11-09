@@ -63,3 +63,4 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    - #13: repetições (3 a 10, até < 5% em I/O e tempo), `--resume`,
      `summary.csv` com medianas. Ajuste após teste: linha `valid=False` era
      repetida 3 vezes; agora para na primeira (saída determinística).
+   - Fim da sessão: `ai/P6/ESTADO.md` e `docs/estudo/P6.md` criados.
