@@ -11,6 +11,7 @@ fora da janela. `bp.pinned() == 0` ao fim de toda execução, senão aborta.
 import argparse
 import csv
 from datetime import date
+import hashlib
 import importlib
 import json
 from pathlib import Path as FsPath
@@ -22,7 +23,7 @@ from cbd.contracts import BufferConfig, JoinSide, NotApplicable, PageType, Stora
 
 # Colunas do CSV, na ordem do P6 §6.3.
 COLUMNS = (
-    'exp_id', 'rep', 'status', 'note', 'kind', 'join_type', 'size_combo', 'config', 'algorithm',
+    'exp_id', 'rep', 'dataset', 'status', 'note', 'kind', 'join_type', 'size_combo', 'config', 'algorithm',
     'variant', 'sel_type', 'selectivity', 'path', 'sort_ptrs',
     'r_table', 'r_org', 'r_rows', 'r_blocks', 's_table', 's_org', 's_rows', 's_blocks',
     'block_size', 'policy', 'area_catalog', 'area_index', 'area_data', 'area_work', 'toss', 'prefetch',
@@ -42,8 +43,11 @@ OPERATORS = {
 }
 
 
-# Enunciado §6 / P6 §6.2: no mínimo 3 repetições, até a variação ficar < 5%, no máximo 10.
+# Enunciado §6 / P6 §6.2: no mínimo 3 repetições, até a variação do TEMPO ficar < 5%,
+# no máximo 10. Os contadores de blocos têm de ser idênticos entre repetições.
 MIN_REPS, MAX_REPS, MAX_SPREAD = 3, 10, .05
+COUNTERS = tuple(c for c in COLUMNS if c.startswith(('io.', 'bp.')))
+BAD_STATUS = ('error', 'nondeterministic')
 clock = time.perf_counter      # trocado nos testes para simular tempos
 
 
@@ -184,7 +188,12 @@ class CsvLog:
             self.handle.flush()
 
     def write(self, row):
-        self.writer.writerow({k: row.get(k, '') for k in COLUMNS})
+        # Uma linha do CSV = uma linha do arquivo: o --resume descarta uma última
+        # linha incompleta sem risco de cortar um campo com quebra de linha.
+        clean = {k: row.get(k, '') for k in COLUMNS}
+        clean = {k: v.replace('\r', ' ').replace('\n', ' ') if isinstance(v, str) else v
+                 for k, v in clean.items()}
+        self.writer.writerow(clean)
         self.handle.flush()
 
     def close(self):
@@ -229,12 +238,46 @@ def spread(values):
     return float('inf') if lo == 0 else hi / lo - 1
 
 
+def _counter(row, col):
+    value = row.get(col, '')
+    return None if value in ('', None) else float(value)
+
+
+def diverging_counters(rows):
+    """Contadores io.*/bp.* que diferem da 1ª repetição (cache frio + mesma base =
+    contagem determinística; qualquer diferença é bug, P6 §6.2)."""
+    first = rows[0]
+    return [c for c in COUNTERS if any(_counter(r, c) != _counter(first, c) for r in rows[1:])]
+
+
 def stable(rows):
-    """Repetições suficientes: ≥ MIN_REPS e variação < 5% em I/O total E no tempo."""
-    if len(rows) < MIN_REPS:
+    """Repetições suficientes: ≥ MIN_REPS, contadores idênticos e tempo variando < 5%."""
+    if len(rows) < MIN_REPS or diverging_counters(rows):
         return False
-    io = [float(r['io.reads']) + float(r['io.writes']) for r in rows]
-    return spread(io) < MAX_SPREAD and spread([float(r['time_s']) for r in rows]) < MAX_SPREAD
+    return spread([float(r['time_s']) for r in rows]) < MAX_SPREAD
+
+
+def _bad(row):
+    return row['status'] in BAD_STATUS or str(row.get('valid')) == 'False'
+
+
+def last_attempt(rows):
+    """Linhas da última tentativa de um exp_id (ordem do arquivo).
+
+    Uma linha ruim (error, nondeterministic, valid=False) encerra uma tentativa;
+    o --resume mede de novo depois dela. Devolve (linhas_ok_da_tentativa, linha_ruim):
+    se a última linha é ruim, ([], ela); senão, as linhas depois da última ruim.
+    """
+    for i in range(len(rows) - 1, -1, -1):
+        if _bad(rows[i]):
+            return ([], rows[i]) if i == len(rows) - 1 else (rows[i + 1:], None)
+    return rows, None
+
+
+def dataset_id(workload_path):
+    """Identifica a base da rodada: 12 hex do SHA-256 do workload.json (mudam volumes,
+    escala ou seeds -> muda a resposta esperada -> muda o id)."""
+    return hashlib.sha256(FsPath(workload_path).read_bytes()).hexdigest()[:12]
 
 
 def read_rows(path):
@@ -245,33 +288,69 @@ def read_rows(path):
         return list(csv.DictReader(handle))
 
 
-def run(experiments, engines, log, expected, functions=None, previous=()):
-    """Mede cada experimento até estabilizar e devolve as linhas inválidas (valid=False).
+def load_previous(path):
+    """Linhas de um CSV bruto para o --resume, depois de conferir e reparar o arquivo.
 
-    `previous` = linhas já gravadas (--resume): repetições existentes contam para a
-    regra de parada e nunca são refeitas, então o CSV não ganha linhas duplicadas.
-    Linhas N/A ou error são gravadas uma vez só. Qualquer linha inválida bloqueia o
-    relatório: abra issue para o dono do operador.
+    Cabeçalho diferente de COLUMNS -> ValueError (CSV de outra versão da bancada).
+    Última linha sem '\\n' (queda no meio da gravação) -> descartada do arquivo,
+    para a próxima linha não ser colada na metade que sobrou.
     """
+    path = FsPath(path)
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    data = path.read_bytes()
+    header = data.split(b'\n', 1)[0].decode().rstrip('\r')
+    if header.split(',') != list(COLUMNS):
+        raise ValueError(f'{path}: cabeçalho diferente de COLUMNS; use outro --output')
+    if not data.endswith(b'\n'):
+        with path.open('r+b') as handle:
+            handle.truncate(data.rindex(b'\n') + 1)
+    rows = read_rows(path)
+    if any(None in r.values() or None in r for r in rows):
+        raise ValueError(f'{path}: linha com número errado de campos no meio do arquivo')
+    return rows
+
+
+def run(experiments, engines, log, expected, functions=None, previous=(), dataset=''):
+    """Mede cada experimento até estabilizar e devolve as linhas que bloqueiam o relatório.
+
+    `previous` = linhas já gravadas (--resume), todas da mesma base `dataset`
+    (senão ValueError). A última tentativa de cada exp_id conta para a regra de
+    parada e nunca é refeita; N/A é final (determinístico). Tentativa que terminou
+    em error, nondeterministic ou valid=False é medida de novo, com as repetições
+    numeradas depois das existentes (o operador pode ter sido corrigido).
+    Devolvidas: valid=False e nondeterministic. Abra issue para o dono do operador.
+    """
+    other = {r.get('dataset', '') for r in previous} - {dataset}
+    if other:
+        raise ValueError(f'--resume com outra base: CSV tem {sorted(other)}, a rodada é {dataset!r}')
     done = {}
     for row in previous:
         done.setdefault(row['exp_id'], []).append(row)
     invalid = []
     for exp in experiments:
+        old = sorted(done.get(exp.exp_id, []), key=lambda r: int(r['rep']))
+        next_rep = int(old[-1]['rep']) + 1 if old else 1
+        reps, _ = last_attempt(old)
+        if reps and reps[0]['status'] == 'N/A':
+            continue
         if exp.query_id not in expected:
             # Matriz e workload.json fora de sincronia: sem resposta esperada não há
             # como validar, então nem mede; a linha fica para corrigir a preparação.
-            log.write(dict(base_row(exp, 1), status='error',
+            log.write(dict(base_row(exp, next_rep), dataset=dataset, status='error',
                            note=f'query_id {exp.query_id!r} ausente do workload.json'))
             continue
-        reps = sorted(done.get(exp.exp_id, []), key=lambda r: int(r['rep']))
-        if reps and reps[0]['status'] != 'ok':
-            continue
         while len(reps) < MAX_REPS and not stable(reps):
-            row = measure(engines.get(exp), exp, len(reps) + 1, functions, expected[exp.query_id])
+            row = measure(engines.get(exp), exp, next_rep, functions, expected[exp.query_id])
+            row['dataset'] = dataset
+            next_rep += 1
+            if row['status'] == 'ok' and reps and diverging_counters([reps[0], row]):
+                row.update(status='nondeterministic',
+                           note='contadores diferentes da 1ª repetição: '
+                                + ', '.join(diverging_counters([reps[0], row])))
             log.write(row)
-            if row.get('valid') is False:
-                invalid.append(row)     # saída determinística: repetir não muda o veredito
+            if row.get('valid') is False or row['status'] == 'nondeterministic':
+                invalid.append(row)     # contagem/saída determinísticas: repetir não muda o veredito
                 break
             if row['status'] != 'ok':
                 break
@@ -283,18 +362,26 @@ NUMERIC_SUMMARY = tuple(c for c in COLUMNS if c.startswith(('io.', 'bp.', 'est.'
     'time_s', 'result_rows', 'r_rows', 'r_blocks', 's_rows', 's_blocks')
 
 
-def summarize(raw_paths, output):
-    """`summary.csv`: uma linha por exp_id com as medianas das repetições 'ok'.
+def summarize(raw_paths, output, dataset=None):
+    """`summary.csv`: uma linha por exp_id com as medianas da última tentativa.
 
+    Só entram linhas da base `dataset`; sem `dataset`, os arquivos precisam ser de
+    uma única base (senão ValueError: rodada minúscula e rodada real não se misturam).
     Se o mesmo exp_id aparece em mais de um CSV bruto, vale o arquivo de nome maior
-    (prefixo de data: a rodada mais recente). `valid` resume como False se alguma
-    repetição foi inválida. Linhas N/A/error entram como estão.
+    (prefixo de data: a rodada mais recente). Tentativa que terminou mal (error,
+    nondeterministic, valid=False) aparece como a linha ruim; N/A entra como está.
     """
+    files = [(path, read_rows(path)) for path in sorted(map(FsPath, raw_paths))]
+    if dataset is None:
+        found = {r.get('dataset', '') for _, rows in files for r in rows}
+        if len(found) > 1:
+            raise ValueError(f'CSVs de bases diferentes ({sorted(found)}): informe dataset')
     by_exp = {}
-    for path in sorted(map(FsPath, raw_paths)):
+    for _, rows in files:
         latest = {}
-        for row in read_rows(path):
-            latest.setdefault(row['exp_id'], []).append(row)
+        for row in rows:
+            if dataset is None or row.get('dataset', '') == dataset:
+                latest.setdefault(row['exp_id'], []).append(row)
         by_exp.update(latest)
     columns = ('n_reps',) + tuple(c for c in COLUMNS if c not in ('rep', 'note')) + ('note',)
     output = FsPath(output)
@@ -303,8 +390,13 @@ def summarize(raw_paths, output):
         writer = csv.DictWriter(handle, fieldnames=columns, extrasaction='ignore')
         writer.writeheader()
         for exp_id, rows in by_exp.items():
-            ok = [r for r in rows if r['status'] == 'ok']
-            out = dict((ok or rows)[0], n_reps=len(ok))
+            rows = sorted(rows, key=lambda r: int(r['rep']))
+            attempt, bad = last_attempt(rows)
+            if bad is not None:
+                writer.writerow(dict(bad, n_reps=0))
+                continue
+            ok = [r for r in attempt if r['status'] == 'ok']
+            out = dict((ok or attempt)[0], n_reps=len(ok))
             for col in NUMERIC_SUMMARY:
                 values = [float(r[col]) for r in ok if r.get(col) not in ('', None)]
                 out[col] = statistics.median(values) if values else ''
@@ -316,7 +408,8 @@ def summarize(raw_paths, output):
 
 def report_invalid(invalid):
     for row in invalid:
-        print(f"INVÁLIDO {row['exp_id']}: algoritmo={row['algorithm']} r={row['r_table']}/{row['r_org']} "
+        label = 'NÃO DETERMINÍSTICO' if row['status'] == 'nondeterministic' else 'INVÁLIDO'
+        print(f"{label} {row['exp_id']}: algoritmo={row['algorithm']} r={row['r_table']}/{row['r_org']} "
               f"s={row['s_table'] or '-'}/{row['s_org'] or '-'} linhas={row['result_rows']}")
     return len(invalid)
 
@@ -331,7 +424,7 @@ def main():
     parser.add_argument('--resume', action='store_true',
                         help='Continua um CSV existente: pula exp_id/rep já gravados (rodada que caiu)')
     parser.add_argument('--summary', type=FsPath, default=FsPath('results/summary.csv'),
-                        help='Onde gravar as medianas de todos os CSVs em results/raw/')
+                        help='Onde gravar as medianas dos CSVs de results/raw/ desta mesma base')
     args = parser.parse_args()
     workload = json.loads((args.data / 'workload.json').read_text())
     exps = []
@@ -340,19 +433,21 @@ def main():
     if args.only in ('selects', 'all'):
         exps += select_experiments(workload)
     output = args.output or FsPath('results/raw') / f'{date.today().isoformat()}_{args.only}.csv'
-    previous = read_rows(output)
-    if previous and not args.resume:
+    if read_rows(output) and not args.resume:
         parser.error(f'{output} já tem linhas; use --resume para continuar sem duplicar')
+    dataset = dataset_id(args.data / 'workload.json')
+    previous = load_previous(output) if args.resume else []
     engines, log = EngineCache(args.data), CsvLog(output)
     try:
-        invalid = run(exps, engines, log, expected_results(workload), previous=previous)
+        invalid = run(exps, engines, log, expected_results(workload), previous=previous, dataset=dataset)
     finally:
         engines.close()
         log.close()
-    n = summarize(sorted(output.parent.glob('*.csv')), args.summary)
+    n = summarize(sorted(output.parent.glob('*.csv')), args.summary, dataset=dataset)
     print(f'{len(exps)} experimentos em {output}; {n} linhas em {args.summary}')
     if report_invalid(invalid):
-        raise SystemExit(f'{len(invalid)} linha(s) com valid=False: o relatório fica bloqueado')
+        raise SystemExit(f'{len(invalid)} linha(s) inválida(s) ou não determinística(s): '
+                         'o relatório fica bloqueado')
 
 
 if __name__ == '__main__':

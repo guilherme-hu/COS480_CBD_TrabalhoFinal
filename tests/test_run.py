@@ -13,7 +13,7 @@ from bench.generator import Dataset
 from bench.matrix import Experiment, Side, join_experiments
 import bench.run as runmod
 from bench.run import (COLUMNS, CsvLog, EngineCache, PinLeak, measure, read_rows, report_invalid,
-                       run, summarize)
+                       run, summarize, load_previous, stable)
 from bench.sqlite_ref import output_signature
 from cbd.contracts import Cost, NotApplicable, Path, Policy, TableStats
 
@@ -336,3 +336,109 @@ def test_summary_uses_medians_and_latest_file(tmp_path):
     assert (rows['e1']['n_reps'], float(rows['e1']['io.reads']), float(rows['e1']['time_s'])) == ('3', 10, 2.0)
     assert rows['e1']['valid'] == 'True'
     assert (rows['e2']['status'], rows['e2']['n_reps'], rows['e2']['note']) == ('N/A', '0', 'faixa em hash')
+
+
+# ---------------------------------------------------------------- revisão do PR #35
+
+def _ok_row(exp_id, rep, reads, t=1.0, dataset='aaa'):
+    return {'exp_id': exp_id, 'rep': rep, 'status': 'ok', 'valid': True, 'dataset': dataset,
+            'io.reads': reads, 'io.writes': 0, 'time_s': t}
+
+
+def test_summary_refuses_mixed_datasets_and_filters_by_dataset(tmp_path):
+    # Reprodução da revisão: rodada real e rodada minúscula com o mesmo exp_id.
+    raw = tmp_path / 'raw'
+    real, tiny = CsvLog(raw / '2026-11-09_all.csv'), CsvLog(raw / 'tiny_all.csv')
+    for rep in (1, 2, 3):
+        real.write(_ok_row('e1', rep, 9999, dataset='real'))
+        tiny.write(_ok_row('e1', rep, 7, dataset='tiny'))
+    real.close(), tiny.close()
+    with pytest.raises(ValueError, match='bases'):
+        summarize(sorted(raw.glob('*.csv')), tmp_path / 's.csv')
+    summarize(sorted(raw.glob('*.csv')), tmp_path / 's.csv', dataset='real')
+    assert float(read_rows(tmp_path / 's.csv')[0]['io.reads']) == 9999
+
+
+def test_rows_carry_dataset_and_resume_refuses_other_dataset(tmp_path, monkeypatch):
+    monkeypatch.setattr(runmod, 'clock', lambda: 0.0)
+    eng, exp = FakeEngine(), select_exp()
+    sig = output_signature(dict(kind='select', r_table='aluno'), ALUNOS[:3])
+    kw = dict(functions={'select_range': lazy_scan(eng, ALUNOS[:3]),
+                         'select_range_cost': lambda *a, **k: Cost(reads=1)})
+    log = CsvLog(tmp_path / 'raw.csv')
+    run([exp], SimpleNamespace(get=lambda e: eng), log, {exp.query_id: sig}, dataset='abc', **kw)
+    log.close()
+    rows = read_rows(tmp_path / 'raw.csv')
+    assert rows and {r['dataset'] for r in rows} == {'abc'}
+    with pytest.raises(ValueError, match='base'):
+        run([exp], SimpleNamespace(get=lambda e: eng), CsvLog(tmp_path / 'other.csv'),
+            {exp.query_id: sig}, dataset='xyz', previous=rows, **kw)
+
+
+def test_io_must_be_identical_across_repetitions():
+    # Reprodução da revisão: 1000, 1020, 1040 leituras passavam pela regra dos 5%.
+    assert not stable([_ok_row('e', i, r) for i, r in enumerate((1000, 1020, 1040), 1)])
+    assert stable([_ok_row('e', i, 1000, t) for i, t in enumerate((1.0, 1.01, 1.02), 1)])
+
+
+def test_io_divergence_is_flagged_nondeterministic(tmp_path, monkeypatch):
+    monkeypatch.setattr(runmod, 'clock', lambda: 0.0)
+    eng, exp, calls = FakeEngine(), select_exp(), []
+
+    def drifting(eng_, **k):       # 2ª repetição lê 1 bloco a mais (ex.: cold() incompleto)
+        calls.append(1)
+        eng.reads += len(calls) > 1
+        yield from lazy_scan(eng, ALUNOS[:3])(eng_)
+
+    sig = output_signature(dict(kind='select', r_table='aluno'), ALUNOS[:3])
+    log = CsvLog(tmp_path / 'raw.csv')
+    invalid = run([exp], SimpleNamespace(get=lambda e: eng), log, {exp.query_id: sig},
+                  functions={'select_range': drifting, 'select_range_cost': lambda *a, **k: Cost(reads=1)})
+    log.close()
+    rows = read_rows(tmp_path / 'raw.csv')
+    assert [r['status'] for r in rows] == ['ok', 'nondeterministic']
+    assert 'io.reads' in rows[1]['note']
+    assert [r['status'] for r in invalid] == ['nondeterministic']
+    summarize([tmp_path / 'raw.csv'], tmp_path / 's.csv')
+    assert read_rows(tmp_path / 's.csv')[0]['status'] == 'nondeterministic'
+
+
+def test_resume_retries_error_but_not_na(tmp_path, monkeypatch):
+    monkeypatch.setattr(runmod, 'clock', lambda: 0.0)
+    eng, exp = FakeEngine(), select_exp()
+    sig = output_signature(dict(kind='select', r_table='aluno'), ALUNOS[:3])
+    log = CsvLog(tmp_path / 'raw.csv')
+    log.write({'exp_id': exp.exp_id, 'rep': 1, 'status': 'error', 'note': 'IndexError: antes da correção'})
+    log.close()
+    log = CsvLog(tmp_path / 'raw.csv')
+    run([exp], SimpleNamespace(get=lambda e: eng), log, {exp.query_id: sig},
+        functions={'select_range': lazy_scan(eng, ALUNOS[:3]),
+                   'select_range_cost': lambda *a, **k: Cost(reads=1)},
+        previous=read_rows(tmp_path / 'raw.csv'))
+    log.close()
+    rows = read_rows(tmp_path / 'raw.csv')
+    # O operador foi corrigido: mede 3 repetições novas, numeradas depois do erro.
+    assert [(r['rep'], r['status']) for r in rows] == [('1', 'error'), ('2', 'ok'), ('3', 'ok'), ('4', 'ok')]
+    summarize([tmp_path / 'raw.csv'], tmp_path / 's.csv')
+    out = read_rows(tmp_path / 's.csv')[0]
+    assert (out['status'], out['n_reps'], out['valid']) == ('ok', '3', 'True')
+
+
+def test_resume_drops_truncated_last_line_and_checks_header(tmp_path):
+    path = tmp_path / 'raw.csv'
+    log = CsvLog(path)
+    log.write(dict(_ok_row('e1', 1, 10), note='linha 1\nlinha 2'))   # quebra de linha vira espaço
+    log.close()
+    with path.open('a') as handle:
+        handle.write('e1,2,ok,,')                                     # queda no meio da gravação
+    rows = load_previous(path)
+    assert [r['rep'] for r in rows] == ['1'] and rows[0]['note'] == 'linha 1 linha 2'
+    assert path.read_text().endswith('\n')
+    log = CsvLog(path)
+    log.write(_ok_row('e1', 2, 10))
+    log.close()
+    assert [r['rep'] for r in read_rows(path)] == ['1', '2']
+    bad = tmp_path / 'bad.csv'
+    bad.write_text('exp_id,rep\ne1,1\n')
+    with pytest.raises(ValueError, match='cabeçalho'):
+        load_previous(bad)
