@@ -47,8 +47,8 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 | §6.1.2 contagem de blocos/buffer por operação | `bench/run.py` (`measure`) + `cbd/engine.py` | `test_row_counts_whole_output_inside_window`, `test_cold_flushes_before_resetting` |
 | §7.3 folha de rosto com nome e DRE de todos | `bench/report.py` (`cover`, `members`) | `test_cover_has_every_member_with_dre` |
 | §7.2.2 relatório: base e metodologia | `docs/relatorio/03_base.md`, `04_metodologia.md`, `gerado/` | `test_base_tables_come_from_base_stats`, `test_generated_parts_are_up_to_date` |
+| §6.1.3 / §7.2.2.b estimado × medido com motivo | `bench/compare_cost.py` | `test_each_reason_rule`, `test_unexplained_listed_separately_and_rules_do_not_overreach` |
 | §6.1.1 ocupação antes/depois da manutenção | — (#17) | — |
-| §6.1.3 estimado × medido | colunas `est.*` no CSV; análise em #22 | `test_row_counts_whole_output_inside_window` (só grava) |
 
 ## Desvios ou dúvidas sobre o contrato
 - `Experiment.op`/`cost_fn` guardam o **nome** da função (o guia diz "função"),
@@ -65,6 +65,10 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - Limitação a citar no relatório (revisão do PR #33): a validação compara
   `(count, soma dos hash_value da PK lógica)`. Um join com as PKs certas e outra
   coluna errada passa. Segue o P6 §5; não é bug, mas vai como limitação.
+
+- `compare_cost`: limiares escolhidos pelo P6 (tolerância de 10% ou 1 bloco;
+  "hits altos" = 10% dos pedidos de DATA). A regra da altura da B+ depende de
+  P4/P5 porem `height`/`expected_height` no `info` (conferir na #36).
 
 ## Decisões provisórias a rever
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
