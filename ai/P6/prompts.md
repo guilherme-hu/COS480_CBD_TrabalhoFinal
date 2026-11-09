@@ -60,3 +60,6 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
      (pino vazado continua abortando). Registrado em `review.md`.
    - #12: coluna `valid` comparando `(count, checksum)` da saída com o
      `workload.json` (calculado no SQLite por `bench.build`), fora da janela.
+   - #13: repetições (3 a 10, até < 5% em I/O e tempo), `--resume`,
+     `summary.csv` com medianas. Ajuste após teste: linha `valid=False` era
+     repetida 3 vezes; agora para na primeira (saída determinística).

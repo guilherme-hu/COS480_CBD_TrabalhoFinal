@@ -11,7 +11,9 @@ import pytest
 
 from bench.generator import Dataset
 from bench.matrix import Experiment, Side, join_experiments
-from bench.run import COLUMNS, CsvLog, EngineCache, PinLeak, measure, report_invalid, run
+import bench.run as runmod
+from bench.run import (COLUMNS, CsvLog, EngineCache, PinLeak, measure, read_rows, report_invalid,
+                       run, summarize)
 from bench.sqlite_ref import output_signature
 from cbd.contracts import Cost, NotApplicable, Path, Policy, TableStats
 
@@ -249,3 +251,88 @@ def test_unknown_query_id_is_an_error_row_and_run_continues(tmp_path):
     assert rows['select.lost']['status'] == 'error' and 'nao_existe' in rows['select.lost']['note']
     assert rows['select.lost']['io.reads'] == ''
     assert rows[good.exp_id]['status'] == 'ok'
+
+
+def _run_with_times(tmp_path, monkeypatch, times, exps, previous=(), stop_after=None):
+    """Roda `run` com tempos de relógio controlados; `stop_after` simula a queda."""
+    ticks = iter([t for dt in times for t in (0.0, dt)])
+    monkeypatch.setattr(runmod, 'clock', lambda: next(ticks))
+    eng, calls = FakeEngine(), []
+
+    def op(eng_, **k):
+        if stop_after is not None and len(calls) == stop_after:
+            raise KeyboardInterrupt
+        calls.append(1)
+        yield from lazy_scan(eng, ALUNOS[:3])(eng_)
+
+    log = CsvLog(tmp_path / 'raw.csv')
+    sig = output_signature(dict(kind='select', r_table='aluno'), ALUNOS[:3])
+    try:
+        run(exps, SimpleNamespace(get=lambda e: eng), log, {e.query_id: sig for e in exps},
+            functions={'select_range': op, 'select_range_cost': lambda *a, **k: Cost(reads=1)},
+            previous=previous)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        log.close()
+    return read_rows(tmp_path / 'raw.csv')
+
+
+def test_stable_measure_stops_at_three(tmp_path, monkeypatch):
+    rows = _run_with_times(tmp_path, monkeypatch, [1.0, 1.01, 1.02, 9, 9], [select_exp()])
+    assert [r['rep'] for r in rows] == ['1', '2', '3']
+    assert all(r['valid'] == 'True' for r in rows)
+
+
+def test_unstable_time_repeats_until_ten(tmp_path, monkeypatch):
+    rows = _run_with_times(tmp_path, monkeypatch, [1.0, 2.0] * 6, [select_exp()])
+    assert len(rows) == runmod.MAX_REPS == 10
+
+
+def test_resume_after_crash_does_not_duplicate(tmp_path, monkeypatch):
+    exps = [select_exp(exp_id=f'select.x.{i}') for i in range(3)]
+    times = [1.0] * 30
+    first = _run_with_times(tmp_path, monkeypatch, times, exps, stop_after=4)   # cai no meio do 2º
+    assert [(r['exp_id'], r['rep']) for r in first] == [
+        ('select.x.0', '1'), ('select.x.0', '2'), ('select.x.0', '3'), ('select.x.1', '1')]
+    rows = _run_with_times(tmp_path, monkeypatch, times, exps, previous=first)
+    pairs = [(r['exp_id'], r['rep']) for r in rows]
+    assert len(pairs) == len(set(pairs)) == 9          # 3 experimentos × 3 repetições, sem repetir
+    assert sorted(pairs) == sorted((f'select.x.{i}', str(k)) for i in range(3) for k in (1, 2, 3))
+
+
+def test_na_row_written_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(runmod, 'clock', lambda: 0.0)
+    eng, log = FakeEngine(), CsvLog(tmp_path / 'raw.csv')
+
+    def refuse(*a, **k):
+        raise NotApplicable('faixa em hash')
+
+    exp = select_exp()
+    run([exp], SimpleNamespace(get=lambda e: eng), log, {exp.query_id: (0, 0)},
+        functions={'select_range': lazy_scan(eng, []), 'select_range_cost': refuse})
+    log.close()
+    rows = read_rows(tmp_path / 'raw.csv')
+    assert [(r['status'], r['rep']) for r in rows] == [('N/A', '1')]
+    # e o --resume não tenta de novo
+    log = CsvLog(tmp_path / 'raw.csv')
+    run([exp], SimpleNamespace(get=lambda e: eng), log, {exp.query_id: (0, 0)},
+        functions={'select_range': lazy_scan(eng, []), 'select_range_cost': refuse}, previous=rows)
+    log.close()
+    assert len(read_rows(tmp_path / 'raw.csv')) == 1
+
+
+def test_summary_uses_medians_and_latest_file(tmp_path):
+    raw = tmp_path / 'raw'
+    old, new = CsvLog(raw / '2026-11-10_all.csv'), CsvLog(raw / '2026-11-18_all.csv')
+    old.write({'exp_id': 'e1', 'rep': 1, 'status': 'ok', 'valid': True, 'io.reads': 1, 'io.writes': 0, 'time_s': 9})
+    for rep, (reads, t) in enumerate([(10, 3.0), (10, 1.0), (10, 2.0)], 1):
+        new.write({'exp_id': 'e1', 'rep': rep, 'status': 'ok', 'valid': True,
+                   'io.reads': reads, 'io.writes': 0, 'time_s': t})
+    new.write({'exp_id': 'e2', 'rep': 1, 'status': 'N/A', 'note': 'faixa em hash'})
+    old.close(), new.close()
+    assert summarize(sorted(raw.glob('*.csv')), tmp_path / 'summary.csv') == 2
+    rows = {r['exp_id']: r for r in read_rows(tmp_path / 'summary.csv')}
+    assert (rows['e1']['n_reps'], float(rows['e1']['io.reads']), float(rows['e1']['time_s'])) == ('3', 10, 2.0)
+    assert rows['e1']['valid'] == 'True'
+    assert (rows['e2']['status'], rows['e2']['n_reps'], rows['e2']['note']) == ('N/A', '0', 'faixa em hash')
