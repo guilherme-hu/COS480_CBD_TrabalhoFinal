@@ -355,16 +355,23 @@ Todo o trabalho do grupo está em issues no GitHub. Cada issue cabe em um PR e t
 
 As outras labels são `area:*` (onde é o trabalho), `prio:alta|media|baixa` e `size:S|M|L` (horas, meio dia, um dia).
 
-**Ordem dos milestones**, que seguem as entregas da arquitetura §10.1:
+**Ordem dos milestones.** Os milestones não têm data no GitHub, mas seguem as entregas da arquitetura §10.1. "Milestone mais cedo" quer dizer a data mais cedo nesta tabela; as duas trilhas (C e M) correm em paralelo:
 
-1. `C1: Camada 4 mínima e contratos` → `C2: Camada 3 básica` → `C3: Camadas completas`: as camadas 2 a 4;
-2. `M1: Base e referência no escopo novo` → `M2: Matriz ponta a ponta em escala pequena` → `M3: Rodada final e análise` → `M4: Relatório técnico`: a base, a integração, a rodada final e a entrega.
+| Data prevista | Milestone | O que precisa funcionar |
+| :--- | :--- | :--- |
+| 05/11 | `C1: Camada 4 mínima e contratos` | `FileManager`, `BufferPool` e fixtures no `main` |
+| 09/11 | `C2: Camada 3 básica` | codec, slotted page, heap, catálogo; B+ com insert e busca |
+| 09/11 | `M1: Base e referência no escopo novo` | base, carga de trabalho e referência SQLite (P6) |
+| 12–14/11 | `C3: Camadas completas` | hash, B+ completa e todos os operadores com custo |
+| 16/11 | `M2: Matriz ponta a ponta em escala pequena` | matriz rodando com a pilha real |
+| 18/11 | `M3: Rodada final e análise` | rodada final e estresse |
+| 20/11 | `M4: Relatório técnico` | relatório, post-mortem, slides |
 
 **Como escolher e resolver uma issue:**
 
-1. Liste as da sua parte: `gh issue list --label parte:Px --state open`.
-2. Pegue a de milestone mais cedo e prioridade mais alta cujo `Bloqueado por` esteja todo fechado (`gh issue view <n>` mostra o estado de cada uma).
-3. Confira se ela é sua ou está livre: `gh issue view <n> --json state,assignees`. Issue de outra pessoa só se ela concordar; nunca remova a atribuição de alguém.
+1. Liste as da sua parte e as do grupo: `gh issue list --label parte:Px --state open` e `gh issue list --label parte:grupo --state open`.
+2. Pegue a de milestone mais cedo e prioridade mais alta cujo `Bloqueado por` esteja todo fechado. O `gh issue view <n>` mostra só a própria issue: confira cada número do `Bloqueado por` com `gh issue view <m> --json state --jq .state` (precisa dar `CLOSED`).
+3. Confira se ela é sua ou está livre: `gh issue view <n> --json state,assignees`. Livre: reivindique com `gh issue edit <n> --add-assignee @me` e consulte de novo (o GitHub não trava a issue). Issue de outra pessoa só se ela concordar; nunca remova a atribuição de alguém.
 4. Crie a branch a partir do `main` atualizado: `px/<n>-<slug>`, por exemplo `p3/47-btree-insert`.
 5. Resolva seguindo este arquivo inteiro: debate das decisões (§3), testes (§7), revisão (§8), registro de IA (§6).
 6. Abra o PR com `Closes #<n>` e confira cada critério de aceite antes de pedir revisão. A issue fecha sozinha quando o PR entra no `main`.
@@ -376,7 +383,8 @@ As outras labels são `area:*` (onde é o trabalho), `prio:alta|media|baixa` e `
 - **Ligue as dependências.** Se a sua issue depende da nova, acrescente o número no `Bloqueado por` da sua. A recíproca vale: se você vai entregar algo que destrava a de outro, cite a dele.
 - **Não reescreva o escopo da issue de outra pessoa.** Para propor um critério que falta ou apontar um erro, comente na issue. Edite só os campos objetivos, como `Bloqueado por` com números novos, e diga no comentário o que mudou.
 - **Antes de criar, procure:** `gh issue list --state all --search "<termo>"`. Se já existir, comente nela em vez de duplicar.
-- **O agente de IA propõe o texto da issue e só cria depois do ok do integrante**, porque a issue fica visível para o grupo.
+
+**Toda escrita no GitHub passa pelo integrante.** Criar ou editar issue, comentar, atribuir, abrir ou comentar PR e fazer push ficam visíveis para o grupo. O agente de IA propõe o texto e só executa depois do ok do integrante, como na regra 11 do §0. Um ok vale para o que foi pedido, não para as próximas escritas.
 
 O objetivo é que, juntas, as issues cubram a proposta inteira e a integração entre as partes. Se você notar que algo do enunciado não aparece em issue nenhuma, isso já é motivo para abrir uma.
 

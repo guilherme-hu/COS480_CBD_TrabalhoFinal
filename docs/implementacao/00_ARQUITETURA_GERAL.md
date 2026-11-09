@@ -894,7 +894,7 @@ Antes de a camada de baixo ficar pronta, **escreva contra a interface** e teste 
 
 ### 10.2 Git
 
-- Uma branch por pessoa e funcionalidade (`p3/btree-split`), com PR para o `main`. Precisa de 1 revisão de quem consome a interface (P2 revisa P3 e vice-versa; P4/P5 revisam P2/P3; P6 revisa P4/P5; qualquer um revisa P1).
+- Uma branch por pessoa e issue (`px/<n>-<slug>`, ex.: `p3/47-btree-insert`), com PR para o `main` e `Closes #<n>` (fluxo de issues no `AGENTS.md` §10.1). Precisa de 1 revisão de quem consome a interface (P2 revisa P3 e vice-versa; P4/P5 revisam P2/P3; P6 revisa P4/P5; qualquer um revisa P1).
 - Mudança em `contracts.py` ou neste documento: pode acontecer sempre que o grupo decidir. Faça em PR próprio, avise e peça revisão de quem é afetado.
 - `pytest -q` precisa passar no `main`.
 
