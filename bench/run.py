@@ -222,6 +222,12 @@ def run(experiments, engines, log, expected, functions=None):
     """
     invalid = []
     for exp in experiments:
+        if exp.query_id not in expected:
+            # Matriz e workload.json fora de sincronia: sem resposta esperada não há
+            # como validar, então nem mede; a linha fica para corrigir a preparação.
+            log.write(dict(base_row(exp, 1), status='error',
+                           note=f'query_id {exp.query_id!r} ausente do workload.json'))
+            continue
         row = measure(engines.get(exp), exp, 1, functions, expected[exp.query_id])
         log.write(row)
         if row.get('valid') is False:

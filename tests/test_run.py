@@ -231,3 +231,21 @@ def test_run_collects_invalid_rows(tmp_path, capsys):
     assert [r['exp_id'] for r in invalid] == [exp.exp_id]
     assert report_invalid(invalid) == 1
     assert 'INVÁLIDO select.x.a_scan' in capsys.readouterr().out
+
+
+def test_unknown_query_id_is_an_error_row_and_run_continues(tmp_path):
+    # Revisão do PR #33: expected[exp.query_id] com id fora do workload.json levantava
+    # KeyError e derrubava a rodada. Matriz e workload fora de sincronia viram linha
+    # error (sem medir: não haveria como validar) e a rodada segue.
+    eng = FakeEngine()
+    lost, good = select_exp(exp_id='select.lost', query_id='nao_existe'), select_exp()
+    log = CsvLog(tmp_path / 'raw.csv')
+    run([lost, good], SimpleNamespace(get=lambda e: eng), log, {good.query_id: (5, 0)},
+        functions={'select_range': lazy_scan(eng, ALUNOS[:5]),
+                   'select_range_cost': lambda *a, **k: Cost(reads=1)})
+    log.close()
+    with (tmp_path / 'raw.csv').open(newline='') as handle:
+        rows = {r['exp_id']: r for r in csv.DictReader(handle)}
+    assert rows['select.lost']['status'] == 'error' and 'nao_existe' in rows['select.lost']['note']
+    assert rows['select.lost']['io.reads'] == ''
+    assert rows[good.exp_id]['status'] == 'ok'
