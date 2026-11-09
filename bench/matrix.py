@@ -10,7 +10,8 @@ Escopo (arquitetura §0, §7.4; P6 §4.2 e §4.3): NATURAL JOIN mestre-detalhe n
 combinações de tamanho × 3 algoritmos × 13 configurações físicas = 117 linhas,
 mais as linhas com lado externo/construtor forçado. `r` é sempre o mestre.
 Seleções: igualdade em aluno.dre (20 valores) e faixa em aluno.cr (1% e 50%),
-nos caminhos a (SCAN), b (PRIMARY em B+ e em hash) e c (SECONDARY).
+nos caminhos a (SCAN), b (PRIMARY em B+ e em hash) e c (SECONDARY; na faixa,
+também o B+ secundário sobre os arquivos B+ e hash, enunciado §4.2).
 Combinações que o operador recusar (NotApplicable) continuam na lista: o
 orquestrador grava a linha com status N/A e o motivo, nunca a omite.
 """
@@ -128,21 +129,29 @@ def join_experiments():
     return out
 
 
-def _select_paths(column):
-    """Caminhos da seleção (enunciado §5.2): a = heap SCAN; b = organizado pela coluna
-    (B+ e hash, PRIMARY); c = heap com índice secundário (SECONDARY)."""
-    return [('a', 'a_scan', _heap('aluno', column, Path.SCAN)),
-            ('b', 'b_btree', _organized('aluno', column, 'BTREE', '')),
-            ('b', 'b_hash', _organized('aluno', column, 'HASH', '')),
-            ('c', 'c_secondary', _heap('aluno', column, Path.SECONDARY))]
+def _select_paths(column, unique):
+    """Caminhos da seleção (enunciado §5.2 e §4.2): a = heap SCAN; b = organizado pela
+    coluna (B+ e hash, PRIMARY); c = índice secundário (SECONDARY) sobre o heap e,
+    em campo NOT UNIQUE, também o B+ secundário "clustering" sobre os arquivos
+    organizados por B+ e por hash na chave (enunciado §4.2, itens B+.2 e Hash.3;
+    variantes aluno__bt_dre e aluno__hs_dre de bench.build)."""
+    out = [('a', 'a_scan', _heap('aluno', column, Path.SCAN)),
+           ('b', 'b_btree', _organized('aluno', column, 'BTREE', '')),
+           ('b', 'b_hash', _organized('aluno', column, 'HASH', '')),
+           ('c', 'c_secondary', _heap('aluno', column, Path.SECONDARY))]
+    if not unique:
+        for org, short in (('BTREE', 'bt'), ('HASH', 'hs')):
+            out.append(('c', f'c_secondary_on_{org.lower()}',
+                        Side('aluno', f'aluno__{short}_dre', column, Path.SECONDARY, org)))
+    return out
 
 
 def select_experiments(workload):
     """Seleções a partir das consultas de `workload.json` (valores nunca redigitados).
 
     Igualdade UNIQUE: 20 DREs × 4 caminhos = 80 linhas (o relatório usa a média).
-    Faixa NOT UNIQUE: 2 seletividades × (SCAN, B+, hash, SECONDARY com sort_ptrs
-    False e True) = 10 linhas. Faixa em hash primário gera N/A na execução.
+    Faixa NOT UNIQUE: 2 seletividades × (SCAN, B+, hash e SECONDARY sobre heap, B+
+    e hash, cada SECONDARY com sort_ptrs False e True) = 18 linhas. Faixa em hash primário gera N/A na execução.
     sort_ptrs só varia na faixa: a igualdade UNIQUE devolve 1 ponteiro, e ordenar
     um ponteiro não muda nenhum acesso.
     """
@@ -157,7 +166,7 @@ def select_experiments(workload):
             # cr >= q -> [q, +inf); cr <= q -> (-inf, q]. None = aberto (arquitetura §7.1).
             lo, hi = (q['value'], None) if op == '>=' else (None, q['value'])
             operator, base = 'select_range', dict(column=col, lo=lo, hi=hi, lo_inc=True, hi_inc=True)
-        for config, label, side in _select_paths(col):
+        for config, label, side in _select_paths(col, q['sel_type'] == 'eq_unique'):
             variants = [None]
             if side.path == Path.SECONDARY:
                 variants = [False] if operator == 'select_eq' else [False, True]

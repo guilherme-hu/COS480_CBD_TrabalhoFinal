@@ -116,11 +116,14 @@ def test_select_matrix_counts(workload):
     rng = [e for e in exps if e.sel_type == 'range_nonunique']
     # 20 DREs × (SCAN, B+, hash, SECONDARY).
     assert len(eq) == 20 * 4
-    # 2 seletividades × (SCAN, B+, hash, SECONDARY sem e com sort_ptrs).
-    assert len(rng) == 2 * 5
+    # 2 seletividades × (SCAN, B+, hash e SECONDARY sobre heap, B+ e hash, cada
+    # SECONDARY sem e com sort_ptrs). Enunciado §4.2: o B+ secundário "clustering"
+    # em campo NOT UNIQUE também é método de acesso de B+ e hash primários.
+    assert len(rng) == 2 * 9
     assert Counter((e.config, e.args['table'].org) for e in rng) == {
-        ('a', 'HEAP'): 2, ('b', 'BTREE'): 2, ('b', 'HASH'): 2, ('c', 'HEAP'): 4}
-    assert sorted(e.sort_ptrs for e in rng if e.config == 'c') == [False, False, True, True]
+        ('a', 'HEAP'): 2, ('b', 'BTREE'): 2, ('b', 'HASH'): 2,
+        ('c', 'HEAP'): 4, ('c', 'BTREE'): 4, ('c', 'HASH'): 4}
+    assert sorted(e.sort_ptrs for e in rng if e.config == 'c') == [False] * 6 + [True] * 6
     assert len({e.exp_id for e in exps}) == len(exps)
 
 
@@ -142,4 +145,7 @@ def test_select_values_come_from_workload(workload, plan_by_name):
         if side.path == Path.PRIMARY:
             assert item['org']['key'] == side.column
         if side.path == Path.SECONDARY:
-            assert side.column in {i['column'] for i in item['indexes']}
+            index = next(i for i in item['indexes'] if i['column'] == side.column)
+            if side.org != 'HEAP':
+                # Sobre B+/hash primário, só B+ NOT UNIQUE (arquitetura §5.3).
+                assert (index['kind'], index['unique']) == ('BTREE', False)
