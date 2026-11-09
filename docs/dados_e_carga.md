@@ -47,7 +47,7 @@ minúsculas, `inscricao` é limitada ao número de pares distintos aluno/turma.
 | --- | --- |
 | `ref.sqlite` | Seis tabelas completas e três subconjuntos, PKs, UNIQUEs, FKs e índices auxiliares da referência |
 | `manifest.json` | Versão, escala, volumes, seeds, esquemas, cursos dos subconjuntos e adequação estimada dos tamanhos |
-| `workload.json` | Nove joins, até vinte igualdades UNIQUE, seis faixas e respectivos `(count, checksum)` esperados |
+| `workload.json` | Três joins, até vinte igualdades UNIQUE, duas faixas em CR e respectivos `(count, checksum)` esperados |
 | `physical_plan_2048.json` / `4096` / `8192` | Variantes heap/B+/hash, índices secundários e parâmetros de carga |
 | `base_stats.csv` | Volumes, tamanho médio previsto do registro, cardinalidades, SHA-256 e blocagem estimada por tamanho de bloco |
 
@@ -101,16 +101,18 @@ para B=4096. O critério mais forte de 10×DATA é calibrado para B=4096.
 
 ## Consultas de referência
 
-`bench/workload.py` cobre os três tipos de join e as três combinações de
-tamanho do P6. O join usa igualdade explícita e saída concatenada
-`r_rec + s_rec`, conforme o contrato, inclusive para mestre/detalhe.
-Nulos não se juntam. Repetições em colunas NOT UNIQUE preservam a multiplicidade.
+`bench/workload.py` cobre só o escopo obrigatório (arquitetura §0): os três
+NATURAL JOINs mestre-detalhe (curso ⋈ disciplina, curso ⋈ aluno,
+aluno ⋈ inscricao), com o mestre sempre como `r`. O join usa igualdade explícita
+e saída concatenada `r_rec + s_rec`, conforme o contrato. Nulos não se juntam.
+Repetições em colunas NOT UNIQUE preservam a multiplicidade.
 
-As seleções incluem DREs sorteados com seed fixa, faixas de DRE e CPF e
-faixas de CR com metas de 0,1% e 50%. Os limites são quantis dos dados
-efetivamente carregados, e a seletividade real é registrada: empates de CR
-podem impedir exatamente 0,1%. As igualdades UNIQUE retornam uma linha,
-portanto sua seletividade é 1/n.
+As seleções são 20 igualdades em `aluno.dre` (sorteadas com seed 490) e duas
+faixas em `aluno.cr`: `cr >= q` com meta de 1% (CR alto) e `cr <= q` com meta
+de 50%. `q` é o quantil dos dados efetivamente carregados e a seletividade
+real fica registrada em `selectivity`: empates de CR podem fazer a resposta
+passar um pouco da meta (na escala 0,1: 1,02% e 50,12%). As igualdades UNIQUE
+retornam uma linha, portanto sua seletividade é 1/n.
 
 Exemplo de consumo por um futuro teste de operador:
 
@@ -139,7 +141,7 @@ Cada variante recebe `Schema` com seu próprio nome, mantendo campos idênticos.
 Há heap com índices UNIQUE→HASH e NOT UNIQUE→B+, B+/hash por cada coluna
 relevante e índices B+ NOT UNIQUE nas outras colunas permitidas.
 Há também `aluno__bt_dre_inc` com carga incremental e um par hash com
-`buckets` e `seed` iguais para cada consulta de join (`_eq_<tipo>_<tamanho>`).
+`buckets` e `seed` iguais para cada consulta de join (`_eq_<tamanho>`).
 As variantes hash comuns têm seeds distintas entre tabelas, permitindo
 comparar também o caso sem particionamento compatível.
 

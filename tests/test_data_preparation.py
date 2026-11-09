@@ -100,9 +100,19 @@ def test_sqlite_integrity_and_subsets(prepared):
 
 def test_all_workload_results_against_python(prepared):
     workload = json.loads((prepared / 'workload.json').read_text())
-    assert len([q for q in workload if q['kind'] == 'join']) == 9
+    joins = [q for q in workload if q['kind'] == 'join']
+    assert [(q['r_table'], q['s_table']) for q in joins] == [
+        ('curso', 'disciplina'), ('curso', 'aluno'), ('aluno', 'inscricao')]
     assert len([q for q in workload if q.get('sel_type') == 'eq_unique']) == 20
-    assert len([q for q in workload if q.get('sel_type', '').startswith('range')]) == 6
+    ranges = [q for q in workload if q.get('sel_type', '').startswith('range')]
+    # Escopo novo: só faixa NOT UNIQUE em aluno.cr, metas de 1% e 50%.
+    assert [(q['column'], q['operator'], q['target_selectivity']) for q in ranges] == [
+        ('cr', '>=', .01), ('cr', '<=', .5)]
+    assert all(q['sel_type'] == 'range_nonunique' for q in ranges)
+    n_aluno = Dataset(.002).counts['aluno']
+    for q in ranges:
+        # Quantil empírico: nunca abaixo da meta; acima só por empates (até 10% + 1 registro).
+        assert q['target_selectivity'] <= q['selectivity'] <= q['target_selectivity'] * 1.1 + 1 / n_aluno
     with SQLiteReference(prepared / 'ref.sqlite') as ref:
         for query in workload:
             r = query['r_table']
