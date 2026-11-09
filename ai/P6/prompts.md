@@ -58,3 +58,5 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
      Bruto em `ai/P6/raw/run_v1.py`. Refinamento após autorrevisão: exceção
      genérica do operador abortava a rodada inteira; agora vira `status=error`
      (pino vazado continua abortando). Registrado em `review.md`.
+   - #12: coluna `valid` comparando `(count, checksum)` da saída com o
+     `workload.json` (calculado no SQLite por `bench.build`), fora da janela.
