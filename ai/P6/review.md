@@ -53,3 +53,15 @@
 - Regressão: `test_plan_and_catalog_adapter` confere N e seed iguais no par e
   N ≤ V(A). A confirmação física depende da carga real (#14).
 - Status da decisão: provisória (D-P6-01), a rever com o integrante.
+
+## Exceção de operador derrubava a rodada inteira — corrigido (08/11, #11)
+
+- Arquivo: `bench/run.py`, `measure` (versão bruta em `ai/P6/raw/run_v1.py`).
+- Categoria: robustez do orquestrador.
+- Defeito: só `NotApplicable` era tratada; qualquer outro erro de um operador
+  de P4/P5 (ex.: `IndexError` por offset fora do bloco) propagava e encerrava
+  a matriz, perdendo horas da rodada final.
+- Detecção: autorrevisão do protocolo contra P6 §6.4 (rodada longa que pode cair).
+- Correção: grava `status=error` com o tipo e a mensagem e segue; o resultado
+  parcial não é gravado como medida. Se sobrar página fixada, aborta (`PinLeak`).
+- Regressão: `tests/test_run.py::test_operator_bug_is_recorded_not_fatal_unless_pins_leak`.

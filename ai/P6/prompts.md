@@ -54,3 +54,7 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
      por algoritmo fica LRU até o experimento da #16.
    - #10: seleções na matriz (80 igualdades + 10 faixas), valores lidos do
      `workload.json`. Bruto em `ai/P6/raw/matrix_selects_v1.py`.
+   - #11: `bench/run.py` (protocolo de medição, CSV §6.3, cache de Engine).
+     Bruto em `ai/P6/raw/run_v1.py`. Refinamento após autorrevisão: exceção
+     genérica do operador abortava a rodada inteira; agora vira `status=error`
+     (pino vazado continua abortando). Registrado em `review.md`.
