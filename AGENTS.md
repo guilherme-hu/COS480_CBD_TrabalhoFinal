@@ -371,7 +371,7 @@ As outras labels são `area:*` (onde é o trabalho), `prio:alta|media|baixa` e `
 
 1. Liste as da sua parte e as do grupo: `gh issue list --label parte:Px --state open` e `gh issue list --label parte:grupo --state open`.
 2. Pegue a de milestone mais cedo e prioridade mais alta cujo `Bloqueado por` esteja todo fechado. O `gh issue view <n>` mostra só a própria issue: confira cada número do `Bloqueado por` com `gh issue view <m> --json state --jq .state` (precisa dar `CLOSED`).
-3. Confira se ela é sua ou está livre: `gh issue view <n> --json state,assignees`. Livre: reivindique com `gh issue edit <n> --add-assignee @me` e consulte de novo (o GitHub não trava a issue). Issue de outra pessoa só se ela concordar; nunca remova a atribuição de alguém.
+3. Confira se ela é sua ou está livre: `gh issue view <n> --json state,assignees`. Livre: reivindique com `gh issue edit <n> --add-assignee @me` e consulte de novo (o GitHub não trava a issue). Issue de outra pessoa só se ela concordar, e o acordo fica registrado num comentário da própria issue; nunca remova a atribuição de alguém.
 4. Crie a branch a partir do `main` atualizado: `px/<n>-<slug>`, por exemplo `p3/47-btree-insert`.
 5. Resolva seguindo este arquivo inteiro: debate das decisões (§3), testes (§7), revisão (§8), registro de IA (§6).
 6. Abra o PR com `Closes #<n>` e confira cada critério de aceite antes de pedir revisão. A issue fecha sozinha quando o PR entra no `main`.
