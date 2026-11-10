@@ -159,7 +159,7 @@ O relatório tem de justificar **todas** as escolhas comparando com as preterida
 
 | Fator | Níveis | Experimentos |
 | :--- | :--- | :--- |
-| **política de substituição** (obrigatório) | as implementadas pelo P1 (LRU, MRU, Clock, FIFO) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
+| **política de substituição** (obrigatório) | as implementadas pelo P1 (`LRU` e `MRU` — `D-P1-08`; `Clock` e `FIFO` preteridas) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
 | tamanho de bloco | 2048, 4096, 8192 | joins tipo 1 (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
 | toss-immediate | off/on | os scans e o BNL |
 | prefetch | 0, 8 | os scans (o efeito aparece em `io.seeks`) |
