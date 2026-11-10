@@ -24,6 +24,7 @@ def test_hit_miss(bp):
     with bp.page(fid, bno, PageType.DATA) as p2:
         assert p2.data[0] == 42
 
+    # Cálculo esperado: 1º pin em cache frio = 1 miss (1 leitura física); 2º pin no mesmo bno = 1 hit (0 leituras); hit_rate = 1/2 = 0.5
     assert bp.stats.requests == 2
     assert bp.stats.misses == 1
     assert bp.stats.hits == 1
@@ -59,6 +60,7 @@ def test_dirty_eviction(tmp_path):
     with pool.page(fid, 3, PageType.DATA):
         pass
 
+    # Cálculo esperado: DATA tem 2 frames; carregar 1, 2 ocupa os 2 frames; carregar 3 expulsa 1 (sujo) -> 1 dirty_eviction, 1 write
     assert pool.stats.dirty_evictions == 1
     assert fm.io.writes == 1
 
@@ -95,6 +97,7 @@ def test_not_dirty_no_write(tmp_path):
     with pool.page(fid, 2, PageType.DATA):
         pass
 
+    # Cálculo esperado: 1 expulsão na área DATA (1 frame), mas como dirty=False -> 0 dirty_evictions e 0 writes no disco
     assert pool.stats.dirty_evictions == 0
     assert fm.io.writes == 0
 
@@ -300,7 +303,7 @@ def test_reserve_work(tmp_path):
 
 
 def test_areas_isolated(tmp_path):
-    """Encher DATA não expulsa páginas de INDEX."""
+    """Encher DATA não expulsa páginas de INDEX; stats_by_area devolve hits, misses e dirty_evictions por área."""
     fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
     f_idx = fm.create("idx")
     f_dat = fm.create("dat")
@@ -322,16 +325,26 @@ def test_areas_isolated(tmp_path):
     with pool.page(f_idx, 1, PageType.INDEX):
         pass
 
-    # Varre 9 blocos na área DATA (que só tem 2 frames)
+    # Varre 9 blocos na área DATA (que só tem 2 frames), sujando o bloco 1 (que será expulso ao carregar o 3)
     for b in range(1, 10):
-        with pool.page(f_dat, b, PageType.DATA):
-            pass
+        with pool.page(f_dat, b, PageType.DATA) as p_dat:
+            if b == 1:
+                p_dat.data[0] = 99
+                p_dat.mark_dirty()
 
     # Página de INDEX continua residente (novo pin dá hit!)
     hits_before = pool.stats_by_area[PageType.INDEX].hits
     with pool.page(f_idx, 1, PageType.INDEX):
         pass
     assert pool.stats_by_area[PageType.INDEX].hits == hits_before + 1
+
+    # Cálculo esperado por área:
+    # - INDEX (2 frames): 1º pin = 1 miss, 2º pin = 1 hit, 0 dirty_evictions
+    # - DATA (2 frames, 9 blocos distintos): 9 misses, 0 hits, e 1 dirty_eviction (bloco 1 sujo expulso pelo bloco 3)
+    idx_stats = pool.stats_by_area[PageType.INDEX]
+    dat_stats = pool.stats_by_area[PageType.DATA]
+    assert (idx_stats.hits, idx_stats.misses, idx_stats.dirty_evictions) == (1, 1, 0)
+    assert (dat_stats.hits, dat_stats.misses, dat_stats.dirty_evictions) == (0, 9, 1)
 
     pool.flush_all()
     fm.close_all()
@@ -344,6 +357,7 @@ def test_force(bp):
     p.data[:4] = b"META"
     assert p.dirty is True
 
+    # Cálculo esperado: force() grava 1 bloco imediatamente -> forced_writes == 1, io.writes aumenta em 1, dirty vira False e pin_count segue 1
     writes_before = bp.fm.io.writes
     bp.force(p)
     assert p.dirty is False
@@ -364,6 +378,7 @@ def test_drop_file(bp):
     p2.data[0] = 88
     bp.unpin(p2, dirty=True)
 
+    # Cálculo esperado: drop_file descarta os 2 frames sujos em RAM sem chamar fm.write -> io.writes aumenta em 0
     writes_before = bp.fm.io.writes
     bp.drop_file(fid)
     bp.fm.delete(fid)
@@ -434,3 +449,79 @@ def test_reserve_work_partial_rollback(tmp_path):
 
     pool.flush_all()
     fm.close_all()
+
+
+def test_cold_resets_head_counts_seek(bp):
+    """reset_stats zera a posição da cabeça (_head = None): o 1º acesso depois de esfriar o cache conta como seek mesmo sendo bno + 1."""
+    fid = bp.fm.create("rel_cold")
+    for bno in (1, 2):
+        p = bp.new_page(fid, PageType.DATA)
+        p.data[0] = bno
+        bp.unpin(p, dirty=True)
+
+    # Lê o bloco 1 (deixaria a cabeça em (fid, 1)) e em seguida esfria o buffer e reseta contadores (como eng.cold())
+    bp.flush_all()
+    with bp.page(fid, 1, PageType.DATA):
+        pass
+    bp.clear()
+    bp.fm.reset_stats()
+    bp.reset_stats()
+
+    # Cálculo esperado: como fm.reset_stats() zerou _head para None,
+    # ler o bloco 2 (adjacente ao 1) DEVE contar como 1 seek (1 rand_read, 0 seq_reads) e 1 miss.
+    with bp.page(fid, 2, PageType.DATA) as p2:
+        assert p2.data[0] == 2
+
+    assert bp.fm.io.seeks == 1
+    assert bp.fm.io.rand_reads == 1
+    assert bp.fm.io.seq_reads == 0
+    assert bp.stats.misses == 1
+
+
+def test_clear_inside_reserve_work(bp):
+    """clear() chamado dentro de reserve_work(2) não duplica os frames reservados na lista free."""
+    w = bp._areas[PageType.WORK]
+    cap = len(w.frames)
+    with bp.reserve_work(2):
+        bp.clear()
+        assert len(w.free) == cap - 2
+        assert len({id(f) for f in w.free}) == len(w.free)
+    assert len(w.free) == cap
+    assert len({id(f) for f in w.free}) == len(w.free)
+
+
+def test_close_reopen_and_recreate_with_buffer(bp):
+    """Verifica os cenários de interação entre FileManager.close/create e BufferPool apontados na revisão."""
+    # 1) new_page + unpin + fm.close(fid) direto + fm.open + bp.pin não corrompe o arquivo
+    fid1 = bp.fm.create("rel_unflushed")
+    p = bp.new_page(fid1, PageType.DATA)
+    bp.unpin(p, dirty=True)
+    bp.fm.close(fid1)
+
+    fid1_reopened = bp.fm.open("rel_unflushed")
+    with bp.page(fid1_reopened, 1, PageType.DATA) as p_reopened:
+        assert len(p_reopened.data) == bp.block_size
+
+    # 2) bp.close_file(fid) descarrega páginas sujas, limpa frames do buffer e fecha no FileManager
+    fid2 = bp.fm.create("rel_closed_via_bp")
+    p2 = bp.new_page(fid2, PageType.DATA)
+    p2.data[0] = 111
+    bp.unpin(p2, dirty=True)
+    bp.close_file(fid2)
+    assert not bp.fm.is_open(fid2)
+
+    fid2_reopened = bp.fm.open("rel_closed_via_bp")
+    with bp.page(fid2_reopened, 1, PageType.DATA) as p2_check:
+        assert p2_check.data[0] == 111
+
+    # 3) fm.create("c") sobre nome já aberto com página suja no buffer não quebra o próximo flush_all()
+    fid_c1 = bp.fm.create("c")
+    pc = bp.new_page(fid_c1, PageType.DATA)
+    pc.data[0] = 55
+    bp.unpin(pc, dirty=True)
+    fid_c2 = bp.fm.create("c")
+    assert fid_c2 != fid_c1
+    bp.flush_all()
+
+
+

@@ -25,6 +25,7 @@ def test_roundtrip(tmp_path):
     fm.write(fid, 1, payload1)
     fm.write(fid, 2, bytearray(4096))
     fm.write(fid, 3, payload3)
+    # Cálculo esperado: 3 blocos alocados (1, 2, 3) - 1 bloco liberado (2) = 2 blocos ocupados
     fm.free(fid, 2)
     assert fm.n_blocks(fid) == 2
 
@@ -36,7 +37,7 @@ def test_roundtrip(tmp_path):
     assert fm2.n_blocks(fid2) == 2
     assert fm2.read(fid2, 1) == payload1
     assert fm2.read(fid2, 3) == payload3
-    # O próximo allocate deve reutilizar o bloco 2 que estava na pilha de livres do Bloco 0
+    # Cálculo esperado: o próximo allocate desempilha o bloco 2 do Bloco 0 -> n_blocks volta a 3 (3 - 0 = 3)
     assert fm2.allocate(fid2) == 2
     assert fm2.n_blocks(fid2) == 3
     fm2.close_all()
@@ -50,6 +51,7 @@ def test_free_reuse(tmp_path):
         assert fm.allocate(fid) == expected
     assert fm.n_blocks(fid) == 6
 
+    # Cálculo esperado: high_water=6; libera 5 -> n_blocks = 6 - 1 = 5; realoca 5 -> 6 - 0 = 6; aloca 7 -> 7 - 0 = 7
     fm.free(fid, 5)
     assert fm.n_blocks(fid) == 5
     assert fm.allocate(fid) == 5
@@ -80,6 +82,7 @@ def test_seq_vs_rand(tmp_path):
         data = fm.read(fid, bno)
         assert data[0] == bno
 
+    # Cálculo esperado na leitura após reset_stats (cabeça em None): bno=1 dá 1 rand_read (1 seek); 2..10 dão 9 seq_reads
     assert fm.io.rand_reads == 1
     assert fm.io.seq_reads == 9
     assert fm.io.reads == 10
@@ -101,6 +104,7 @@ def test_interleaved_files_count_seeks(tmp_path):
         fm.write(f2, b, b"S" * 4096)
 
     fm.reset_stats()
+    # Cálculo esperado: 3 leituras alternando (f1,1) -> (f2,1) -> (f1,2) = 3 trocas de cilindro = 3 seeks e 3 rand_reads
     fm.read(f1, 1)  # seek 1
     fm.read(f2, 1)  # seek 2 (trocou de arquivo)
     fm.read(f1, 2)  # seek 3 (voltou para f1, cabeça estava em f2)
@@ -132,6 +136,10 @@ def test_invalid_reads_and_deletes(tmp_path):
 
     fm.delete(fid)
     assert not fm.exists("teste")
+    # Segunda chamada a delete(fid) deve ser idempotente (para TempFile.drop), mas fid inexistente levanta KeyError
+    fm.delete(fid)
+    with pytest.raises(KeyError):
+        fm.delete(9999)
 
 
 def test_lost_free_overflow(tmp_path):

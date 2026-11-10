@@ -75,6 +75,8 @@ def test_buffer_random_stress_with_oracle(tmp_path):
 
         assert pool.pinned() == 0
         assert pool.stats.requests == pool.stats.hits + pool.stats.misses
+        assert fm.io.reads == pool.stats.misses + pool.stats.prefetched
+        assert fm.io.writes == pool.stats.dirty_evictions + pool.stats.forced_writes
         assert fm.io.reads == fm.io.seq_reads + fm.io.rand_reads
         assert fm.io.writes == fm.io.seq_writes + fm.io.rand_writes
 
@@ -92,8 +94,26 @@ def test_buffer_random_stress_with_oracle(tmp_path):
 
 @pytest.mark.stress
 def test_naive_vs_refactored_stress(tmp_path):
-    """Demonstra que o código refatorado supera o código ingênuo nos defeitos críticos (§7.2.3.d)."""
-    # 1. Demonstra a perda de dados por mark_dirty() + unpin() no código ingênuo vs. refatorado
+    """Demonstra que o código refatorado supera tanto a v1 bruta (ce1221b) quanto o protótipo ingênuo (§7.2.3.d)."""
+    from ai.P1.raw.buffer_pool_v1_ce1221b import BufferPool as BufferPoolV1
+
+    # 1. Código bruto real (v1_ce1221b) vs. Refatorado: auto-expulsão no prefetch (85 leituras vs 20 leituras)
+    fm_v1 = FileManager(StorageConfig(root_dir=str(tmp_path / "v1_lru")))
+    fid_v1 = fm_v1.create("t")
+    for _ in range(20):
+        fm_v1.write(fid_v1, fm_v1.allocate(fid_v1), bytes(fm_v1.block_size))
+    fm_v1.reset_stats()
+    bp_v1 = BufferPoolV1(
+        fm_v1,
+        BufferConfig(areas={PageType.DATA: 3, PageType.WORK: 2}, policy=Policy.LRU, prefetch=4),
+    )
+    for b in range(1, 21):
+        bp_v1.unpin(bp_v1.pin(fid_v1, b, PageType.DATA, seq=True), toss=True)
+    v1_reads = fm_v1.io.reads
+    fm_v1.close_all()
+    assert v1_reads == 85, "A versão bruta ce1221b relê blocos por auto-expulsão no prefetch"
+
+    # 2. Demonstra a perda de dados por mark_dirty() + unpin() no protótipo ingênuo vs. refatorado
     scfg_naive = StorageConfig(root_dir=str(tmp_path / "naive"), block_size=2048)
     nfm = NaiveFileManager(scfg_naive)
     nbp = NaiveBufferPool(
@@ -145,3 +165,4 @@ def test_naive_vs_refactored_stress(tmp_path):
     rbp.unpin(rp1_reload)
     rbp.flush_all()
     rfm.close_all()
+
