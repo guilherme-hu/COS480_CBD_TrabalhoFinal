@@ -83,7 +83,7 @@ Consequências práticas:
 ┌──────────────▼──────────────────────────────────────────────────────┐
 │ Camada 4 — Gerente de Arquivos + Gerente de Buffer Pool (P1)        │
 │ disco simulado em blocos · contadores seq/aleatório · áreas do      │  cbd/storage/
-│ buffer · LRU, Clock, MRU · pin/dirty · forced output · prefetch     │
+│ buffer · LRU, MRU (D-P1-08) · pin/dirty · forced output · prefetch  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -183,7 +183,8 @@ class BufferPool:
     def flush_file(self, fid: int) -> None       # grava os sujos do arquivo
     def flush_all(self) -> None
     def drop_file(self, fid: int) -> None        # descarta os frames do arquivo SEM gravar (temporário que será apagado)
-    def clear(self) -> None                      # flush_all + esvazia todos os frames (cache frio)
+    def close_file(self, fid: int) -> None       # flush_file(fid) + drop_file(fid) + fm.close(fid)
+    def clear(self) -> None                      # flush_all + esvazia todos os frames não reservados (cache frio)
 
     def capacity(self, ptype: PageType) -> int   # nº de frames da área
     def pinned(self, ptype: PageType | None = None) -> int
@@ -203,6 +204,7 @@ Semântica que todos precisam saber:
 - **`seq=True`** indica leitura sequencial (scan). Com `cfg.prefetch = k > 0`, um *miss* com `seq=True` lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`).
 - **`toss=True`** no `unpin`: se `cfg.toss_immediate` estiver ligado, o frame vira a próxima vítima (toss-immediate). Scans devem passar `toss=True`; a configuração decide se tem efeito.
 - **Áreas fixas por tipo de página.** Cada `PageType` tem frames próprios e sua própria instância da política. Uma página de `INDEX` nunca expulsa uma de `DATA`. Isso dá retenção preferencial de índice e catálogo sem precisar de prioridade dinâmica.
+- **Fechamento e remoção de arquivos.** Como o `FileManager` fica abaixo do `BufferPool`, ao fechar um arquivo permanente chame `bp.close_file(fid)` (ou `bp.flush_file(fid)` + `bp.drop_file(fid)` + `fm.close(fid)`), e ao remover um arquivo temporário chame `bp.drop_file(fid)` antes de `fm.delete(fid)`.
 
 ### 3.3 Que `PageType` usar
 
@@ -781,7 +783,7 @@ Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) s
 | :--- | :--- | :--- | :--- |
 | P1 | `StorageConfig.block_size` | tamanho do bloco | 2048, **4096**, 8192 |
 | P1 | `BufferConfig.areas` | frames por área | ex.: `CATALOG 8, INDEX 64, DATA 128, WORK 64` |
-| P1 | `BufferConfig.policy` | política de substituição | LRU, MRU, CLOCK, FIFO. **Escolhida por tipo de operação** num experimento curto (P6 §4.4), não variada em toda a matriz |
+| P1 | `BufferConfig.policy` | política de substituição | `LRU`, `MRU` (`D-P1-08`: `CLOCK` e `FIFO` preteridas). **Escolhida por tipo de operação** num experimento curto (P6 §4.4), não variada em toda a matriz |
 | P1 | `BufferConfig.toss_immediate` | toss-immediate | `False`/`True` |
 | P1 | `BufferConfig.prefetch` | leitura antecipada | 0, 4, 8 |
 | P2 | `OrgSpec.params["buckets"]` (HASH) | nº de buckets | padrão: `ceil(n_r / (bfr · 0.8))`; em NOT UNIQUE, no máximo `V(A)` (P2 §6.1) |

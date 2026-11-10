@@ -31,7 +31,33 @@ Este documento registra os defeitos identificados no código gerado por IA e as 
 
 ---
 
-## 3. [Protótipo Ingênuo] Perda silenciosa de páginas sujas no `unpin` (`page.dirty = dirty`) — Crítico
+## 3. [Defeito Real — Revisão do PR #2 por P2] `clear()` dentro de `reserve_work()` duplica frames na `free_list` — Médio
+
+- **Arquivo / Local:** `ai/P1/raw/buffer_pool_v1_ce1221b.py` (`BufferPool.clear` e `BufferPool.reserve_work`) vs. `cbd/storage/buffer_pool.py`.
+- **Categoria:** Corrupção de estado interno do Buffer Pool / gerenciamento da área `WORK` (Enunciado §2.2.2 e §7.1).
+- **Defeito:** `reserve_work(k)` retirava `k` frames de `WORK` guardando-os na lista local `taken`. Se `bp.clear()` (ou `eng.cold()`) fosse chamado dentro do bloco `with bp.reserve_work(k):`, `clear()` reconstruía `area.free_list = list(area.frames)` com todos os 64 frames da área `WORK`. Em seguida, ao sair do bloco `with`, o `finally` de `reserve_work` executava `area.free_list.extend(taken)`, reinserindo os `k` frames reservados uma segunda vez (`len(free_list) == 64 + k`, com referências duplicadas ao mesmo `Frame`). A partir daí, dois `pin()` distintos podiam receber o mesmo objeto `Frame`, sobrescrevendo os dados um do outro.
+- **Detecção:** Detectado pelo colega P2 durante a revisão do PR #2.
+- **Correção Aplicada:** `_AreaState` passa a rastrear `reserved: set[Frame]`. `BufferPool.clear()` levanta `RuntimeError` explícito se houver páginas fixadas (`self.pinned() > 0`) ou frames reservados em `WORK` (`area.reserved`), e mesmo na reconstrução filtra `[f for f in area.frames if f not in area.reserved]`. Comprovado pelo teste `test_clear_inside_reserve_work`.
+
+---
+
+## 4. [Defeito Real — Revisão do PR #2 por P2] Interação `FileManager.allocate/close/create/delete` com `BufferPool` e uso de `assert` em invariantes de contrato — Médio
+
+- **Arquivo / Local:** `cbd/storage/file_manager.py` (`allocate`, `create`, `close`, `delete`) e `cbd/storage/buffer_pool.py` (`pin`, `unpin`, `clear`, `free_block`, `drop_file`, `close_file`).
+- **Categoria:** Robustez de ciclo de vida de arquivos e verificação de contratos.
+- **Defeito:**
+  1. Quando `new_page` alocava um bloco via `fm.allocate(fid)` (incrementando `high_water`) e a página era desafixada sem `flush_file(fid)` antes de `fm.close(fid)`, o arquivo físico `.cbd` não continha os bytes do bloco recém-alocado; ao reabrir o arquivo e chamar `bp.pin(fid, 1)`, `fm.read` falhava com `ValueError: além do fim físico`.
+  2. Chamar `fm.create(name)` sobre um arquivo já aberto truncava o arquivo físico sem fechar o descritor antigo em `_files`, e `fm.delete(fid)` chamado duas vezes levantava `KeyError` (dificultando `TempFile.drop` idempotente na Camada 3).
+  3. Invariantes de contrato no `BufferPool` (`unpin` sem `pin`, `area` divergente em `pin`, `clear`/`free_block`/`drop_file` com página fixada) usavam `assert`, que desaparece sob `python -O`.
+- **Detecção:** Detectado pelo colega P2 durante a revisão do PR #2.
+- **Correção Aplicada:**
+  1. `FileManager.allocate(fid)` materializa o bloco recém-alocado com zeros no arquivo físico quando amplia `high_water` (sem somar em `io.writes`, pois é metadado de alocação do SO), garantindo que o arquivo em disco nunca fique menor que `high_water * block_size`; além disso, `BufferPool.close_file(fid)` foi adicionado para executar `flush_file(fid) + drop_file(fid) + fm.close(fid)` em uma única chamada segura.
+  2. `FileManager.create(name)` fecha eventual descritor aberto de mesmo nome antes de recriar, e `FileManager.delete(fid)` tornou-se idempotente para `fid`s já removidos na sessão.
+  3. Todas as validações de contrato em `BufferPool` foram convertidas de `assert` para `ValueError`/`RuntimeError` explícitos.
+
+---
+
+## 5. [Protótipo Ingênuo] Perda silenciosa de páginas sujas no `unpin` (`page.dirty = dirty`) — Crítico
 
 - **Arquivo / Local:** `ai/P1/raw/buffer_pool_inicial.py` (`NaiveBufferPool.unpin`) vs. `cbd/storage/buffer_pool.py` (`BufferPool.unpin`).
 - **Categoria:** Correção / Integridade de Dados (Enunciado §7.1: *"página alterada sem ligar o dirty bit"*).

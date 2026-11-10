@@ -45,3 +45,15 @@
 > tenhho essa porposta de mudanças: [...] referente a isso: @guilherme-hu commented: Pedi para IA revisar seu PR, e ela me deu o feedback abaixo. Uma coisa é que enquanto você fazia sua branch, eu criei umas documentações para guiar e organizar nosso repo, você poderia arrumar sua branch seguindo ela por favor?
 >
 > sim e quero manter apenas LRU e MRU
+
+---
+
+## Prompt 5 — 2ª Revisão do PR #2 (`reserve_work` + `clear`, `close_file`), casos de borda e documentação completa (09/11/2026)
+
+> quem define os descritores de arquivos que passa no file_manager?
+> como e por quem o buffer pool manager é chamado?
+> pode me explicar os parametros dos metodos do buffer pool?
+> temos eesses comentário da nosa pr: [...] 1. clear() dentro de reserve_work duplica frames [...] 2. FileManager.close/create/delete não conversam com o buffer [...] 3. O estresse não confere a contagem de I/O [...] 4. ai/P1/raw/buffer_pool_inicial.py não é código bruto da IA [...] 5. Menores [...]
+> quero que voce cheque falhas ou casos de borda no codigo
+> quero que voce garanta que está tudo documentado
+
