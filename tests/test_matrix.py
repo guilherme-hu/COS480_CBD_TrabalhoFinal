@@ -167,3 +167,61 @@ def test_block_size_keeps_buffer_bytes_constant():
     for bad in (65536, 3000):
         with pytest.raises(ValueError):
             areas_for_block(bad)
+
+
+# ---- Experimentos de fator único (P6 §4.4, issue #19) ----
+
+def _base_config(exp):
+    """Configuração de buffer/bloco de uma linha, para comparar com a base (P6 §4.1)."""
+    return dict(block_size=exp.block_size, areas=dict(exp.areas), toss=exp.toss,
+                prefetch=exp.prefetch, policy=exp.policy)
+
+
+def test_factor_matrix_counts(workload):
+    from bench.matrix import factor_experiments
+    exps = factor_experiments(workload)
+    by_factor = Counter(e.exp_id.split('.')[1].rsplit('_', 1)[0] for e in exps)
+    # bloco: 3 tamanhos de bloco × 3 combinações × (a, c_btree) × 3 algoritmos = 54;
+    # toss: 2 níveis × (2 scans de seleção + BNL maior ⋈ maior) = 6;
+    # prefetch: 2 níveis × 2 scans de seleção = 4; WORK: 3 níveis × (SMJ, HJ) = 6.
+    assert by_factor == {'block': 54, 'toss': 6, 'prefetch': 4, 'work': 6}
+    assert len({e.exp_id for e in exps}) == len(exps)
+    from bench.matrix import join_experiments, select_experiments
+    main_ids = {e.exp_id for e in join_experiments() + select_experiments(workload)}
+    assert not main_ids & {e.exp_id for e in exps}
+
+
+def test_each_factor_row_changes_only_its_factor(workload):
+    # Enunciado §6: um fator por vez. Cada linha é igual à mesma consulta da matriz
+    # principal, exceto no campo do seu fator.
+    from bench.matrix import BASE_AREAS, BASE_BLOCK_SIZE, areas_for_block, factor_experiments
+    base = dict(block_size=BASE_BLOCK_SIZE, areas=dict(BASE_AREAS), toss=False, prefetch=0)
+    for exp in factor_experiments(workload):
+        factor, level = exp.exp_id.split('.')[1].rsplit('_', 1)
+        cfg = _base_config(exp)
+        cfg.pop('policy')
+        expected = dict(base)
+        if factor == 'block':
+            expected.update(block_size=int(level), areas=areas_for_block(int(level)))
+        elif factor == 'toss':
+            expected['toss'] = level == 'on'
+        elif factor == 'prefetch':
+            expected['prefetch'] = int(level)
+        else:
+            expected['areas'] = areas_for_block(BASE_BLOCK_SIZE, work=int(level))
+        assert cfg == expected, exp.exp_id
+
+
+def test_factor_rows_reuse_main_matrix_queries(workload):
+    # O resto da linha (operador, lados, args, consulta esperada) vem da matriz principal.
+    from bench.matrix import factor_experiments, join_experiments, select_experiments
+    main = {e.exp_id: e for e in join_experiments() + select_experiments(workload)}
+    for exp in factor_experiments(workload):
+        origin = main[exp.exp_id.split('.', 2)[2]]   # factor.<fator>_<nível>.<exp_id da matriz>
+        assert (exp.op, exp.args, exp.query_id, exp.cost_fn) == \
+            (origin.op, origin.args, origin.query_id, origin.cost_fn)
+    work = [e for e in factor_experiments(workload) if '.work_' in e.exp_id]
+    assert {e.algorithm for e in work} == {'sort_merge_join', 'hash_join'}
+    assert {e.size_combo for e in work} == {'large_large'}
+    scans = [e for e in factor_experiments(workload) if e.kind == 'select']
+    assert {e.path for e in scans} == {'SCAN'} and {e.sel_type for e in scans} == {'range_nonunique'}

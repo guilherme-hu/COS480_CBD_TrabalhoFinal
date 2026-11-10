@@ -21,7 +21,7 @@ import shutil
 import subprocess
 
 from bench.build import size_checks_for_block
-from bench.matrix import areas_for_block, join_experiments, select_experiments
+from bench.matrix import areas_for_block, factor_experiments, join_experiments, select_experiments
 from bench.workload import CR_RANGES, EQ_SAMPLES
 from cbd.contracts import PageType
 
@@ -144,6 +144,11 @@ def matrix_section():
                            [(t, c, n) for (t, c), n in sorted(by_type.items())], numeric=(2,)),
               f'\nTotal: {len(selects)} linhas de seleção ({EQ_SAMPLES} igualdades em `dre` e '
               f'{len(CR_RANGES)} faixas em `cr`).']
+    factors = Counter(e.exp_id.split('.')[1].rsplit('_', 1)[0] for e in factor_experiments(_schematic_workload()))
+    names = {'block': 'tamanho de bloco', 'toss': 'toss-immediate', 'prefetch': 'prefetch', 'work': 'memória WORK'}
+    parts += ['\n', _table(['Fator único', 'Linhas'], [(names[f], n) for f, n in factors.items()], numeric=(1,)),
+              f'\nTotal: {sum(factors.values())} linhas de fator único, cada uma igual a uma linha da '
+              'matriz principal com um só fator mudado.']
     return '\n'.join(parts) + '\n'
 
 

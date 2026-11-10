@@ -128,3 +128,15 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    C (memória constante em bytes no experimento de bloco). Pedido do usuário:
    "Vai de C". Resultado: D-P6-02, `areas_for_block`, `size_checks_for_block`,
    base sem `--rows turma=100000`, `base_stats.csv` regenerado (adequado nos 3 B).
+
+7. "veja o comentario deixado no meu PR, corrige e mergeia em seguida" (09/11,
+   Claude Code, Opus 5.5): PR #75, detalhe opcional da revisão (onde fica o acordo
+   para pegar issue alheia) resolvido; PR mergeado por rebase, #74 fechada.
+
+8. "tem como fazer mais alguma issue atribuida a mim?" (09/11): conferidos os
+   bloqueadores de todas as issues P6. Só a #19 estava liberada (bloqueada só
+   pela #11, já feita; o P1 implementou toss e prefetch no PR #2). Resultado:
+   `factor_experiments` em `bench/matrix.py` (70 linhas: bloco 54, toss 6,
+   prefetch 4, WORK 6, níveis do P6 §4.4), `--only factors` em `bench/run.py`,
+   tabela no relatório gerado. Bruto em `ai/P6/raw/matrix_factors_v1.py`; a
+   versão bruta passou nos testes escritos antes.

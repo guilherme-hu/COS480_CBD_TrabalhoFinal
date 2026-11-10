@@ -1,4 +1,4 @@
-# Estado da parte P6 — atualizado em 08/11
+# Estado da parte P6 — atualizado em 09/11
 
 Branches locais empilhadas (nenhuma enviada ao GitHub ainda):
 `p6/4-workload-escopo` → `p6/5-variantes-escopo` → `p6/7-engine-testes` →
@@ -11,6 +11,7 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - Plano físico com as 23 variantes do escopo (#5): `test_plan_and_catalog_adapter`.
 - Engine documentado e testado com dublês (#7): `tests/test_engine.py`.
 - Matriz: 117 joins + 4 de lado forçado (#9) e 98 seleções (#10: 80 igualdades + 18 faixas, com o B+ secundário clustering sobre B+ e hash): `tests/test_matrix.py`.
+- Experimentos de fator único (#19): `factor_experiments` (bloco, toss, prefetch, WORK; 70 linhas), `--only factors`: `test_factor_matrix_counts`, `test_each_factor_row_changes_only_its_factor`.
 - Protocolo de medição, CSV §6.3, validação SQLite, repetições, `--resume`,
   `summary.csv` (#11, #12, #13): `tests/test_run.py`.
 
@@ -22,7 +23,7 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - #6 decisão sobre volumes (aluno em B = 8192 abaixo de 1 280 blocos).
 - #8 pergunta ao professor sobre "índice secundário clustering".
 - #14 carga física real, #15 integração ponta a ponta: dependem de P1–P5 no `main`.
-- #16, #17, #19 experimentos de justificativa; #18 revisores independentes;
+- #16, #17 experimentos de justificativa (#19 já tem a lista; falta medir com a pilha real); #18 revisores independentes;
   #20–#23 rodada final e análise; #24–#27 relatório e fechamento.
 
 ## Relatório técnico (#24)
@@ -49,6 +50,7 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 | §7.2.2 relatório: base e metodologia | `docs/relatorio/03_base.md`, `04_metodologia.md`, `gerado/` | `test_base_tables_come_from_base_stats`, `test_generated_parts_are_up_to_date` |
 | §6.1.3 / §7.2.2.b estimado × medido com motivo | `bench/compare_cost.py` | `test_each_reason_rule`, `test_unexplained_listed_separately_and_rules_do_not_overreach` |
 | §7.2.2.b gráficos com medido ao lado do estimado | `bench/plots.py` | `test_one_command_writes_every_figure`, `test_join_series_takes_the_13_configs_and_marks_na` |
+| §6 um fator por vez (bloco, toss, prefetch, WORK) | `bench/matrix.py` (`factor_experiments`) | `test_each_factor_row_changes_only_its_factor`, `test_factor_rows_reuse_main_matrix_queries` |
 | §6.1.1 ocupação antes/depois da manutenção | — (#17) | — |
 
 ## Desvios ou dúvidas sobre o contrato
@@ -74,6 +76,8 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - `bench/plots.py` (#23, parcial): joins por combinação e seleções. Faltam as
   figuras de política (#16), fatores (#19) e manutenção/bulk (#17), que dependem
   dos `exp_id` desses experimentos. Cores: slots 1–3 da paleta de referência.
+
+- #19: "os scans" do guia §4.4 foram lidos como as faixas em `cr` pelo caminho a (1% e 50%); a igualdade por scan ficou de fora (20 DREs repetiriam o mesmo scan). O toss também roda no BNL maior ⋈ maior, config a.
 
 ## Decisões provisórias a rever
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
