@@ -53,6 +53,7 @@ class FileManager:
         self._desc: dict[int, _FileDesc] = {}
         self._by_name: dict[str, int] = {}
         self._names: dict[int, str] = {}
+        self._deleted_fids: set[int] = set()
 
         # D-P1-05: contadores globais, por arquivo e posição da cabeça global _head
         self.io: IOCounters = IOCounters()
@@ -101,6 +102,11 @@ class FileManager:
         return high_water, free_list, lost_free
 
     def create(self, name: str) -> int:
+        """Cria (ou recria do zero) o arquivo lógico `name` (.dat) e retorna seu descritor `fid` (int >= 1).
+
+        Grava o Bloco 0 de metadados sem incrementar `self.io` (0 I/Os de consulta).
+        Se `name` já estiver aberto, fecha o descritor anterior antes de truncar.
+        """
         if name in self._by_name:
             self.close(self._by_name[name])
         path = self._path_for(name)
@@ -116,6 +122,11 @@ class FileManager:
         return fid
 
     def open(self, name: str) -> int:
+        """Abre um arquivo lógico existente `name` (.dat), lê o Bloco 0 e retorna `fid` (0 I/Os de consulta).
+
+        Se `name` já estiver aberto na sessão, devolve o mesmo `fid`.
+        Levanta `FileNotFoundError` se o arquivo não existir ou `ValueError` se o cabeçalho for inválido.
+        """
         if name in self._by_name:
             return self._by_name[name]
         path = self._path_for(name)
@@ -146,22 +157,48 @@ class FileManager:
         return fid
 
     def exists(self, name: str) -> bool:
+        """Retorna True sse o arquivo físico `<root_dir>/<name>.dat` existir em disco (0 I/Os)."""
         return self._path_for(name).exists()
 
+    def is_open(self, fid: int) -> bool:
+        """Retorna True sse o descritor `fid` estiver atualmente aberto no FileManager (0 I/Os)."""
+        return fid in self._desc
+
     def close(self, fid: int) -> None:
+        """Persiste o descritor no Bloco 0, ajusta o tamanho físico mínimo e fecha o arquivo `fid` (0 I/Os de consulta).
+
+        Idempotente se `fid` já estiver fechado.
+        """
         d = self._desc.pop(fid, None)
         if d is None:
             return
         self._by_name.pop(d.name, None)
         try:
             self._write_header(d)
+            # Se blocos foram alocados via new_page/allocate mas o arquivo foi fechado sem flush,
+            # garante que o tamanho físico em disco cubra (high_water + 1) blocos para não corromper na reabertura.
+            expected_min_size = (d.high_water + 1) * self.block_size
+            d.file.seek(0, 2)
+            if d.file.tell() < expected_min_size:
+                d.file.truncate(expected_min_size)
+                d.file.flush()
         finally:
             d.file.close()
+            if self._head is not None and self._head[0] == fid:
+                self._head = None
 
     def delete(self, fid: int) -> None:
+        """Fecha o descritor `fid` e remove o arquivo físico `.dat` do disco (0 I/Os).
+
+        Idempotente para `fid` já removido nesta sessão (suporta `TempFile.drop()`).
+        Levanta `KeyError` se `fid` nunca existiu ou já foi fechado sem remoção.
+        """
+        if fid in self._deleted_fids:
+            return
         d = self._desc.pop(fid, None)
         if d is None:
             raise KeyError(f"fid inválido ou já fechado: {fid}")
+        self._deleted_fids.add(fid)
         self._by_name.pop(d.name, None)
         d.file.close()
         d.path.unlink(missing_ok=True)
@@ -169,6 +206,7 @@ class FileManager:
             self._head = None
 
     def close_all(self) -> None:
+        """Fecha todos os arquivos atualmente abertos persistindo seus cabeçalhos no Bloco 0 (0 I/Os de consulta)."""
         for fid in list(self._desc.keys()):
             self.close(fid)
 
@@ -179,12 +217,15 @@ class FileManager:
         return d
 
     def is_valid_block(self, fid: int, bno: int) -> bool:
-        """Retorna True sse bno já foi alocado (1 <= bno <= high_water) e não está livre."""
+        """Retorna True sse `bno` (em blocos, >= 1) foi alocado (`1 <= bno <= high_water`) e não está na pilha de livres (0 I/Os)."""
         d = self._get_desc(fid)
         return 1 <= bno <= d.high_water and bno not in d.free_set
 
     def allocate(self, fid: int) -> int:
-        """Aloca um bloco reutilizando a pilha LIFO de livres ou estendendo high_water (0 I/Os)."""
+        """Aloca 1 bloco em `fid` reutilizando o topo da pilha LIFO de livres ou incrementando `high_water` (0 I/Os).
+
+        Retorna o número do bloco `bno >= 1`. Levanta `KeyError` se `fid` não estiver aberto.
+        """
         # D-P1-02, D-P1-04: reaproveita o topo da pilha LIFO em O(1) antes de estender o fim
         # do arquivo (high_water += 1). Não grava no disco aqui porque new_page() já inicializa
         # o frame na memória com dirty=True.
@@ -197,7 +238,10 @@ class FileManager:
         return d.high_water
 
     def free(self, fid: int, bno: int) -> None:
-        """Devolve bno à pilha de livres no descritor (ou incrementa lost_free se cheia)."""
+        """Devolve o bloco `bno` (`1 <= bno <= high_water`) à pilha de livres do Bloco 0 em RAM (0 I/Os).
+
+        Levanta `KeyError` se `fid` estiver fechado ou `ValueError` se `bno` for inválido ou já estiver livre.
+        """
         # D-P1-04: pilha LIFO no Bloco 0 comporta até _max_free = (B - 32) // 4 entradas (1016 em 4 KB).
         # Se passar desse limite, contabiliza em lost_free para manter n_blocks(fid) exato.
         d = self._get_desc(fid)
@@ -212,7 +256,7 @@ class FileManager:
             d.lost_free += 1
 
     def n_blocks(self, fid: int) -> int:
-        """Retorna o número exato de blocos de usuário atualmente em uso no arquivo."""
+        """Retorna a quantidade de blocos de usuário ocupados (`high_water - len(free) - lost_free`) em `fid` (0 I/Os)."""
         d = self._get_desc(fid)
         return d.high_water - len(d.free) - d.lost_free
 
@@ -239,7 +283,11 @@ class FileManager:
                 f_io.rand_reads += 1
 
     def read(self, fid: int, bno: int) -> bytearray:
-        """Lê 1 bloco físico (bno * block_size) e incrementa contadores seq/rand."""
+        """Lê `block_size` bytes do bloco `bno` (offset `bno * block_size`) e contabiliza 1 leitura física.
+
+        Custo: 1 `seq_read` (0 seeks) se `_head == (fid, bno - 1)`, ou 1 `rand_read` (+1 seek) caso contrário.
+        Levanta `KeyError` se `fid` fechado ou `ValueError` se `bno` livre, fora de `[1, high_water]` ou além do EOF físico.
+        """
         # D-P1-02: na alocação contígua, o bloco bno começa exatamente no byte bno * B
         # (pois o Bloco 0 ocupa os primeiros B bytes).
         d = self._get_desc(fid)
@@ -258,7 +306,11 @@ class FileManager:
         return bytearray(raw)
 
     def write(self, fid: int, bno: int, data: bytes | bytearray) -> None:
-        """Grava 1 bloco físico (bno * block_size) e incrementa contadores seq/rand."""
+        """Grava `data` (`len == block_size` bytes) no bloco `bno` (offset `bno * block_size`) e contabiliza 1 escrita física.
+
+        Custo: 1 `seq_write` (0 seeks) se `_head == (fid, bno - 1)`, ou 1 `rand_write` (+1 seek) caso contrário.
+        Levanta `KeyError` se `fid` fechado ou `ValueError` se `bno` inválido/livre ou `len(data) != block_size`.
+        """
         d = self._get_desc(fid)
         if bno < 1 or bno > d.high_water or bno in d.free_set:
             raise ValueError(
@@ -273,11 +325,13 @@ class FileManager:
         self._count(fid, bno, write=True)
 
     def name_of(self, fid: int) -> str:
+        """Retorna o nome lógico (`str`) associado ao identificador `fid`, ou levanta `KeyError` (0 I/Os)."""
         if fid not in self._names:
             raise KeyError(f"fid desconhecido: {fid}")
         return self._names[fid]
 
     def reset_stats(self) -> None:
+        """Zera os contadores `io` e `io_by_file` e reinicia a posição da cabeça `_head = None` (0 I/Os)."""
         # D-P1-05: zera contadores e reinicia _head = None para que o 1º acesso após
         # Engine.cold() sempre conte 1 seek inicial (rand_reads = 1), igual à fórmula do SKS.
         self.io = IOCounters()

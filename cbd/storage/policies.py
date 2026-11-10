@@ -32,11 +32,13 @@ class LRUPolicy:
         self._order: OrderedDict[int, Any] = OrderedDict()
 
     def loaded(self, f: Any) -> None:
+        """Registra um frame recém-carregado no fim da fila LRU (mais recente). Custo de I/O: 0 blocos."""
         # Quando um bloco novo entra no frame, vai para o fim da fila (mais recente)
         self._order[f.idx] = f
         self._order.move_to_end(f.idx)
 
     def accessed(self, f: Any) -> None:
+        """Promove um frame acessado (hit) para o fim da fila LRU (mais recente). Custo de I/O: 0 blocos."""
         # Em caso de hit no pin(), move o frame para o fim da fila (mais recente)
         if f.idx in self._order:
             self._order.move_to_end(f.idx)
@@ -44,12 +46,15 @@ class LRUPolicy:
             self._order[f.idx] = f
 
     def unpinned(self, f: Any) -> None:
+        """Notifica desafixação do frame (sem efeito na ordem de acesso do LRU). Custo de I/O: 0 blocos."""
         pass
 
     def removed(self, f: Any) -> None:
+        """Remove o frame da fila de substituição ao ser expulso ou descartado. Custo de I/O: 0 blocos."""
         self._order.pop(f.idx, None)
 
     def victim(self) -> Any | None:
+        """Retorna o frame não fixado (pin_count == 0) acessado há mais tempo, ou None. Custo de I/O: 0 blocos."""
         # D-P1-08, D-P1-10: percorre do início para o fim (do mais antigo para o mais novo)
         # e devolve o primeiro frame que não está em uso (pin_count == 0).
         for f in self._order.values():
@@ -58,6 +63,7 @@ class LRUPolicy:
         return None
 
     def reset(self) -> None:
+        """Limpa a fila de controle da política. Custo de I/O: 0 blocos."""
         self._order.clear()
 
 
@@ -70,22 +76,27 @@ class MRUPolicy:
         self._order: OrderedDict[int, Any] = OrderedDict()
 
     def loaded(self, f: Any) -> None:
+        """Registra um frame recém-carregado no fim da fila MRU (mais recente). Custo de I/O: 0 blocos."""
         self._order[f.idx] = f
         self._order.move_to_end(f.idx)
 
     def accessed(self, f: Any) -> None:
+        """Move um frame acessado (hit) para o fim da fila MRU (mais recente). Custo de I/O: 0 blocos."""
         if f.idx in self._order:
             self._order.move_to_end(f.idx)
         else:
             self._order[f.idx] = f
 
     def unpinned(self, f: Any) -> None:
+        """Notifica desafixação do frame (sem efeito na ordem de acesso do MRU). Custo de I/O: 0 blocos."""
         pass
 
     def removed(self, f: Any) -> None:
+        """Remove o frame da fila de substituição ao ser expulso ou descartado. Custo de I/O: 0 blocos."""
         self._order.pop(f.idx, None)
 
     def victim(self) -> Any | None:
+        """Retorna o frame não fixado (pin_count == 0) acessado mais recentemente, ou None. Custo de I/O: 0 blocos."""
         # D-P1-08, D-P1-10: percorre de trás para frente (reversed = do mais recente para o mais antigo)
         # e devolve o primeiro frame desafixado (pin_count == 0).
         for f in reversed(self._order.values()):
@@ -94,10 +105,22 @@ class MRUPolicy:
         return None
 
     def reset(self) -> None:
+        """Limpa a fila de controle da política. Custo de I/O: 0 blocos."""
         self._order.clear()
 
 
 def make_policy(policy: Policy, frames: list[Any] | None = None) -> ReplacementPolicy:
+    """Instancia a política de substituição de páginas para uma área do Buffer Pool (D-P1-08).
+
+    Parâmetros:
+        policy: enum Policy (LRU ou MRU).
+        frames: lista opcional de frames da área (mantida por compatibilidade de assinatura).
+    Retorna:
+        Instância de LRUPolicy ou MRUPolicy.
+    Levanta:
+        ValueError: se policy não for Policy.LRU nem Policy.MRU (FIFO e CLOCK foram preteridas).
+    Custo de I/O: 0 blocos.
+    """
     # D-P1-08: apenas LRU e MRU foram adotadas pelo grupo (FIFO e CLOCK preteridas em docs/decisoes/P1.md)
     if policy == Policy.LRU:
         return LRUPolicy()
