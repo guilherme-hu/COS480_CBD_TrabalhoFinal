@@ -140,3 +140,25 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    prefetch 4, WORK 6, níveis do P6 §4.4), `--only factors` em `bench/run.py`,
    tabela no relatório gerado. Bruto em `ai/P6/raw/matrix_factors_v1.py`; a
    versão bruta passou nos testes escritos antes.
+
+---
+
+# Sessão de 12/11/2026 — issues destravadas
+
+Ferramenta: Claude Code, modelo Claude Opus 5.5.
+
+1. Pedido do usuário: "tem alguma issue minha que possa ser resolvida com o que
+   tem ate agora na main (de pull)".
+
+   Resultado: `main` atualizado; destravadas #3, #6, #8, #19, #22, #23 e #24.
+   O `main` ainda não tem `cbd/storage`, `cbd/files` nem `cbd/exec`.
+
+2. Pedido do usuário: "pode ir fazendo elas".
+
+   Resultado: o agente encontrou a pilha local da sessão de 09/11
+   (`p6/24` → `p6/22` → `p6/23` → `p6/6` → `p6/19`, não enviada) já cobrindo
+   #24, #22, #23, #6 (D-P6-02) e #19. Faltavam #3 e #8: cartões D-P6-03 a
+   D-P6-08 (gerador e referência) e D-P6-09 (índice secundário clustering),
+   todos `provisória`, porque o integrante pediu para seguir sem debate.
+   Testes novos: `test_heap_order_is_not_key_order`,
+   `test_signature_detects_swapped_duplicate_with_same_count`.

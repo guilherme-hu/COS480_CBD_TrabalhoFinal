@@ -7,6 +7,7 @@ import random
 
 BASE_COUNTS = dict(curso=50, disciplina=1_000, turma=10_000,
                    aluno=50_000, inscricao=500_000, detalhes=50_000)
+# D-P6-03: um Random(480 + i) por tabela (ver docs/decisoes/P6.md).
 SEEDS = {name: 480 + i for i, name in enumerate(BASE_COUNTS)}
 
 
@@ -55,6 +56,7 @@ class Dataset:
                 yield (k, rng.randint(1, n["disciplina"]), "2026.2", "SEG 08-10", f"S{k % 200:03d}",
                        rng.randint(1, 2000))
             elif table == "aluno":
+                # D-P6-03: curso Zipf s = 0,7 e CR Normal(6,5; 1,8) truncada.
                 # Inversa da CDF Zipf, calculada uma vez e armazenada em O(n_cursos).
                 curso = zipf_course(rng, n["curso"])
                 cr = rng.gauss(6.5, 1.8)
@@ -74,6 +76,7 @@ class Dataset:
 
 
 def cpf(k):
+    # D-P6-07: CPF = DRE com zeros à esquerda; único sem guardar conjunto.
     """Identificador sintético único de 11 dígitos; não representa CPF real."""
     if not 1 <= k < 100_000_000_000:
         raise ValueError("Volume ultrapassa o domínio do CPF sintético")
@@ -81,6 +84,7 @@ def cpf(k):
 
 
 def permutation(n, rng):
+    # D-P6-04: ordem física embaralhada sem materializar o domínio.
     """Feistel com cycle walking: permutação pseudoaleatória em memória O(1).
 
     Evita tanto shuffle de milhões de IDs quanto rejeições crescentes por set.
