@@ -36,12 +36,12 @@ def physical_plan(stats):
             add(table, f'{table}__hs_{col}', Org.HASH, col,
                 {'expected_records': stats[table]['n'], 'seed': 480 + i, 'load': .8})
     add('aluno', 'aluno__bt_dre_inc', Org.BTREE, 'dre', {'fill': .9}, bulk=False)
-    # Uma dupla por consulta permite bucket-join para todas as nove combinações.
-    for kind, combo, r, rc, s, sc in JOINS:
+    # Uma dupla por join permite o bucket-join do P5 nas três combinações.
+    for combo, r, rc, s, sc in JOINS:
         buckets = max(1, math.ceil(max(
             stats[t]['n'] / max(1, stats[t]['estimated_bfr']) for t in (r, s)) / .8))
         for table, col in ((r, rc), (s, sc)):
-            add(table, f'{table}__hs_{col}_eq_{kind}_{combo}', Org.HASH, col,
+            add(table, f'{table}__hs_{col}_eq_{combo}', Org.HASH, col,
                 {'buckets': buckets, 'seed': 480, 'expected_records': stats[table]['n']})
     return plan
 
@@ -77,7 +77,7 @@ def load_physical(eng, ref, plan):
 def size_checks(stats, work_pages=64, data_pages=128, physical=False):
     """Exibe a adequação dos pares; não reclassifica silenciosamente um join."""
     output = []
-    for kind, combo, r, _, s, _ in JOINS:
+    for combo, r, _, s, _ in JOINS:
         roles = combo.split('_')
         problems = []
         for table, role in zip((r, s), roles):
@@ -85,7 +85,7 @@ def size_checks(stats, work_pages=64, data_pages=128, physical=False):
             limit = work_pages - 2 if role == 'small' else 10 * data_pages
             if (role == 'small' and b > limit) or (role == 'large' and b < limit):
                 problems.append(f'{table}: {b} blocos, esperado {"<=" if role == "small" else ">="} {limit}')
-        output.append(dict(join_type=kind, size_combo=combo, problems=problems,
+        output.append(dict(size_combo=combo, problems=problems,
                            status='inadequate' if problems else 'ok',
                            basis='physical' if physical else 'estimate'))
     return output
