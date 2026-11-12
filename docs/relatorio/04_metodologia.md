@@ -30,8 +30,12 @@ INDEX = 64, DATA = 128 e WORK = 64 páginas, toss-immediate desligado, sem leitu
 antecipada e carga em massa. A política de substituição de cada operação é a que
 teve menos I/O no experimento de escolha da política.
 
-> **A preencher (#16, #19):** política escolhida por operação e os níveis de cada
-> fator (tamanho de bloco, toss-immediate, leitura antecipada, WORK).
+Os níveis de cada fator e o número de linhas estão na tabela gerada a seguir
+("Fator único"). No experimento de tamanho de bloco a memória do buffer fica
+constante em bytes (D-P6-02): as áreas têm o dobro das páginas em 2 KiB e a metade
+em 8 KiB.
+
+> **A preencher (#16):** política escolhida por operação.
 
 ## Protocolo de uma medição
 

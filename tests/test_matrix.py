@@ -1,5 +1,6 @@
 """Testes da matriz de experimentos (P6 §4, issues #9 e #10)."""
 from collections import Counter
+from dataclasses import asdict
 
 import pytest
 
@@ -199,8 +200,7 @@ def test_each_factor_row_changes_only_its_factor(workload):
     for exp in factor_experiments(workload):
         factor, level = exp.exp_id.split('.')[1].rsplit('_', 1)
         cfg = _base_config(exp)
-        cfg.pop('policy')
-        expected = dict(base)
+        expected = dict(base, policy=exp.policy)
         if factor == 'block':
             expected.update(block_size=int(level), areas=areas_for_block(int(level)))
         elif factor == 'toss':
@@ -208,7 +208,8 @@ def test_each_factor_row_changes_only_its_factor(workload):
         elif factor == 'prefetch':
             expected['prefetch'] = int(level)
         else:
-            expected['areas'] = areas_for_block(BASE_BLOCK_SIZE, work=int(level))
+            # Literal, não areas_for_block: o teste não pode herdar um defeito dela.
+            expected['areas'] = dict(BASE_AREAS, **{PageType.WORK: int(level)})
         assert cfg == expected, exp.exp_id
 
 
@@ -218,10 +219,35 @@ def test_factor_rows_reuse_main_matrix_queries(workload):
     main = {e.exp_id: e for e in join_experiments() + select_experiments(workload)}
     for exp in factor_experiments(workload):
         origin = main[exp.exp_id.split('.', 2)[2]]   # factor.<fator>_<nível>.<exp_id da matriz>
-        assert (exp.op, exp.args, exp.query_id, exp.cost_fn) == \
-            (origin.op, origin.args, origin.query_id, origin.cost_fn)
+        # Todos os campos iguais aos da linha de origem, exceto o id e o do fator
+        # (e a política, que segue a da origem).
+        factor = exp.exp_id.split('.')[1].rsplit('_', 1)[0]
+        changed = {'block': ('block_size', 'areas'), 'toss': ('toss',),
+                   'prefetch': ('prefetch',), 'work': ('areas',)}[factor]
+        mine, theirs = asdict(exp), asdict(origin)
+        for name in ('exp_id', *changed):
+            mine.pop(name), theirs.pop(name)
+        assert mine == theirs, exp.exp_id
     work = [e for e in factor_experiments(workload) if '.work_' in e.exp_id]
     assert {e.algorithm for e in work} == {'sort_merge_join', 'hash_join'}
     assert {e.size_combo for e in work} == {'large_large'}
     scans = [e for e in factor_experiments(workload) if e.kind == 'select']
     assert {e.path for e in scans} == {'SCAN'} and {e.sel_type for e in scans} == {'range_nonunique'}
+
+
+def test_factor_rows_are_the_queries_of_the_guide(workload):
+    # P6 §4.4: quais linhas da matriz cada fator repete (e não outras).
+    from bench.matrix import factor_experiments
+    rows = {}
+    for e in factor_experiments(workload):
+        factor = e.exp_id.split('.')[1].rsplit('_', 1)[0]
+        # Rótulo da config vem do exp_id de origem (c_btree); o campo `config` só tem a letra.
+        label = e.exp_id.split('.')[4] if e.kind == 'join' else e.config
+        rows.setdefault(factor, set()).add((e.kind, e.size_combo, label, e.algorithm, e.sel_type))
+    combos = ('small_small', 'small_large', 'large_large')
+    algs = ('nl_join', 'sort_merge_join', 'hash_join')
+    assert rows['block'] == {('join', c, cfg, a, '') for c in combos for cfg in ('a', 'c_btree') for a in algs}
+    scans = {('select', '', 'a', 'select_range', 'range_nonunique')}
+    assert rows['toss'] == scans | {('join', 'large_large', 'a', 'nl_join', '')}
+    assert rows['prefetch'] == scans
+    assert rows['work'] == {('join', 'large_large', 'a', a, '') for a in ('sort_merge_join', 'hash_join')}

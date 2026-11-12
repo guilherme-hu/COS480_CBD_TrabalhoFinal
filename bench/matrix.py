@@ -209,8 +209,10 @@ def select_experiments(workload):
 
 
 # Experimentos de fator único (P6 §4.4, issue #19). Níveis do guia; a base é o nível
-# do meio (B = 4096, toss off, prefetch 0, WORK = 64). O P1 implementou toss-immediate
-# (D-P1-09) e prefetch (D-P1-12), então nenhum fator fica "não aplicável".
+# do meio (B = 4096, toss off, prefetch 0, WORK = 64). PENDENTE: o PR do P1
+# (branch Arquivos_Buffer_Pool, cartões D-P1-09 toss e D-P1-12 prefetch) ainda não
+# está no main; se um desses fatores não entrar, as linhas dele viram N/A com motivo
+# (critério da #19), em vez de sumir.
 BLOCK_SIZES = (2048, 4096, 8192)
 TOSS_LEVELS = (False, True)
 PREFETCH_LEVELS = (0, 8)
