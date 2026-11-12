@@ -22,7 +22,7 @@ Suíte na ponta da pilha: 79 passaram, 2 pulados (testes que precisam da pilha r
 - Nada pela metade.
 
 ## Falta
-- #8 pergunta ao professor sobre "índice secundário clustering".
+- #8: enviar ao professor a pergunta pronta na D-P6-09 e registrar a resposta (o agente não envia).
 - #14 carga física real, #15 integração ponta a ponta: dependem de P1–P5 no `main`.
 - #16, #17 experimentos de justificativa (#19 já tem a lista; falta medir com a pilha real); #18 revisores independentes;
   #20–#23 rodada final e análise; #24–#27 relatório e fechamento.
@@ -83,6 +83,8 @@ Suíte na ponta da pilha: 79 passaram, 2 pulados (testes que precisam da pilha r
 ## Decisões provisórias a rever
 - D-P6-03 a D-P6-08 (#3, 12/11): seeds/distribuições, Feistel, soma de hashes,
   `INT` no SQLite, CPF sintético, JSON/ISO. Retroativas, adotadas sem debate.
+- D-P6-09 (#8, 12/11): "secundário clustering" = ponteiros agrupados por chave
+  (arquitetura §5.3), à espera da resposta do professor. Nenhuma leitura muda a matriz.
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
   O P2 pediu (PR #29) para ele e o P5 participarem da revisão.
 

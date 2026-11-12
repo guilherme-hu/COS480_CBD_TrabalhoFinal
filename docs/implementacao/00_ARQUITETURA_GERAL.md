@@ -595,7 +595,7 @@ class Catalog:
 | `BTREE, unique=True` ou `False` | campo NOT UNIQUE → `BTREE, unique=False` |
 | `HASH, unique=True` ou `False` | campo NOT UNIQUE → `BTREE, unique=False` |
 
-"Índice secundário clustering" (§4.2): interpretamos como índice B+ sobre campo NOT UNIQUE em que **todos os ponteiros de uma mesma chave ficam agrupados** num só bloco ou lista de ponteiros (a chave aparece uma vez na folha). **Confirmar com o professor** e registrar no relatório.
+"Índice secundário clustering" (§4.2): interpretamos como índice B+ sobre campo NOT UNIQUE em que **todos os ponteiros de uma mesma chave ficam agrupados** num só bloco ou lista de ponteiros (a chave aparece uma vez na folha). **Confirmar com o professor** e registrar no relatório. Alternativas e texto da pergunta: D-P6-09 em `docs/decisoes/P6.md`.
 
 Pela tabela, todo índice B+ secundário é NOT UNIQUE e todo índice secundário UNIQUE é hash (só sobre heap). Por isso o `BTreeIndex` **não precisa** de modo UNIQUE. Se algum dia for preciso, o formato NOT UNIQUE com 1 ponteiro por chave já atende.
 
