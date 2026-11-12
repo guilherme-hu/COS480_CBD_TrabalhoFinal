@@ -55,12 +55,17 @@ class LRUPolicy:
 
     def victim(self) -> Any | None:
         """Retorna o frame não fixado (pin_count == 0) acessado há mais tempo, ou None. Custo de I/O: 0 blocos."""
-        # D-P1-08, D-P1-10: percorre do início para o fim (do mais antigo para o mais novo)
-        # e devolve o primeiro frame que não está em uso (pin_count == 0).
+        # D-P1-08, D-P1-10, D-P1-12: percorre do início para o fim (do mais antigo para o mais novo),
+        # preferindo frames já referenciados (prefetched=False) para que o prefetch de um cursor não
+        # seja bloqueado por um único bloco prefetched=True na ponta mais antiga da fila.
+        fallback = None
         for f in self._order.values():
             if f.pin_count == 0:
-                return f
-        return None
+                if not getattr(f, "prefetched", False):
+                    return f
+                if fallback is None:
+                    fallback = f
+        return fallback
 
     def reset(self) -> None:
         """Limpa a fila de controle da política. Custo de I/O: 0 blocos."""
@@ -97,12 +102,17 @@ class MRUPolicy:
 
     def victim(self) -> Any | None:
         """Retorna o frame não fixado (pin_count == 0) acessado mais recentemente, ou None. Custo de I/O: 0 blocos."""
-        # D-P1-08, D-P1-10: percorre de trás para frente (reversed = do mais recente para o mais antigo)
-        # e devolve o primeiro frame desafixado (pin_count == 0).
+        # D-P1-08, D-P1-10, D-P1-12: percorre do mais recente para o mais antigo,
+        # preferindo frames já referenciados (prefetched=False) para que o MRU não
+        # expulse blocos pré-lidos antes do primeiro pin().
+        fallback = None
         for f in reversed(self._order.values()):
             if f.pin_count == 0:
-                return f
-        return None
+                if not getattr(f, "prefetched", False):
+                    return f
+                if fallback is None:
+                    fallback = f
+        return fallback
 
     def reset(self) -> None:
         """Limpa a fila de controle da política. Custo de I/O: 0 blocos."""

@@ -143,21 +143,83 @@ def test_invalid_reads_and_deletes(tmp_path):
 
 
 def test_lost_free_overflow(tmp_path):
-    """Com block_size=64, cabem (64 - 32) // 4 = 8 bnos na pilha; o 9º livre incrementa lost_free e persiste."""
+    """Com block_size=64 (_max_free=8, _ext_cap=14), liberar 25 blocos encadeia extensões sem perder nenhum."""
+    from cbd.storage.file_manager import HEADER_STRUCT
+
+    assert HEADER_STRUCT.size == 32
     cfg = StorageConfig(root_dir=str(tmp_path), block_size=64)
     fm = FileManager(cfg)
+    assert fm._max_free == 8
     fid = fm.create("small_hdr")
-    for b in range(1, 11):
+    for b in range(1, 27):
         assert fm.allocate(fid) == b
         fm.write(fid, b, bytes([b]) * 64)
 
-    # Libera 9 blocos: 8 entram na pilha free e 1 vai para lost_free; restam 10 - 9 = 1 bloco ocupado
-    for b in range(1, 10):
+    # Libera 25 blocos (1..25): excede _max_free=8 e precisa de blocos de extensão encadeados.
+    # Nenhum bloco liberado pode continuar legível ou re-liberável!
+    for b in range(1, 26):
         fm.free(fid, b)
+        assert not fm.is_valid_block(fid, b)
+        with pytest.raises(ValueError):
+            fm.read(fid, b)
+        with pytest.raises(ValueError):
+            fm.free(fid, b)
+
     assert fm.n_blocks(fid) == 1
     fm.close_all()
 
     fm2 = FileManager(cfg)
     fid2 = fm2.open("small_hdr")
     assert fm2.n_blocks(fid2) == 1
+    assert fm2.read(fid2, 26)[0] == 26
+    # Todos os 25 blocos livres devem ser reaproveitados antes de estender high_water para 27
+    reallocated = {fm2.allocate(fid2) for _ in range(25)}
+    assert reallocated == set(range(1, 26))
+    assert fm2.allocate(fid2) == 27
     fm2.close_all()
+
+
+def test_delete_after_close(tmp_path):
+    """delete(fid) após close(fid) remove o arquivo .dat e permanece idempotente."""
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
+    fid = fm.create("apos_close")
+    fm.write(fid, fm.allocate(fid), b"A" * 4096)
+    fm.close(fid)
+    assert fm.exists("apos_close")
+
+    fm.delete(fid)
+    assert not fm.exists("apos_close")
+    fm.delete(fid)  # idempotente
+
+    # Se recriar ou reabrir o mesmo nome, um delete antigo não pode apagar o arquivo novo/reaberto
+    fid_novo = fm.create("apos_close")
+    fm.delete(fid)
+    assert fm.exists("apos_close")
+    fm.close(fid_novo)
+
+    fid_reaberto = fm.open("apos_close")
+    with pytest.raises(KeyError):
+        fm.delete(fid_novo)
+    assert fm.exists("apos_close")
+    fm.delete(fid_reaberto)
+    assert not fm.exists("apos_close")
+
+
+def test_cold_resets_head_counts_seek(tmp_path):
+    """reset_stats() deve reiniciar _head = None para que o 1º acesso seguinte conte 1 seek."""
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
+    fid = fm.create("head_reset")
+    for b in (1, 2):
+        fm.allocate(fid)
+        fm.write(fid, b, bytes([b]) * 4096)
+
+    # Deixa _head explicitamente em (fid, 1)
+    fm.read(fid, 1)
+    fm.reset_stats()
+
+    # Mesmo lendo o bloco 2 (vizinho do 1), após reset_stats() _head era None -> deve contar 1 rand_read (1 seek)
+    fm.read(fid, 2)
+    assert fm.io.rand_reads == 1
+    assert fm.io.seq_reads == 0
+    assert fm.io.seeks == 1
+    fm.close_all()

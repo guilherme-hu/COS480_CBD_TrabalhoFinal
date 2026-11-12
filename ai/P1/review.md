@@ -51,13 +51,38 @@ Este documento registra os defeitos identificados no código gerado por IA e as 
   3. Invariantes de contrato no `BufferPool` (`unpin` sem `pin`, `area` divergente em `pin`, `clear`/`free_block`/`drop_file` com página fixada) usavam `assert`, que desaparece sob `python -O`.
 - **Detecção:** Detectado pelo colega P2 durante a revisão do PR #2.
 - **Correção Aplicada:**
-  1. `FileManager.allocate(fid)` materializa o bloco recém-alocado com zeros no arquivo físico quando amplia `high_water` (sem somar em `io.writes`, pois é metadado de alocação do SO), garantindo que o arquivo em disco nunca fique menor que `high_water * block_size`; além disso, `BufferPool.close_file(fid)` foi adicionado para executar `flush_file(fid) + drop_file(fid) + fm.close(fid)` em uma única chamada segura.
-  2. `FileManager.create(name)` fecha eventual descritor aberto de mesmo nome antes de recriar, e `FileManager.delete(fid)` tornou-se idempotente para `fid`s já removidos na sessão.
+  1. `FileManager.close(fid)` faz `truncate(expected_min_size)` para garantir que o arquivo físico em disco cubra `(high_water + 1) * block_size` mesmo sem `flush` prévio; além disso, `BufferPool.close_file(fid)` foi adicionado para executar `flush_file(fid) + drop_file(fid) + fm.close(fid)` em uma única chamada segura.
+  2. `FileManager.create(name)` fecha eventual descritor aberto de mesmo nome antes de recriar, e `FileManager.delete(fid)` tornou-se idempotente para `fid`s já removidos na sessão (e passou a suportar também `delete()` após `close()`).
   3. Todas as validações de contrato em `BufferPool` foram convertidas de `assert` para `ValueError`/`RuntimeError` explícitos.
 
 ---
 
-## 5. [Protótipo Ingênuo] Perda silenciosa de páginas sujas no `unpin` (`page.dirty = dirty`) — Crítico
+## 5. [Defeito Real — 2ª Revisão do PR #2] Prefetch entre cursores, sob `MRU` e em arquivos mistos — Crítico
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py` (`Frame`, `_victim_or_none`, `pin`, `_prefetch`) e `cbd/storage/policies.py` (`MRUPolicy.victim`).
+- **Categoria:** Distorção de contagem de I/O entre cursores e conflito `DATA` × `INDEX`.
+- **Defeito:**
+  1. `exclude=batch_frames` protegia apenas a chamada atual de `_prefetch`: um segundo cursor fazendo `pin(..., seq=True)` na mesma área expulsava páginas pré-lidas ainda não consumidas pelo primeiro cursor.
+  2. `_prefetch` chamava `policy.loaded(f)`, que no `MRU` colocava páginas pré-lidas no topo de recência, fazendo o `MRU` expulsá-las antes do primeiro `pin()`.
+  3. `_prefetch` assumia que todo `fid` era monotipado na área `area.ptype`, podendo instalar blocos de `DATA` na área `INDEX` (ou vice-versa).
+- **Detecção:** Detectado na 2ª revisão independente do PR #2.
+- **Correção Aplicada (`D-P1-12` revista):** Adicionado `Frame.prefetched` (limpo no 1º `pin()`), `for_prefetch=True` em `_victim_or_none` (para parar antes de expulsar qualquer página `prefetched`), preferência em `MRUPolicy.victim()` por frames já referenciados (`not prefetched`), e exigência de declaração explícita `allow_prefetch(fid, ptype)` com revogação automática para arquivos mistos (`_mixed_fids`). Comprovado por `test_prefetch_entre_cursores_nao_expulsa_nao_referenciadas`, `test_prefetch_com_mru_nao_expulsa_antes_do_uso` e `test_prefetch_exige_monotyped_e_bloqueia_misto`.
+
+---
+
+## 6. [Defeito Real — 2ª Revisão do PR #2] `lost_free` sem rastreio e chamadas diretas a `fm.close()`/`fm.free()` — Alto
+
+- **Arquivo / Local:** `cbd/storage/file_manager.py` (`_write_header`, `_read_header`, `free`, `close`) e `cbd/storage/buffer_pool.py` (`__init__`).
+- **Categoria:** Corretude de alocação e coerência de cache.
+- **Defeito:**
+  1. Blocos que excediam `_max_free` no Bloco 0 iam para `lost_free` sem entrar em `free_set`, permanecendo válidos para `read()` e passíveis de dupla liberação em `free()`.
+  2. Chamar `fm.close(fid)` ou `fm.free(fid, bno)` diretamente (sem `bp.close_file`/`bp.free_block`) descartava páginas `dirty` sem gravar ou deixava frames *stale* no buffer.
+- **Detecção:** Detectado na 2ª revisão independente do PR #2.
+- **Correção Aplicada (`D-P1-04` revista):** Substituído `lost_free` por encadeamento em blocos de extensão (`EXT_STRUCT`, `ext_bno` no Bloco 0) mantendo `free_set` completo e `n_blocks = high_water - len(free)`; adicionados hooks `_on_before_close` e `_on_before_free` no `FileManager` registrados pelo `BufferPool.__init__`. Comprovado por `test_lost_free_overflow` e `test_fm_close_and_free_diretos_mantem_coerencia`.
+
+---
+
+## 7. [Protótipo Ingênuo] Perda silenciosa de páginas sujas no `unpin` (`page.dirty = dirty`) — Crítico
 
 - **Arquivo / Local:** `ai/P1/raw/buffer_pool_inicial.py` (`NaiveBufferPool.unpin`) vs. `cbd/storage/buffer_pool.py` (`BufferPool.unpin`).
 - **Categoria:** Correção / Integridade de Dados (Enunciado §7.1: *"página alterada sem ligar o dirty bit"*).
@@ -67,7 +92,7 @@ Este documento registra os defeitos identificados no código gerado por IA e as 
 
 ---
 
-## 4. [Protótipo Ingênuo] Vazamento de `pin` e inflação de `requests` no *Prefetching* — Crítico
+## 8. [Protótipo Ingênuo] Vazamento de `pin` e inflação de `requests` no *Prefetching* — Crítico
 
 - **Arquivo / Local:** `ai/P1/raw/buffer_pool_inicial.py` (`NaiveBufferPool.pin`) vs. `cbd/storage/buffer_pool.py` (`BufferPool._prefetch`).
 - **Categoria:** Vazamento de recursos (*pin leak*) e distorção de métricas (Enunciado §7.1).
@@ -77,22 +102,82 @@ Este documento registra os defeitos identificados no código gerado por IA e as 
 
 ---
 
-## 5. [Protótipo Ingênuo] Cabeça do disco (`_head`) não reiniciada em `reset_stats()` — Metodológico
+## 9. [Protótipo Ingênuo] Cabeça do disco (`_head`) não reiniciada em `reset_stats()` — Metodológico
 
 - **Arquivo / Local:** `ai/P1/raw/buffer_pool_inicial.py` (`NaiveFileManager.reset_stats`) vs. `cbd/storage/file_manager.py` (`FileManager.reset_stats`).
 - **Categoria:** Precisão dos contadores experimentais (P1 §2.5 e §5).
 - **Defeito:** `reset_stats()` zerava `self.io`, mas mantinha `self._head` apontando para o último bloco acessado antes de `Engine.cold()`. Se a operação anterior terminasse no bloco $b-1$ e a medição começasse lendo o bloco $b$, a primeira leitura física contava como `seq_reads` em vez de `rand_reads` (faltando 1 *seek* em relação à fórmula teórica do Silberschatz).
-- **Detecção:** Exercitado em `test_seq_vs_rand`.
+- **Detecção:** Exercitado em `test_seq_vs_rand` e `test_cold_resets_head_counts_seek`.
 - **Correção Aplicada:** `reset_stats()` define explicitamente `self._head = None`, garantindo que o primeiro acesso físico após `cold()` sempre contabilize 1 *seek* inicial (`rand_reads = 1`).
 
 ---
 
-## 6. [Protótipo Ingênuo] Frame fantasma após `free_block` e leitura silenciosa além do EOF — Correção
+## 10. [Protótipo Ingênuo] Frame fantasma após `free_block` e leitura silenciosa além do EOF — Correção
 
 - **Arquivo / Local:** `ai/P1/raw/buffer_pool_inicial.py` (`NaiveBufferPool.free_block` e `NaiveFileManager.read`).
 - **Categoria:** Coerência de cache e detecção de falhas.
 - **Defeito:**
   1. `free_block(fid, bno)` devolvia `bno` à pilha de livres do `FileManager`, mas deixava o frame antigo em `_table[(fid, bno)]`. Quando `allocate()` reutilizava o mesmo `bno`, um acesso subsequente podia encontrar o frame antigo no buffer.
   2. `read(fid, bno)` preenchia com bytes zero leituras além do fim físico do arquivo, mascarando bugs de acesso a blocos não gravados.
-- **Detecção:** Exercitado por `test_free_block_reuse` e `test_invalid_reads_and_deletes`.
+- **Detecção:** Exercitado por `test_free_block_reuse`, `test_free_block_descarta_suja_sem_gravar` e `test_invalid_reads_and_deletes`.
 - **Correção Aplicada:** `BufferPool.free_block` descarta o frame residente via `_discard_frame(f)` antes de chamar `fm.free(fid, bno)`, e `FileManager.read` valida `1 <= bno <= high_water`, `bno not in free_set` e `len(raw) == block_size`, levantando `ValueError` imediatamente em caso de acesso inválido.
+
+---
+
+## 11. `FileManager.open` não limpa `_closed_paths` ao reabrir arquivo fechado — Alto
+
+- **Arquivo / Local:** `cbd/storage/file_manager.py:170-202` (`open`) vs. `248-252` (`delete`).
+- **Categoria:** Ciclo de vida de descritores / integridade de arquivo em disco.
+- **Defeito:** `create(name)` removia entradas de `self._closed_paths` apontando para o mesmo `path`, mas `open(name)` não fazia o mesmo. Se um arquivo fosse criado (`fid1`), fechado e reaberto (`fid2`), uma chamada tardia `fm.delete(fid1)` encontrava `fid1` em `_closed_paths` e removia o arquivo `.dat` do disco enquanto `fid2` ainda estava aberto.
+- **Detecção:** Revisão independente pós-Frente 2.
+- **Correção Aplicada:** `FileManager.open` limpa todas as entradas de `self._closed_paths` com `old_path == path` ao abrir o arquivo, espelhando `create()`.
+
+---
+
+## 12. `FileManager.delete` em arquivo aberto não notifica o `BufferPool` — Médio/Alto
+
+- **Arquivo / Local:** `cbd/storage/file_manager.py:240-261` (`delete`) e `cbd/storage/buffer_pool.py:118-125` (`__init__`).
+- **Categoria:** Coerência entre `FileManager` e `BufferPool`.
+- **Defeito:** Embora `close()` e `free()` já chamassem `_on_before_close` e `_on_before_free`, `delete(fid)` em arquivo ainda aberto fechava e apagava o `.dat` sem notificar o `BufferPool`. Páginas residentes continuavam em `bp._table` (retornando *HIT* para arquivo já deletado) e páginas fixadas (`pin_count > 0`) não levantavam `RuntimeError`.
+- **Detecção:** Revisão independente pós-Frente 2.
+- **Correção Aplicada:** Adicionado hook `_on_before_delete` em `FileManager` (chamado em `delete(fid)` quando `fid` ainda está em `_desc`), conectado a `self.drop_file(fid)` em `BufferPool.__init__`.
+
+---
+
+## 13. `BufferPool.allow_prefetch` e `new_page` não detectam mistura completa de `PageType` — Médio
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py:136-154` (`allow_prefetch`), `314-316` (`pin`) e `357-379` (`new_page`).
+- **Categoria:** Isolamento entre áreas do buffer pool / prevenção de prefetch em arquivo misto (D-P1-12).
+- **Defeito:** A detecção de mistura só ocorria em `pin()` se `fid` já estivesse em `_monotyped`. Assim: (a) acessar `fid` como `INDEX` antes de declarar `allow_prefetch(fid, DATA)` era aceito sem erro; (b) criar página de `INDEX` via `new_page()` após `allow_prefetch(fid, DATA)` não revogava `_monotyped[fid]`.
+- **Detecção:** Revisão independente pós-Frente 1.
+- **Correção Aplicada:** Adicionado rastreamento `_seen_ptypes: dict[int, PageType]` atualizado em `pin()` (hit e miss) e `new_page()`, migrando `fid` para `_mixed_fids` em caso de divergência e validando `_seen_ptypes` também em `allow_prefetch()`.
+
+---
+
+## 14. Assimetria entre `LRUPolicy.victim` e `MRUPolicy.victim` durante prefetch entre cursores — Médio
+
+- **Arquivo / Local:** `cbd/storage/policies.py:56-63` (`LRUPolicy.victim`) vs. `98-110` (`MRUPolicy.victim`).
+- **Categoria:** Política de substituição e prefetch (D-P1-12).
+- **Defeito:** `MRUPolicy.victim()` já preferia frames `not prefetched` com *fallback* para `prefetched=True`, mas `LRUPolicy.victim()` retornava diretamente o primeiro frame com `pin_count == 0`. Se o frame mais antigo da fila LRU estivesse com `prefetched=True`, `_victim_or_none(..., for_prefetch=True)` abortava o prefetch mesmo havendo outros frames `prefetched=False` disponíveis.
+- **Detecção:** Revisão de código pós-Frente 1.
+- **Correção Aplicada:** `LRUPolicy.victim()` atualizado com a mesma preferência por `not getattr(f, "prefetched", False)` e *fallback* para o mais antigo `prefetched=True`.
+
+---
+
+## 15. Docstring desatualizada em `BufferPool.page` e teste comparativo incompleto — Baixo
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py:424` e `tests/stress/test_buffer_stress.py:96-116`.
+- **Categoria:** Documentação de contrato e completude de teste.
+- **Defeito:** (a) A docstring de `BufferPool.page` ainda descrevia `bno` como `0-indexado` em vez de `1-indexado, bno >= 1`; (b) a parte 1 de `test_naive_vs_refactored_stress` prometia comparar `BufferPoolV1` (85 leituras) vs. `BufferPool` refatorado (20 leituras), mas só executava `BufferPoolV1`.
+- **Detecção:** Revisão independente pós-Frente 3.
+- **Correção Aplicada:** Docstring de `BufferPool.page` atualizada para `1-indexado, bno >= 1` e parte 1 de `test_naive_vs_refactored_stress` completada com a execução lado a lado do `BufferPool` refatorado (`assert ref_reads == 20`).
+
+---
+
+## 16. `HEADER_STRUCT` com 28 bytes em vez de 32 bytes — Alto
+
+- **Arquivo / Local:** `cbd/storage/file_manager.py:23-24` (`HEADER_STRUCT`).
+- **Categoria:** Layout em disco / violação da decisão `D-P1-03` e `D-P1-04`.
+- **Defeito:** Ao adicionar o quarto inteiro `ext_bno` (`I`, 4 bytes) ao cabeçalho original `<4sIII16x` (32 bytes), a área reservada foi reduzida para `8x` em vez de `12x` (`<4sIIII8x` = 28 bytes). Isso fazia `HEADER_STRUCT.size == 28`, deixando `_max_free = 1017` em 4 KB (em vez de `1016`) e `_max_free = 9` em 64 B (em vez de `8`), além de deslocar o offset inicial da pilha de livres no Bloco 0.
+- **Detecção:** Revisão de código pós-Frente 2.
+- **Correção Aplicada:** Alterado `HEADER_STRUCT` para `struct.Struct("<4sIIII12x")` (32 bytes exatos) e adicionada asserção explícita de `HEADER_STRUCT.size == 32` e `_max_free == 8` em `test_lost_free_overflow`.

@@ -37,6 +37,7 @@ class Frame:
         "pin_count",
         "dirty",
         "ref",
+        "prefetched",
     )
 
     def __init__(self, idx: int, ptype: PageType, block_size: int) -> None:
@@ -49,6 +50,7 @@ class Frame:
         self.pin_count: int = 0
         self.dirty: bool = False
         self.ref: int = 0
+        self.prefetched: bool = False
 
     def mark_dirty(self) -> None:
         """Marca a página residente como modificada (dirty = True).
@@ -97,6 +99,10 @@ class BufferPool:
 
         self._table: dict[tuple[int, int], Frame] = {}
         self._areas: dict[PageType, _Area] = {}
+        # D-P1-12 (B1): prefetch desligado por padrão; só roda em fid explicitamente marcado como monotipado.
+        self._monotyped: dict[int, PageType] = {}
+        self._seen_ptypes: dict[int, PageType] = {}
+        self._mixed_fids: set[int] = set()
         self.stats: BufferCounters = BufferCounters()
         self.stats_by_area: dict[PageType, BufferCounters] = {}
 
@@ -110,6 +116,69 @@ class BufferPool:
             self.stats_by_area[ptype] = area.stats
 
         self._zero_block: bytes = bytes(self.block_size)
+        # D-P1-04 / revisão PR #2: registro formal de hooks na Camada 4 para chamadas diretas a fm.close/free/delete
+        fm.register_hooks(
+            on_before_close=self._on_fm_before_close,
+            on_before_free=self._on_fm_before_free,
+            on_before_delete=self.drop_file,
+        )
+
+    def _on_fm_before_close(self, fid: int) -> None:
+        if self.fm.is_open(fid):
+            self.flush_file(fid)
+        self.drop_file(fid)
+
+    def _on_fm_before_free(self, fid: int, bno: int) -> None:
+        f = self._table.get((fid, bno))
+        if f is not None:
+            if f.pin_count != 0:
+                raise RuntimeError(
+                    f"free({fid}, {bno}) com página fixada no buffer (pin_count={f.pin_count})"
+                )
+            self._discard_frame(f)
+
+    def _record_ptype(self, fid: int, ptype: PageType) -> None:
+        if fid in self._mixed_fids:
+            return
+        seen = self._seen_ptypes.get(fid)
+        if seen is None:
+            self._seen_ptypes[fid] = ptype
+        elif seen != ptype:
+            self._monotyped.pop(fid, None)
+            self._mixed_fids.add(fid)
+        if fid in self._monotyped and self._monotyped[fid] != ptype:
+            self._monotyped.pop(fid, None)
+            self._mixed_fids.add(fid)
+
+    def allow_prefetch(self, fid: int, ptype: PageType = PageType.DATA) -> None:
+        """Declara que o arquivo `fid` é monotipado na área `ptype`, habilitando prefetch (D-P1-12).
+
+        Contrato estrito do chamador: o FileManager armazena apenas blocos crus sem PageType no disco;
+        portanto, o BufferPool não consegue inferir o tipo de um bloco futuro antes da leitura.
+        Arquivos heterogêneos (ex.: Árvore B+ de P3 com nós INDEX e folhas DATA) NÃO devem chamar
+        allow_prefetch; se um arquivo declarado monotipado vier a acessar outra área, o prefetch é
+        revogado (podendo levantar ValueError caso um bloco já pré-lido seja pedido em outra área).
+        Custo de I/O: 0 blocos.
+        """
+        if fid in self._mixed_fids:
+            raise ValueError(
+                f"Arquivo fid={fid} já misturou tipos de página e não pode usar prefetch monotipado"
+            )
+        seen = self._seen_ptypes.get(fid)
+        if seen is not None and seen != ptype:
+            self._monotyped.pop(fid, None)
+            self._mixed_fids.add(fid)
+            raise ValueError(
+                f"Arquivo fid={fid} já acessado como {seen}, incompatível com {ptype}"
+            )
+        prev = self._monotyped.get(fid)
+        if prev is not None and prev != ptype:
+            self._monotyped.pop(fid, None)
+            self._mixed_fids.add(fid)
+            raise ValueError(
+                f"Arquivo fid={fid} já declarado como {prev}, incompatível com {ptype}"
+            )
+        self._monotyped[fid] = ptype
 
     def _evict_frame(self, area: _Area, f: Frame) -> None:
         """Expulsa um frame residente (deve ter pin_count == 0), gravando se dirty."""
@@ -127,9 +196,13 @@ class BufferPool:
         f.bno = -1
         f.pin_count = 0
         f.ref = 0
+        f.prefetched = False
 
     def _victim_or_none(
-        self, area: _Area, exclude: set[Frame] | None = None
+        self,
+        area: _Area,
+        exclude: set[Frame] | None = None,
+        for_prefetch: bool = False,
     ) -> Frame | None:
         # 1ª prioridade: frames nunca usados ou já descartados (lista area.free)
         if area.free:
@@ -143,18 +216,22 @@ class BufferPool:
                 and self._table.get((cand.fid, cand.bno)) is cand
                 and cand.pin_count == 0
             ):
-                if exclude is not None and cand in exclude:
+                if (exclude is not None and cand in exclude) or (
+                    for_prefetch and cand.prefetched
+                ):
                     area.tossed.appendleft(cand)
                     return None
                 self._evict_frame(area, cand)
                 return cand
 
-        # 3ª prioridade (D-P1-08): consulta a política da área (LRU ou MRU), que só devolve pin_count == 0.
-        # Se foi chamado por _prefetch (exclude=batch_frames) e o candidato escolhido pertence ao próprio
-        # lote que o _prefetch acabou de instalar, retorna None ANTES de _evict_frame para não expulsá-lo!
+        # 3ª prioridade (D-P1-08, D-P1-12): consulta a política da área (LRU ou MRU).
+        # No prefetch (for_prefetch=True), para imediatamente se a vítima pertencer ao lote atual
+        # OU for uma página pré-lida ainda não referenciada por nenhum cursor (cand.prefetched).
         cand = area.policy.victim()
         if cand is not None:
             if exclude is not None and cand in exclude:
+                return None
+            if for_prefetch and cand.prefetched:
                 return None
             self._evict_frame(area, cand)
             return cand
@@ -177,12 +254,14 @@ class BufferPool:
         ptype: PageType,
         pin_count: int = 1,
         dirty: bool = False,
+        prefetched: bool = False,
     ) -> None:
         f.fid = fid
         f.bno = bno
         f.ptype = ptype
         f.pin_count = pin_count
         f.dirty = dirty
+        f.prefetched = prefetched
         self._table[(fid, bno)] = f
         area.policy.loaded(f)
 
@@ -197,9 +276,9 @@ class BufferPool:
 
         Parâmetros:
             fid: identificador inteiro do arquivo aberto no FileManager.
-            bno: número do bloco lógico (0-indexado, em blocos de block_size bytes).
+            bno: número do bloco lógico (1-indexado, bno >= 1; Bloco 0 é o cabeçalho do arquivo).
             ptype: área do buffer onde a página deve residir (CATALOG, INDEX, DATA ou WORK).
-            seq: dica de varredura sequencial; se True e cfg.prefetch > 0, aciona leitura antecipada em miss.
+            seq: dica de varredura sequencial; se True, cfg.prefetch > 0 e fid monotipado nesta área, aciona leitura antecipada em miss.
         Retorna:
             Objeto Page (Frame) residente na memória com pin_count >= 1.
         Levanta:
@@ -208,7 +287,7 @@ class BufferPool:
             BufferFullError: se for miss e todos os frames da área ptype estiverem fixados/reservados.
         Custo de I/O:
             - Hit: 0 leituras e 0 gravações.
-            - Miss: 1 leitura física (mais até cfg.prefetch leituras se seq=True) + 1 gravação se a vítima estiver suja.
+            - Miss: 1 leitura física (mais até cfg.prefetch leituras se seq=True em arquivo monotipado) + 1 gravação se a vítima estiver suja.
         """
         area = self._areas[ptype]
 
@@ -217,6 +296,9 @@ class BufferPool:
             # HIT: a página já está na memória. Incrementa pin_count ("alfinete") para que
             # ninguém possa expulsá-la enquanto estiver em uso, e avisa a política (accessed).
             if f.ptype != ptype:
+                # Se alguém misturou áreas no mesmo fid, revoga qualquer autorização de prefetch.
+                self._monotyped.pop(fid, None)
+                self._mixed_fids.add(fid)
                 raise ValueError(
                     f"Bloco ({fid}, {bno}) residente na área {f.ptype}, mas pedido como {ptype}"
                 )
@@ -225,6 +307,7 @@ class BufferPool:
             area.stats.hits += 1
             self.stats.hits += 1
             f.pin_count += 1
+            f.prefetched = False
             # Se a página estava na fila de descarte imediato (tossed), resgata-a pois voltou a ser usada.
             if area.tossed:
                 try:
@@ -232,6 +315,7 @@ class BufferPool:
                 except ValueError:
                     pass
             area.policy.accessed(f)
+            self._record_ptype(fid, ptype)
             return f
 
         # MISS: a página não está no buffer.
@@ -252,27 +336,35 @@ class BufferPool:
         self.stats.misses += 1
         # Copia para dentro do bytearray pré-alocado do frame sem trocar a referência do objeto f.data
         f.data[:] = raw
-        self._install(f, area, fid, bno, ptype, pin_count=1, dirty=False)
+        self._install(f, area, fid, bno, ptype, pin_count=1, dirty=False, prefetched=False)
 
-        # Se o operador informou leitura sequencial (seq=True) e há prefetch configurado, carrega os próximos k blocos
-        if seq and self.cfg.prefetch > 0:
+        # D-P1-12 (B1): registra área vista para fid e revoga prefetch se houver mistura de tipos.
+        self._record_ptype(fid, ptype)
+
+        # D-P1-12 (B1): só dispara prefetch se o arquivo fid foi explicitamente declarado monotipado
+        # para esta área ptype (evita instalar blocos de INDEX em DATA ou vice-versa).
+        if (
+            seq
+            and self.cfg.prefetch > 0
+            and fid not in self._mixed_fids
+            and self._monotyped.get(fid) == ptype
+        ):
             self._prefetch(area, fid, bno + 1, self.cfg.prefetch)
         return f
 
     def _prefetch(self, area: _Area, fid: int, start: int, k: int) -> None:
         # D-P1-12: leitura antecipada dos blocos [start .. start + k - 1].
-        # Cada bloco pré-carregado entra com pin_count = 0 (para não vazar pin se o scan parar antes)
-        # e não conta como request/miss até que o operador realmente chame pin() nele.
-        # Guardamos em batch_frames os frames instalados nesta chamada: se a próxima vítima escolhida
-        # pela política (ex.: MRU ou área pequena no LRU) for um frame de batch_frames, _victim_or_none
-        # retorna None e paramos imediatamente (break) para o prefetch nunca expulsar a si mesmo!
+        # Cada bloco pré-carregado entra com pin_count = 0 e prefetched = True até o primeiro pin().
+        # Usando for_prefetch=True em _victim_or_none, o prefetch para imediatamente se não houver
+        # frame livre/consumido disponível ou se a próxima vítima for um bloco pré-lido ainda não
+        # referenciado (desta chamada ou de outro cursor).
         batch_frames: set[Frame] = set()
         for b in range(start, start + k):
             if (fid, b) in self._table:
                 break
             if not self.fm.is_valid_block(fid, b):
                 break
-            f = self._victim_or_none(area, exclude=batch_frames)
+            f = self._victim_or_none(area, exclude=batch_frames, for_prefetch=True)
             if f is None:
                 break
             try:
@@ -281,7 +373,9 @@ class BufferPool:
                 area.free.append(f)
                 break
             f.data[:] = raw
-            self._install(f, area, fid, b, area.ptype, pin_count=0, dirty=False)
+            self._install(
+                f, area, fid, b, area.ptype, pin_count=0, dirty=False, prefetched=True
+            )
             batch_frames.add(f)
             area.stats.prefetched += 1
             self.stats.prefetched += 1
@@ -308,6 +402,7 @@ class BufferPool:
             raise
         f.data[:] = self._zero_block
         self._install(f, area, fid, bno, ptype, pin_count=1, dirty=True)
+        self._record_ptype(fid, ptype)
         return f
 
     def unpin(
@@ -353,7 +448,7 @@ class BufferPool:
 
         Parâmetros:
             fid: identificador inteiro do arquivo aberto no FileManager.
-            bno: número do bloco lógico (0-indexado, em blocos).
+            bno: número do bloco lógico (1-indexado, bno >= 1; Bloco 0 é o cabeçalho do arquivo).
             ptype: área do buffer (CATALOG, INDEX, DATA ou WORK).
             seq: dica de leitura sequencial repassada a pin().
             toss: dica de descarte imediato repassada a unpin().
@@ -437,6 +532,7 @@ class BufferPool:
         f.pin_count = 0
         f.dirty = False
         f.ref = 0
+        f.prefetched = False
         if f not in area.reserved and f not in area.free:
             area.free.append(f)
 
@@ -457,6 +553,9 @@ class BufferPool:
                 )
         for f in frames:
             self._discard_frame(f)
+        self._monotyped.pop(fid, None)
+        self._seen_ptypes.pop(fid, None)
+        self._mixed_fids.discard(fid)
 
     def close_file(self, fid: int) -> None:
         """Descarrega páginas sujas de fid, descarta seus frames do buffer e fecha fid no FileManager.
@@ -478,7 +577,7 @@ class BufferPool:
 
         Parâmetros:
             fid: identificador inteiro do arquivo aberto.
-            bno: número do bloco lógico (0-indexado, em blocos) a liberar.
+            bno: número do bloco lógico (1-indexado, bno >= 1; Bloco 0 é o cabeçalho do arquivo) a liberar.
         Levanta:
             RuntimeError: se a página (fid, bno) estiver fixada no buffer (pin_count > 0).
             KeyError: se fid for inválido ou fechado.
@@ -521,6 +620,7 @@ class BufferPool:
                 f.pin_count = 0
                 f.dirty = False
                 f.ref = 0
+                f.prefetched = False
             # Preserva frames atualmente emprestados a reserve_work() para não duplicá-los no finally
             area.free = [f for f in reversed(area.frames) if f not in area.reserved]
 

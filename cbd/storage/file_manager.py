@@ -14,13 +14,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 import struct
-from typing import BinaryIO
+from typing import BinaryIO, Callable
 
 from cbd.contracts import IOCounters, StorageConfig
 
 MAGIC = b"CBD1"
 # D-P1-03: cabeçalho fixo de 32 bytes no início do Bloco físico 0 (ver docs/decisoes/P1.md)
+# Campos: magic(4s), block_size(I), high_water(I), n_free_header(I), ext_bno(I), 12 bytes reservados
 HEADER_STRUCT = struct.Struct("<4sIIII12x")
+# Cabeçalho de bloco de extensão da free-list (next_ext: I, count: I)
+EXT_STRUCT = struct.Struct("<II")
 
 
 @dataclass
@@ -32,7 +35,6 @@ class _FileDesc:
     high_water: int = 0
     free: list[int] = field(default_factory=list)
     free_set: set[int] = field(default_factory=set)
-    lost_free: int = 0
 
 
 class FileManager:
@@ -47,18 +49,37 @@ class FileManager:
         self.root_dir = Path(cfg.root_dir)
         self.root_dir.mkdir(parents=True, exist_ok=True)
 
-        # D-P1-04: capacidade máxima da pilha de bnos livres no Bloco 0 ((B - 32) // 4 = 1016 em 4 KB)
+        # D-P1-04: capacidade da pilha no Bloco 0 ((B - 32) // 4 = 1016 em 4 KB) e por bloco de extensão
         self._max_free: int = (self.block_size - HEADER_STRUCT.size) // 4
+        self._ext_cap: int = (self.block_size - EXT_STRUCT.size) // 4
         self._next_fid: int = 1
         self._desc: dict[int, _FileDesc] = {}
         self._by_name: dict[str, int] = {}
         self._names: dict[int, str] = {}
+        self._closed_paths: dict[int, Path] = {}
         self._deleted_fids: set[int] = set()
+
+        # Hooks opcionais registrados pelo BufferPool para manter coerência mesmo em chamadas diretas
+        self._on_before_close: Callable[[int], None] | None = None
+        self._on_before_free: Callable[[int, int], None] | None = None
+        self._on_before_delete: Callable[[int], None] | None = None
 
         # D-P1-05: contadores globais, por arquivo e posição da cabeça global _head
         self.io: IOCounters = IOCounters()
         self.io_by_file: dict[int, IOCounters] = {}
         self._head: tuple[int, int] | None = None
+
+    def register_hooks(
+        self,
+        *,
+        on_before_close: Callable[[int], None] | None = None,
+        on_before_free: Callable[[int, int], None] | None = None,
+        on_before_delete: Callable[[int], None] | None = None,
+    ) -> None:
+        """Registra callbacks opcionais do BufferPool para manter coerência de cache na Camada 4 (0 I/Os)."""
+        self._on_before_close = on_before_close
+        self._on_before_free = on_before_free
+        self._on_before_delete = on_before_delete
 
     def _path_for(self, name: str) -> Path:
         p = self.root_dir / f"{name}.dat"
@@ -66,26 +87,47 @@ class FileManager:
         return p
 
     def _write_header(self, d: _FileDesc) -> None:
-        # D-P1-03: persiste o descritor no Bloco físico 0 (offsets 0..B-1) fora de fm.io,
-        # pois metadados internos do simulador de sistema de arquivos não contam como I/O de consulta.
+        # D-P1-03, D-P1-04: persiste o descritor no Bloco físico 0 fora de fm.io.
+        # Se houver mais de _max_free blocos livres, encadeia o excedente nos próprios blocos livres.
+        if len(d.free) <= self._max_free:
+            header_free = d.free
+            ext_bno = 0
+        else:
+            split = len(d.free) - self._max_free
+            rest = d.free[:split]
+            header_free = d.free[split:]
+            chunk_size = 1 + self._ext_cap
+            chunks = [rest[i : i + chunk_size] for i in range(0, len(rest), chunk_size)]
+            ext_bno = chunks[0][0]
+            for idx, chunk in enumerate(chunks):
+                cur_bno = chunk[0]
+                items = chunk[1:]
+                next_bno = chunks[idx + 1][0] if idx + 1 < len(chunks) else 0
+                ebuf = bytearray(self.block_size)
+                EXT_STRUCT.pack_into(ebuf, 0, next_bno, len(items))
+                if items:
+                    struct.pack_into(f"<{len(items)}I", ebuf, EXT_STRUCT.size, *items)
+                d.file.seek(cur_bno * self.block_size)
+                d.file.write(ebuf)
+
         buf = bytearray(self.block_size)
-        n_free = len(d.free)
+        n_free = len(header_free)
         HEADER_STRUCT.pack_into(
-            buf, 0, MAGIC, self.block_size, d.high_water, n_free, d.lost_free
+            buf, 0, MAGIC, self.block_size, d.high_water, n_free, ext_bno
         )
         if n_free:
-            struct.pack_into(f"<{n_free}I", buf, HEADER_STRUCT.size, *d.free)
+            struct.pack_into(f"<{n_free}I", buf, HEADER_STRUCT.size, *header_free)
         d.file.seek(0)
         d.file.write(buf)
         d.file.flush()
 
-    def _read_header(self, f: BinaryIO) -> tuple[int, list[int], int]:
-        # D-P1-03: carrega o Bloco 0 na abertura (open) para manter high_water e a pilha de livres em RAM.
+    def _read_header(self, f: BinaryIO) -> tuple[int, list[int]]:
+        # D-P1-03, D-P1-04: carrega o Bloco 0 (e eventual cadeia de extensão) na abertura (open).
         f.seek(0)
         buf = f.read(self.block_size)
         if len(buf) < HEADER_STRUCT.size:
             raise ValueError("Arquivo corrompido: cabeçalho menor que 32 bytes")
-        magic, bsize, high_water, n_free, lost_free = HEADER_STRUCT.unpack_from(buf, 0)
+        magic, bsize, high_water, n_free, ext_bno = HEADER_STRUCT.unpack_from(buf, 0)
         if magic != MAGIC:
             raise ValueError(f"Magic inválido no cabeçalho: {magic!r}")
         if bsize != self.block_size:
@@ -94,12 +136,26 @@ class FileManager:
             )
         if n_free > self._max_free or len(buf) < HEADER_STRUCT.size + 4 * n_free:
             raise ValueError(f"Cabeçalho corrompido: n_free={n_free}")
-        free_list = (
+        header_free = (
             list(struct.unpack_from(f"<{n_free}I", buf, HEADER_STRUCT.size))
             if n_free
             else []
         )
-        return high_water, free_list, lost_free
+        ext_items: list[int] = []
+        cur = ext_bno
+        while cur != 0:
+            f.seek(cur * self.block_size)
+            ebuf = f.read(self.block_size)
+            if len(ebuf) < EXT_STRUCT.size:
+                raise ValueError(f"Bloco de extensão livre {cur} corrompido")
+            next_ext, count = EXT_STRUCT.unpack_from(ebuf, 0)
+            if count > self._ext_cap or len(ebuf) < EXT_STRUCT.size + 4 * count:
+                raise ValueError(f"Bloco de extensão livre {cur} com count inválido: {count}")
+            ext_items.append(cur)
+            if count:
+                ext_items.extend(struct.unpack_from(f"<{count}I", ebuf, EXT_STRUCT.size))
+            cur = next_ext
+        return high_water, ext_items + header_free
 
     def create(self, name: str) -> int:
         """Cria (ou recria do zero) o arquivo lógico `name` (.dat) e retorna seu descritor `fid` (int >= 1).
@@ -110,6 +166,9 @@ class FileManager:
         if name in self._by_name:
             self.close(self._by_name[name])
         path = self._path_for(name)
+        for old_fid, old_path in list(self._closed_paths.items()):
+            if old_path == path:
+                self._closed_paths.pop(old_fid, None)
         f = open(path, "w+b")
         fid = self._next_fid
         self._next_fid += 1
@@ -134,10 +193,13 @@ class FileManager:
             raise FileNotFoundError(f"Arquivo inexistente: {path}")
         f = open(path, "r+b")
         try:
-            high_water, free_list, lost_free = self._read_header(f)
+            high_water, free_list = self._read_header(f)
         except Exception:
             f.close()
             raise
+        for old_fid, old_path in list(self._closed_paths.items()):
+            if old_path == path:
+                self._closed_paths.pop(old_fid, None)
         fid = self._next_fid
         self._next_fid += 1
         d = _FileDesc(
@@ -148,7 +210,6 @@ class FileManager:
             high_water=high_water,
             free=free_list,
             free_set=set(free_list),
-            lost_free=lost_free,
         )
         self._desc[fid] = d
         self._by_name[name] = fid
@@ -169,6 +230,10 @@ class FileManager:
 
         Idempotente se `fid` já estiver fechado.
         """
+        if fid not in self._desc:
+            return
+        if self._on_before_close is not None:
+            self._on_before_close(fid)
         d = self._desc.pop(fid, None)
         if d is None:
             return
@@ -184,20 +249,30 @@ class FileManager:
                 d.file.flush()
         finally:
             d.file.close()
+            self._closed_paths[fid] = d.path
             if self._head is not None and self._head[0] == fid:
                 self._head = None
 
     def delete(self, fid: int) -> None:
-        """Fecha o descritor `fid` e remove o arquivo físico `.dat` do disco (0 I/Os).
+        """Fecha o descritor `fid` (se aberto) e remove o arquivo físico `.dat` do disco (0 I/Os).
 
         Idempotente para `fid` já removido nesta sessão (suporta `TempFile.drop()`).
-        Levanta `KeyError` se `fid` nunca existiu ou já foi fechado sem remoção.
+        Suporta também `delete(fid)` após `close(fid)`. Levanta `KeyError` se `fid` nunca existiu.
         """
         if fid in self._deleted_fids:
             return
+        closed_path = self._closed_paths.pop(fid, None)
+        if closed_path is not None:
+            self._deleted_fids.add(fid)
+            closed_path.unlink(missing_ok=True)
+            return
+        if fid not in self._desc:
+            raise KeyError(f"fid inválido ou desconhecido: {fid}")
+        if self._on_before_delete is not None:
+            self._on_before_delete(fid)
         d = self._desc.pop(fid, None)
         if d is None:
-            raise KeyError(f"fid inválido ou já fechado: {fid}")
+            raise KeyError(f"fid inválido ou desconhecido: {fid}")
         self._deleted_fids.add(fid)
         self._by_name.pop(d.name, None)
         d.file.close()
@@ -238,27 +313,26 @@ class FileManager:
         return d.high_water
 
     def free(self, fid: int, bno: int) -> None:
-        """Devolve o bloco `bno` (`1 <= bno <= high_water`) à pilha de livres do Bloco 0 em RAM (0 I/Os).
+        """Devolve o bloco `bno` (`1 <= bno <= high_water`) à pilha de livres em RAM (0 I/Os).
 
         Levanta `KeyError` se `fid` estiver fechado ou `ValueError` se `bno` for inválido ou já estiver livre.
         """
-        # D-P1-04: pilha LIFO no Bloco 0 comporta até _max_free = (B - 32) // 4 entradas (1016 em 4 KB).
-        # Se passar desse limite, contabiliza em lost_free para manter n_blocks(fid) exato.
+        # D-P1-04: mantém todos os blocos livres em d.free / d.free_set sem perda;
+        # se ultrapassar _max_free, o excedente é persistido em blocos de extensão no close().
         d = self._get_desc(fid)
         if bno < 1 or bno > d.high_water:
             raise ValueError(f"bno {bno} fora da faixa [1, {d.high_water}]")
         if bno in d.free_set:
             raise ValueError(f"bno {bno} já está livre")
-        if len(d.free) < self._max_free:
-            d.free.append(bno)
-            d.free_set.add(bno)
-        else:
-            d.lost_free += 1
+        if self._on_before_free is not None:
+            self._on_before_free(fid, bno)
+        d.free.append(bno)
+        d.free_set.add(bno)
 
     def n_blocks(self, fid: int) -> int:
-        """Retorna a quantidade de blocos de usuário ocupados (`high_water - len(free) - lost_free`) em `fid` (0 I/Os)."""
+        """Retorna a quantidade de blocos de usuário ocupados (`high_water - len(free)`) em `fid` (0 I/Os)."""
         d = self._get_desc(fid)
-        return d.high_water - len(d.free) - d.lost_free
+        return d.high_water - len(d.free)
 
     def _count(self, fid: int, bno: int, write: bool) -> None:
         # D-P1-05: modela um único braço mecânico de disco (cabeça global _head).

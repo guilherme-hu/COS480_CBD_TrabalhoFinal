@@ -201,10 +201,10 @@ Semântica que todos precisam saber:
 - **Contagem.** Cada `pin` é 1 *request*. Se a página está no buffer é *hit*; se não está é *miss*, que gera 1 leitura física. `new_page` não conta request nem leitura.
 - **Dirty.** Quem altera `page.data` **tem que** chamar `page.mark_dirty()` ou `unpin(page, dirty=True)`. Página suja expulsa é gravada (`dirty_evictions`).
 - **Pin.** Todo `pin` precisa do `unpin` correspondente. Prefira `with bp.page(...) as p:`. Se não houver frame livre nem frame não fixado na área, `pin` levanta `BufferFullError`.
-- **`seq=True`** indica leitura sequencial (scan). Com `cfg.prefetch = k > 0`, um *miss* com `seq=True` lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`).
+- **`seq=True`** indica leitura sequencial (scan). Com `cfg.prefetch = k > 0`, um *miss* com `seq=True` lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`), **desde que** o arquivo tenha sido declarado monotipado via `bp.allow_prefetch(fid, ptype)` (D-P1-12). **Contrato estrito:** como o `FileManager` não grava `PageType` no disco, P3 não deve chamar `allow_prefetch` em arquivos mistos (`INDEX` + `DATA`, como Árvore B+).
 - **`toss=True`** no `unpin`: se `cfg.toss_immediate` estiver ligado, o frame vira a próxima vítima (toss-immediate). Scans devem passar `toss=True`; a configuração decide se tem efeito.
 - **Áreas fixas por tipo de página.** Cada `PageType` tem frames próprios e sua própria instância da política. Uma página de `INDEX` nunca expulsa uma de `DATA`. Isso dá retenção preferencial de índice e catálogo sem precisar de prioridade dinâmica.
-- **Fechamento e remoção de arquivos.** Como o `FileManager` fica abaixo do `BufferPool`, ao fechar um arquivo permanente chame `bp.close_file(fid)` (ou `bp.flush_file(fid)` + `bp.drop_file(fid)` + `fm.close(fid)`), e ao remover um arquivo temporário chame `bp.drop_file(fid)` antes de `fm.delete(fid)`.
+- **Fechamento e remoção de arquivos.** Como o `FileManager` fica abaixo do `BufferPool`, ao fechar um arquivo permanente chame `bp.close_file(fid)` (ou `bp.flush_file(fid)` + `bp.drop_file(fid)` + `fm.close(fid)`), e ao remover um arquivo temporário chame `bp.drop_file(fid)` antes de `fm.delete(fid)`. Internamente na Camada 4, `BufferPool` também registra callbacks via `fm.register_hooks(...)` para manter o cache coerente caso `fm.close/free/delete` sejam chamados diretamente.
 
 ### 3.3 Que `PageType` usar
 
@@ -776,6 +776,11 @@ class Engine:
 ```
 
 Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) sem ser gerada de novo. Já mudar o `block_size` exige gerar a base de novo, num `root_dir` separado por tamanho de bloco (ex.: `data/db_4k`).
+
+**Protocolo de medição (`flush` × `snapshot()` e `LRU` × `MRU`):**
+- **Operações de leitura (`SELECT` / `JOIN`):** chamar `eng.cold()` antes; usar `bp.drop_file(fid)` para `TempFile`s; chamar `eng.snapshot()` diretamente ao fim da consulta (sem `flush_all()`).
+- **Operações de escrita/manutenção (`INSERT`, `DELETE`, `bulk_load`):** se a medição contabiliza o custo total persistido em disco, chamar `bp.flush_all()` **antes** de `eng.snapshot()`; caso contrário, `snapshot()` medirá apenas `dirty_evictions` + `forced_writes` ocorridos durante a operação.
+- **Comparação `LRU × MRU`:** executar com `BufferConfig(toss_immediate=False)`, pois a fila `area.tossed` tem prioridade sobre a política e igualaria `LRU` e `MRU` em varreduras que passam `toss=True`.
 
 ### 8.2 Parâmetros que a bancada pode variar (o que "pode mudar" em cada módulo)
 

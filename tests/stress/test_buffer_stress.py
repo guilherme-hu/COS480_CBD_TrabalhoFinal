@@ -25,12 +25,13 @@ def test_buffer_random_stress_with_oracle(tmp_path):
         fm = FileManager(scfg)
         pool = BufferPool(fm, bcfg)
         fid = fm.create("stress_rel")
+        pool.allow_prefetch(fid, PageType.DATA)
 
         rng = random.Random(480)
-        n_blocks = 60
+        n_blocks = 10_000
         oracle: dict[int, bytearray] = {}
 
-        # Aloca 60 blocos iniciais via new_page
+        # Aloca 10.000 blocos iniciais via new_page (conforme guia P1 §6)
         for i in range(1, n_blocks + 1):
             p = pool.new_page(fid, PageType.DATA)
             assert p.bno == i
@@ -41,8 +42,8 @@ def test_buffer_random_stress_with_oracle(tmp_path):
             pool.unpin(p)  # sem passar dirty=True, pois new_page já nasce dirty=True!
 
         active_pins: list = []
-        # 20.000 operações aleatórias de pin/unpin/dirty/force em apenas 3 frames!
-        for step in range(20_000):
+        # 1.000.000 operações aleatórias de pin/unpin/dirty/force em apenas 3 frames (guia P1 §6)!
+        for step in range(1_000_000):
             # Se já temos 2 páginas fixadas (de 3 frames), desafixa uma para não esgotar sempre
             if len(active_pins) >= 2 or (active_pins and rng.random() < 0.65):
                 idx = rng.randrange(len(active_pins))
@@ -112,6 +113,22 @@ def test_naive_vs_refactored_stress(tmp_path):
     v1_reads = fm_v1.io.reads
     fm_v1.close_all()
     assert v1_reads == 85, "A versão bruta ce1221b relê blocos por auto-expulsão no prefetch"
+
+    fm_ref = FileManager(StorageConfig(root_dir=str(tmp_path / "ref_lru")))
+    fid_ref = fm_ref.create("t")
+    for _ in range(20):
+        fm_ref.write(fid_ref, fm_ref.allocate(fid_ref), bytes(fm_ref.block_size))
+    fm_ref.reset_stats()
+    bp_ref = BufferPool(
+        fm_ref,
+        BufferConfig(areas={PageType.DATA: 3, PageType.WORK: 2}, policy=Policy.LRU, prefetch=4),
+    )
+    bp_ref.allow_prefetch(fid_ref, PageType.DATA)
+    for b in range(1, 21):
+        bp_ref.unpin(bp_ref.pin(fid_ref, b, PageType.DATA, seq=True), toss=True)
+    ref_reads = fm_ref.io.reads
+    fm_ref.close_all()
+    assert ref_reads == 20, "BufferPool refatorado lê cada bloco exatamente 1 vez (85 -> 20 leituras)"
 
     # 2. Demonstra a perda de dados por mark_dirty() + unpin() no protótipo ingênuo vs. refatorado
     scfg_naive = StorageConfig(root_dir=str(tmp_path / "naive"), block_size=2048)
