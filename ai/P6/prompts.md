@@ -48,3 +48,7 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
      Teste de mutação manual: inverter a ordem de `cold()` (zerar antes do
      `clear`) faz 2 testes falharem. O teste com a pilha real fica `skip` até
      P1/P2 estarem no `main`.
+   - #9: `bench/matrix.py` com as 117 linhas de join + 4 de lado forçado.
+     Versão bruta salva em `ai/P6/raw/matrix_joins_v1.py` antes de refinar.
+     Operadores referenciados por nome (resolvidos no orquestrador). Política
+     por algoritmo fica LRU até o experimento da #16.
