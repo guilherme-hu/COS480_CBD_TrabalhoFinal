@@ -65,3 +65,88 @@
 - Correção: grava `status=error` com o tipo e a mensagem e segue; o resultado
   parcial não é gravado como medida. Se sobrar página fixada, aborta (`PinLeak`).
 - Regressão: `tests/test_run.py::test_operator_bug_is_recorded_not_fatal_unless_pins_leak`.
+
+## Achados da revisão do P2 nos PRs #28–#35 (09/11)
+
+Revisão feita pelo guilherme-hu (P2) com IA, comentada em cada PR. Todos os
+achados abaixo foram reproduzidos antes da correção (teste que falhava).
+
+### `base_stats.csv` versionado ainda listava os subconjuntos (#28/#5)
+
+- Arquivo: `results/base_stats.csv`.
+- Categoria: artefato desatualizado.
+- Defeito: a #5 tirou `aluno_p`, `detalhes_p` e `turma_p` do código, mas o CSV
+  versionado não foi regenerado e seguia com 9 linhas deles.
+- Correção: regenerado com os mesmos argumentos (`--scale 1 --rows turma=100000`);
+  os SHA-256 dos dados são idênticos, só saem os subconjuntos e os `V(A)` de
+  colunas fora do escopo.
+
+### Índice secundário "clustering" sobre B+ e hash sem medição (#32/#10)
+
+- Arquivo: `bench/matrix.py`, `_select_paths`.
+- Categoria: aderência ao enunciado (requisito sem medição).
+- Defeito: o caminho c (SECONDARY) só existia sobre heap. O enunciado §4.2 lista
+  o B+ secundário em campo NOT UNIQUE também para B+ e hash primários, e o plano
+  físico já cria esse índice em `aluno.cr` sobre `aluno__bt_dre` e `aluno__hs_dre`.
+- Correção: a faixa em `cr` ganha `c_secondary_on_btree` e `c_secondary_on_hash`,
+  com e sem `sort_ptrs` (18 linhas de faixa em vez de 10).
+- Regressão: `test_select_matrix_counts` e `test_select_values_come_from_workload`.
+
+### Exceção no `cost_fn` derrubava a rodada (#33/#11)
+
+- Arquivo: `bench/run.py`, `measure`.
+- Categoria: robustez do orquestrador (mesma família do achado da #11 acima).
+- Defeito: a correção anterior tratou exceções do operador, mas não as do
+  `cost_fn`; um `KeyError` na função de custo chegava ao `main`. O mesmo valia
+  para `expected[exp.query_id]` com um id ausente do `workload.json`.
+- Correção: as duas viram `status=error` e a rodada segue.
+- Regressão: `test_cost_fn_bug_is_recorded_like_operator_bug` e
+  `test_unknown_query_id_is_an_error_row_and_run_continues`.
+
+### `summary.csv` e `--resume` misturavam bases diferentes (#35/#13)
+
+- Arquivo: `bench/run.py`, `summarize`, `run` e `main`.
+- Categoria: metodologia experimental (resultado errado sem aviso).
+- Defeito: o resumo lia todo CSV de `results/raw/`, e com o mesmo `exp_id` em
+  dois arquivos vencia o de nome maior. Nenhuma coluna registrava a base:
+  `2026-11-09_all.csv` (`io.reads=9999`) e `tiny_all.csv` (`io.reads=7`)
+  davam `io.reads = 7` no resumo. O `--resume` com outro `--data` misturava
+  repetições de bases diferentes.
+- Correção: coluna `dataset` (12 primeiros hex do SHA-256 do `workload.json`)
+  em toda linha; `run` recusa `previous` de outra base e `summarize` só lê a
+  base pedida (ou recusa se houver mais de uma).
+
+### Regra dos 5% aceitava contagem de I/O diferente entre repetições (#35/#13)
+
+- Arquivo: `bench/run.py`, `stable`.
+- Categoria: metodologia experimental (esconde bug de contagem).
+- Defeito: `stable` aceitava até 5% de variação em `io.reads + io.writes`
+  (`1000, 1020, 1040` passava), e a mediana escondia a diferença. Com cache
+  frio e a mesma base a contagem é determinística (P6 §6.2): se varia, há bug
+  em `cold()`, na política ou no prefetch. O guia descrevia a regra assim e o
+  código seguiu o guia sem questionar.
+- Correção: contadores `io.*`/`bp.*` idênticos entre repetições; os 5% valem só
+  para o tempo. Divergência vira `status=nondeterministic` e bloqueia o relatório.
+  Guia P6 §6.2 atualizado.
+
+### `--resume` nunca refazia um experimento com `error` (#35/#13)
+
+- Arquivo: `bench/run.py`, `run`.
+- Categoria: correção.
+- Defeito: `if reps[0]['status'] != 'ok': continue` pulava `N/A` (correto,
+  é determinístico) e também `error`; depois de o dono corrigir o operador, o
+  erro antigo ficava no resumo para sempre.
+- Correção: só `N/A` é final. Se a última tentativa terminou em `error`,
+  `nondeterministic` ou `valid=False`, o resume mede de novo do zero
+  (repetições numeradas depois das existentes) e o resumo usa só a última tentativa.
+
+### Linha truncada no CSV quebrava o `--resume` (#35/#13)
+
+- Arquivo: `bench/run.py`, `read_rows`/`CsvLog`.
+- Categoria: robustez (rodada que cai no meio da gravação).
+- Defeito: com a última linha pela metade, o `DictReader` devolve `None` e
+  `stable` levantava `TypeError`; o modo `'a'` ainda colaria a linha seguinte
+  na metade que sobrou.
+- Correção: no resume, confere o cabeçalho contra `COLUMNS` e descarta a última
+  linha incompleta; `CsvLog` troca quebras de linha por espaço (uma linha do CSV
+  é sempre uma linha do arquivo).

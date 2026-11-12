@@ -60,3 +60,43 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
      (pino vazado continua abortando). Registrado em `review.md`.
    - #12: coluna `valid` comparando `(count, checksum)` da saída com o
      `workload.json` (calculado no SQLite por `bench.build`), fora da janela.
+   - #13: repetições (3 a 10, até < 5% em I/O e tempo), `--resume`,
+     `summary.csv` com medianas. Ajuste após teste: linha `valid=False` era
+     repetida 3 vezes; agora para na primeira (saída determinística).
+   - Fim da sessão: `ai/P6/ESTADO.md` e `docs/estudo/P6.md` criados.
+
+3. Pedido do usuário: "pode fazer push e abrir PR sim [...] acho interessante ter
+   uma issue pra mim que depende de P4/5 de forma que eu consiga adequar minha
+   parte a isso".
+
+   Resultado: PRs empilhados #28–#35 (um por issue) e issue #36 (adequar a
+   bancada aos operadores reais de P4/P5); #15 passou a depender da #36.
+
+---
+
+# Sessão de 09/11/2026 — backlog do grupo e fluxo de issues
+
+Ferramenta: Claude Code, modelo Claude Opus 5.5.
+
+1. Pedido do usuário:
+
+   > Abra as issues nesse formato para todos os membros do grupo (Px) e adiciona
+   > no agents md que os outros membros do grupo devem, quando forem comecar a
+   > fazer algo no repositorio eles se identifiquem como Px e possam pegar e
+   > resolver as issues atribuidas a eles e que possam complementar tambem as
+   > issues para si e para os outros membros
+
+   Resultado: 37 issues (#37–#73) para P1–P5 e o grupo, tiradas dos testes
+   obrigatórios e armadilhas de cada guia, atribuídas aos donos; labels
+   `parte:P1`–`P5`, `parte:grupo` e áreas de camada; milestones C1–C3 (marcos
+   da arquitetura §10.1, sem data). Bloqueios de #14, #16 e #36 ligados às
+   issues novas. Seção §10.1 do `AGENTS.md` com o fluxo de issues (issue #74).
+   Erro do agente: ao ligar a #27 à #72 criou um ciclo de dependência (a #72
+   já dependia da #27); desfeito na hora.
+
+2. Pedido do usuário: "pode atribuir todas as issues de P1 e fazer Push e PR sim".
+
+   Resultado: issues do P1 já estavam com a dona; interpretado como as do P6,
+   atribuídas a `bepo7` (#3–#36). Push da branch e PR #75 do `AGENTS.md`.
+
+3. Pedido do usuário: registrar esta sessão aqui (esta entrada).

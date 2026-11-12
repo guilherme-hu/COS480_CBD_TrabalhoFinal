@@ -159,7 +159,7 @@ O relatório tem de justificar **todas** as escolhas comparando com as preterida
 
 | Fator | Níveis | Experimentos |
 | :--- | :--- | :--- |
-| **política de substituição** (obrigatório) | as implementadas pelo P1 (LRU, MRU, Clock, FIFO) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
+| **política de substituição** (obrigatório) | as implementadas pelo P1 (LRU e MRU; Clock e FIFO ficaram de fora pela D-P1-08, PR #2) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
 | tamanho de bloco | 2048, 4096, 8192 | joins tipo 1 (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
 | toss-immediate | off/on | os scans e o BNL |
 | prefetch | 0, 8 | os scans (o efeito aparece em `io.seeks`) |
@@ -209,14 +209,14 @@ write_row(exp, rep, n, chk, snap, est, info, dt)
 
 ### 6.2 Repetições (enunciado §6)
 
-No mínimo **3** repetições, até a variação entre elas ficar abaixo de 5%: `max/min − 1 < 0.05` em `io.reads + io.writes` **e** no tempo, com no máximo 10. As contagens são determinísticas (mesma base, cache frio), então a variação vem só do tempo. Grave todas as repetições, e o resumo usa a mediana.
+No mínimo **3** repetições, até a variação do **tempo** ficar abaixo de 5% (`max/min − 1 < 0.05`), com no máximo 10. Os contadores `io.*` e `bp.*` têm de ser **idênticos** entre as repetições: com a mesma base e cache frio a contagem é determinística, então qualquer diferença é bug (no `cold()`, na política ou no prefetch). A repetição divergente é gravada com `status = nondeterministic` e bloqueia o relatório, como `valid = False`. Grave todas as repetições, e o resumo usa a mediana. (Revisto em 09/11 na revisão do PR #35: a versão anterior aceitava 5% de variação também no I/O, o que esconderia esse bug.)
 
 ### 6.3 CSV (`results/raw/<data>_<parte>.csv`)
 
 Colunas, nesta ordem:
 
 ```
-exp_id, rep, status, note, kind, join_type, size_combo, config, algorithm, variant,
+exp_id, rep, dataset, status, note, kind, join_type, size_combo, config, algorithm, variant,
 sel_type, selectivity, path, sort_ptrs,
 r_table, r_org, r_rows, r_blocks, s_table, s_org, s_rows, s_blocks,
 block_size, policy, area_catalog, area_index, area_data, area_work, toss, prefetch,
@@ -227,7 +227,9 @@ bp.DATA.hits, bp.DATA.misses, bp.INDEX.hits, bp.INDEX.misses, bp.WORK.hits, bp.W
 est.reads, est.writes, est.seeks, est.formula, info_json, time_s
 ```
 
-`results/summary.csv`: uma linha por `exp_id` com as medianas. `results/occupancy.csv`: `stats()` de cada arquivo e índice antes e depois da carga de manutenção.
+`dataset` identifica a base: os 12 primeiros hexadecimais do SHA-256 do `workload.json` usado na rodada. O `--resume` recusa um CSV de outra base, e o `results/summary.csv` só junta linhas de uma base. `status` é `ok`, `N/A`, `error` ou `nondeterministic`.
+
+`results/summary.csv`: uma linha por `exp_id` com as medianas da última tentativa (depois de um `error`, o `--resume` mede de novo). `results/occupancy.csv`: `stats()` de cada arquivo e índice antes e depois da carga de manutenção.
 
 ### 6.4 Tempo de execução
 
@@ -237,7 +239,7 @@ O Python é lento: meça antes. Opções, nesta ordem:
 2. paralelizar por processo (`multiprocessing`), **uma cópia da pasta da base por processo** (os temporários e o catálogo gravam);
 3. rodar as repetições 2 e 3 só da contagem se o tempo da 1ª já estiver estável (justifique).
 
-`--resume`: pule os `exp_id`/`rep` que já estão no CSV, porque a rodada final vai cair no meio.
+`--resume`: pule os `exp_id`/`rep` que já estão no CSV, porque a rodada final vai cair no meio. N/A é final; `error`, `nondeterministic` e `valid = False` são medidos de novo. Uma última linha incompleta (queda no meio da gravação) é descartada.
 
 ---
 
