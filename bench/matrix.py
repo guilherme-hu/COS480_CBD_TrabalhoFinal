@@ -36,7 +36,15 @@ def areas_for_block(block_size, work=None):
     base = dict(BASE_AREAS)
     if work is not None:
         base[PageType.WORK] = work
-    return {area: pages * BASE_BLOCK_SIZE // block_size for area, pages in base.items()}
+    out = {}
+    for area, pages in base.items():
+        size = pages * BASE_BLOCK_SIZE
+        # Divisão exata: senão a memória em bytes muda (ou a área zera) sem aviso.
+        if size % block_size or size < block_size:
+            raise ValueError(f'{area.name}: {pages} páginas de {BASE_BLOCK_SIZE} B não dão um '
+                             f'número inteiro positivo de páginas de {block_size} B')
+        out[area] = size // block_size
+    return out
 
 # Algoritmos de junção do enunciado §5.1: nome do operador -> função de custo irmã.
 JOIN_ALGORITHMS = {

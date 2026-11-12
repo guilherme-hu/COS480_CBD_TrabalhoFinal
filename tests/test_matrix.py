@@ -160,3 +160,10 @@ def test_block_size_keeps_buffer_bytes_constant():
         areas = areas_for_block(b)
         assert {k: v * b for k, v in areas.items()} == {k: v * 4096 for k, v in BASE_AREAS.items()}
     assert areas_for_block(8192)[PageType.WORK] == 32 and areas_for_block(2048)[PageType.DATA] == 256
+    # WORK passado em páginas de 4096: 16 em B = 4096, 128 em B = 8192 (256 × 4096 B).
+    assert areas_for_block(4096, work=16)[PageType.WORK] == 16
+    assert areas_for_block(8192, work=256)[PageType.WORK] == 128
+    # Bloco que zeraria uma área ou não divide a memória: erro, não arredondamento.
+    for bad in (65536, 3000):
+        with pytest.raises(ValueError):
+            areas_for_block(bad)
