@@ -38,6 +38,25 @@ def _num(row, col):
     return None if value in ('', None) else float(value)
 
 
+def status_label(row):
+    """None se a linha é uma medição boa; senão o rótulo escrito na figura.
+
+    N/A legítimo, erro do operador, contagem não determinística e resultado inválido
+    (valid=False) aparecem com nomes diferentes: nenhum some em silêncio (P6 §10).
+    """
+    if row.get('status') == 'N/A':
+        return 'N/A'
+    if row.get('status') == 'error':
+        return 'ERRO'
+    if row.get('status') != 'ok':
+        return 'NÃO DET.'
+    if str(row.get('valid', '')).lower() == 'false':
+        return 'INVÁLIDO'
+    if _num(row, 'io.reads') is None:
+        return 'SEM MEDIDA'
+    return None
+
+
 def blocks(row, prefix='io'):
     """Blocos transferidos (leituras + gravações), medidos ('io') ou estimados ('est')."""
     reads, writes = _num(row, f'{prefix}.reads'), _num(row, f'{prefix}.writes')
@@ -45,7 +64,7 @@ def blocks(row, prefix='io'):
 
 
 def join_series(rows, combo):
-    """{rótulo da config: {algoritmo: (medido, estimado) | 'N/A'}} na ordem da matriz.
+    """{rótulo da config: {algoritmo: (medido, estimado) | rótulo de status}} na ordem da matriz.
 
     Só as 13 configurações da matriz principal; as linhas de lado forçado
     (outer_*/build_*) ficam fora desta figura.
@@ -56,28 +75,39 @@ def join_series(rows, combo):
         if parts[0] != 'join' or parts[1] != combo or len(parts) != 4:
             continue
         label, alg = parts[2], parts[3]
-        cell = 'N/A' if row['status'] != 'ok' else (blocks(row), blocks(row, 'est'))
+        cell = status_label(row) or (blocks(row), blocks(row, 'est'))
         out.setdefault(label, {})[alg] = cell
     return out
 
 
 def select_series(rows):
     """(igualdade, faixa): igualdade = {caminho: (média medido, média estimado)} sobre
-    os 20 DREs; faixa = {caminho: {seletividade: (medido, estimado)}}."""
-    eq, rng = {}, {}
+    os 20 DREs; faixa = {caminho: {seletividade: (medido, estimado)}}.
+
+    Linha que não é medição boa vira o rótulo de status (`status_label`). Na
+    igualdade, basta um DRE ruim para o caminho inteiro virar rótulo: a média de
+    menos de 20 valores não seria a "média de 20 DREs" da legenda.
+    """
+    eq, bad_eq, rng = {}, {}, {}
     for row in rows:
-        if not row['exp_id'].startswith('select.') or row['status'] != 'ok':
+        if not row['exp_id'].startswith('select.'):
             continue
         # exp_id = select.<query_id>.<caminho>; o query_id pode ter ponto (range_cr_0.01).
         query_id, path = row['exp_id'].removeprefix('select.').rsplit('.', 1)
+        label = status_label(row)
         if row['sel_type'] == 'eq_unique':
-            eq.setdefault(path, []).append((blocks(row), blocks(row, 'est')))
+            if label:
+                bad_eq.setdefault(path, label)
+            else:
+                eq.setdefault(path, []).append((blocks(row), blocks(row, 'est')))
         else:
             target = query_id.removeprefix('range_cr_')
-            rng.setdefault(path, {})[target] = (blocks(row), blocks(row, 'est'))
+            rng.setdefault(path, {})[target] = label or (blocks(row), blocks(row, 'est'))
     mean = {p: (statistics.mean(m for m, _ in v),
                 statistics.mean(e for _, e in v) if all(e is not None for _, e in v) else None)
             for p, v in eq.items()}
+    for p, label in bad_eq.items():
+        mean[p] = label
     return mean, rng
 
 
@@ -92,13 +122,13 @@ def _style(ax, ylabel):
 
 
 def _bars(ax, x, width, cells, color, label):
-    """Barras do medido com o estimado como traço; 'N/A' escrito na base."""
+    """Barras do medido com o estimado como traço; rótulo de status escrito na base."""
     shown = False
     for xi, cell in zip(x, cells):
         if cell is None:
             continue
-        if cell == 'N/A':
-            ax.text(xi, 0, 'N/A', ha='center', va='bottom', fontsize=6, color=MUTED, rotation=90)
+        if isinstance(cell, str):
+            ax.text(xi, 0, cell, ha='center', va='bottom', fontsize=6, color=MUTED, rotation=90)
             continue
         measured, estimated = cell
         ax.bar(xi, measured, width * .92, color=color, label=None if shown else label,
