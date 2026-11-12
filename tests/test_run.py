@@ -11,7 +11,7 @@ import pytest
 
 from bench.generator import Dataset
 from bench.matrix import Experiment, Side, join_experiments
-from bench.run import COLUMNS, CsvLog, EngineCache, PinLeak, measure
+from bench.run import COLUMNS, CsvLog, EngineCache, PinLeak, measure, report_invalid, run
 from bench.sqlite_ref import output_signature
 from cbd.contracts import Cost, NotApplicable, Path, Policy, TableStats
 
@@ -197,3 +197,55 @@ def test_cost_fn_bug_is_recorded_like_operator_bug():
     row = measure(eng, select_exp(), functions={'select_range': op, 'select_range_cost': broken_cost})
     assert row['status'] == 'error' and row['note'].startswith('cost_fn: KeyError')
     assert ran == [] and row.get('result_rows') is None
+
+
+def test_validation_detects_extra_or_missing_tuple_without_touching_counters():
+    rows = [r for r in ALUNOS if r[8] <= 5.0]
+    expected = output_signature(dict(kind='select', r_table='aluno'), rows)
+    ok_cost = lambda *a, **k: Cost(reads=1)
+    results = {}
+    for label, out, exp_sig in (('ok', rows, expected), ('menos', rows[:-1], expected),
+                                ('mais', rows + [rows[0]], expected), ('sem_validar', rows, None)):
+        eng = FakeEngine()
+        row = measure(eng, select_exp(), functions={'select_range': lazy_scan(eng, out),
+                                                   'select_range_cost': ok_cost}, expected=exp_sig)
+        results[label] = row
+    assert results['ok']['valid'] is True
+    assert results['menos']['valid'] is False and results['mais']['valid'] is False
+    assert results['sem_validar']['valid'] == ''
+    # Validar não muda nenhum contador medido.
+    keys = [c for c in COLUMNS if c.startswith(('io.', 'bp.'))]
+    assert [results['ok'].get(k) for k in keys] == [results['sem_validar'].get(k) for k in keys]
+
+
+def test_run_collects_invalid_rows(tmp_path, capsys):
+    eng = FakeEngine()
+    rows = ALUNOS[:5]
+    exp = select_exp()
+    log = CsvLog(tmp_path / 'raw.csv')
+    cache = SimpleNamespace(get=lambda e: eng)
+    invalid = run([exp], cache, log, {exp.query_id: (999, 0)},
+                  functions={'select_range': lazy_scan(eng, rows),
+                             'select_range_cost': lambda *a, **k: Cost(reads=1)})
+    log.close()
+    assert [r['exp_id'] for r in invalid] == [exp.exp_id]
+    assert report_invalid(invalid) == 1
+    assert 'INVÁLIDO select.x.a_scan' in capsys.readouterr().out
+
+
+def test_unknown_query_id_is_an_error_row_and_run_continues(tmp_path):
+    # Revisão do PR #33: expected[exp.query_id] com id fora do workload.json levantava
+    # KeyError e derrubava a rodada. Matriz e workload fora de sincronia viram linha
+    # error (sem medir: não haveria como validar) e a rodada segue.
+    eng = FakeEngine()
+    lost, good = select_exp(exp_id='select.lost', query_id='nao_existe'), select_exp()
+    log = CsvLog(tmp_path / 'raw.csv')
+    run([lost, good], SimpleNamespace(get=lambda e: eng), log, {good.query_id: (5, 0)},
+        functions={'select_range': lazy_scan(eng, ALUNOS[:5]),
+                   'select_range_cost': lambda *a, **k: Cost(reads=1)})
+    log.close()
+    with (tmp_path / 'raw.csv').open(newline='') as handle:
+        rows = {r['exp_id']: r for r in csv.DictReader(handle)}
+    assert rows['select.lost']['status'] == 'error' and 'nao_existe' in rows['select.lost']['note']
+    assert rows['select.lost']['io.reads'] == ''
+    assert rows[good.exp_id]['status'] == 'ok'

@@ -102,10 +102,12 @@ def _check_pins(eng, exp):
         raise PinLeak(f'{exp.exp_id}: {eng.bp.pinned()} página(s) fixada(s) ao fim da execução')
 
 
-def measure(eng, exp, rep=1, functions=None):
+def measure(eng, exp, rep=1, functions=None, expected=None):
     """Executa UMA medição de `exp` em `eng` e devolve a linha do CSV (dict).
 
     `functions` (nome -> callable) substitui os operadores reais nos testes.
+    `expected` = (count, checksum) da referência SQLite (workload.json) para preencher
+    `valid`; a comparação acontece depois do snapshot, fora da janela medida (P6 §5).
     Status: 'ok'; 'N/A' (NotApplicable no custo ou no operador, motivo em note); ou
     'error' (outra exceção no custo ou no operador, registrada para o dono corrigir). Levanta PinLeak se
     sobrar página fixada, porque o estado do buffer contaminaria as medições seguintes.
@@ -154,6 +156,7 @@ def measure(eng, exp, rep=1, functions=None):
     row.update({k: v for k, v in snap.items() if k in COLUMNS})
     row.update({
         'variant': info.get('variant', ''), 'result_rows': n, 'checksum': checksum,
+        'valid': '' if expected is None else (n, checksum) == tuple(expected),
         'est.reads': est.reads, 'est.writes': est.writes, 'est.seeks': est.seeks,
         'est.formula': est.formula, 'info_json': json.dumps(info, default=str, sort_keys=True),
         'time_s': round(dt, 6),
@@ -207,9 +210,36 @@ class EngineCache:
             self.current, self.key = None, None
 
 
-def run(experiments, engines, log, functions=None):
+def expected_results(workload):
+    """query_id -> (count, checksum) calculados no SQLite por bench.build (P6 §5)."""
+    return {q['id']: (q['expected']['count'], q['expected']['checksum']) for q in workload}
+
+
+def run(experiments, engines, log, expected, functions=None):
+    """Mede cada experimento uma vez e devolve as linhas inválidas (valid=False).
+
+    Qualquer linha inválida bloqueia o relatório: abra issue para o dono do operador.
+    """
+    invalid = []
     for exp in experiments:
-        log.write(measure(engines.get(exp), exp, 1, functions))
+        if exp.query_id not in expected:
+            # Matriz e workload.json fora de sincronia: sem resposta esperada não há
+            # como validar, então nem mede; a linha fica para corrigir a preparação.
+            log.write(dict(base_row(exp, 1), status='error',
+                           note=f'query_id {exp.query_id!r} ausente do workload.json'))
+            continue
+        row = measure(engines.get(exp), exp, 1, functions, expected[exp.query_id])
+        log.write(row)
+        if row.get('valid') is False:
+            invalid.append(row)
+    return invalid
+
+
+def report_invalid(invalid):
+    for row in invalid:
+        print(f"INVÁLIDO {row['exp_id']}: algoritmo={row['algorithm']} r={row['r_table']}/{row['r_org']} "
+              f"s={row['s_table'] or '-'}/{row['s_org'] or '-'} linhas={row['result_rows']}")
+    return len(invalid)
 
 
 def main():
@@ -229,11 +259,13 @@ def main():
     output = args.output or FsPath('results/raw') / f'{date.today().isoformat()}_{args.only}.csv'
     engines, log = EngineCache(args.data), CsvLog(output)
     try:
-        run(exps, engines, log)
+        invalid = run(exps, engines, log, expected_results(workload))
     finally:
         engines.close()
         log.close()
     print(f'{len(exps)} experimentos gravados em {output}')
+    if report_invalid(invalid):
+        raise SystemExit(f'{len(invalid)} linha(s) com valid=False: o relatório fica bloqueado')
 
 
 if __name__ == '__main__':
