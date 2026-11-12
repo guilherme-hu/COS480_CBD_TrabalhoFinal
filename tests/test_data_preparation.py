@@ -84,15 +84,16 @@ print(hashlib.sha256(repr(list(Dataset(.002).records("aluno"))).encode()).hexdig
     assert hash_value('abc', 0) != hash_value('abc', 1)
 
 
-def test_sqlite_integrity_and_subsets(prepared):
+def test_sqlite_integrity_without_subsets(prepared):
     with SQLiteReference(prepared / 'ref.sqlite') as ref:
         assert list(ref.conn.execute('PRAGMA foreign_key_check')) == []
         assert ref.conn.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         for table in BASE_COUNTS:
             assert list(ref.records(table)) == list(Dataset(.002).records(table))
-        assert {r[1] for r in ref.records('aluno_p')} == {r[0] for r in ref.records('detalhes_p')}
-        for table in ('aluno_p', 'turma_p', 'detalhes_p'):
-            assert ref.stats(table, 2048)['estimated_blocks'] <= 62
+        tables = {row[0] for row in ref.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\'")}
+        # Escopo novo (arquitetura §0): só as seis tabelas, sem aluno_p/detalhes_p/turma_p.
+        assert tables == set(BASE_COUNTS)
         assert ref.conn.execute('SELECT COUNT(*) FROM aluno WHERE orientador IS NULL').fetchone()[0] > 0
         with pytest.raises(sqlite3.IntegrityError):
             ref.conn.execute('INSERT INTO inscricao VALUES (999999,1,100,NULL)')
@@ -198,10 +199,34 @@ def test_plan_and_catalog_adapter(prepared):
                 else:
                     assert index['kind'] == IndexKind.BTREE and not index['unique']
                     assert index['column'] != item['org']['key']
+        # P6 §3: só curso, disciplina, aluno e inscricao, nas colunas de join/seleção.
+        assert {v['name'] for v in plan} == {
+            'curso__heap', 'curso__bt_codigo', 'curso__hs_codigo',
+            'disciplina__heap', 'disciplina__bt_curso', 'disciplina__hs_curso',
+            'aluno__heap', 'aluno__bt_dre', 'aluno__hs_dre', 'aluno__bt_curso',
+            'aluno__hs_curso', 'aluno__bt_cr', 'aluno__hs_cr',
+            'inscricao__heap', 'inscricao__bt_dre', 'inscricao__hs_dre',
+            'aluno__bt_dre_inc',
+            'curso__hs_codigo_eq_small_small', 'disciplina__hs_curso_eq_small_small',
+            'curso__hs_codigo_eq_small_large', 'aluno__hs_curso_eq_small_large',
+            'aluno__hs_dre_eq_large_large', 'inscricao__hs_dre_eq_large_large'}
+        for item in plan:
+            org = item['org']
+            if org['org'] == Org.HASH:
+                assert org['params']['expected_records'] == stats[item['source']]['n']
+                if not org['unique']:
+                    assert org['params']['distinct'] == stats[item['source']]['distinct'][org['key']]
         paired = [item for item in plan if '_eq_' in item['name']]
         for r, s in zip(paired[::2], paired[1::2]):
             assert r['org']['params']['seed'] == s['org']['params']['seed']
             assert r['org']['params']['buckets'] == s['org']['params']['buckets']
+            # N comum nunca passa do V(A) do lado NOT UNIQUE (D-P6-01).
+            for side in (r, s):
+                if not side['org']['unique']:
+                    assert r['org']['params']['buckets'] <= side['org']['params']['distinct']
+        plain_seeds = {item['source']: item['org']['params']['seed'] for item in plan
+                       if '__hs_' in item['name'] and '_eq_' not in item['name']}
+        assert len(set(plain_seeds.values())) == len(plain_seeds)
         eng = SimpleNamespace(catalog=FakeCatalog())
         rows = load_physical(eng, ref, plan)
         for item in plan:

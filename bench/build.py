@@ -8,14 +8,33 @@ from pathlib import Path
 import tempfile
 
 from bench.generator import Dataset, BASE_COUNTS, SEEDS
-from bench.schema import SCHEMAS, ACCESS_COLUMNS
+from bench.schema import SCHEMAS, ACCESS_COLUMNS, PHYSICAL_TABLES
 from bench.sqlite_ref import SQLiteReference
 from bench.workload import JOINS, prepare_workload
 from cbd.contracts import Schema, Org, OrgSpec, IndexKind, IndexSpec
 
 
+def _default_buckets(stat, load=.8):
+    """N padrão do P2 §6.1 a partir da blocagem estimada: ceil(n / (bfr · load))."""
+    return max(1, math.ceil(stat['n'] / (max(1, stat['estimated_bfr']) * load)))
+
+
+def _hash_params(table, column, stat, **extra):
+    params = {'expected_records': stat['n'], **extra}
+    if not SCHEMAS[table].get(column).unique:
+        # P2 §6.1: em NOT UNIQUE o HashFile limita N a V(A) para evitar buckets vazios.
+        params['distinct'] = stat['distinct'][column]
+    return params
+
+
 def physical_plan(stats):
-    """Só produz especificações; não depende de P1/P2/P3 já implementados."""
+    """Variantes físicas do escopo (P6 §3). Só produz especificações; não depende de P1/P2/P3.
+
+    Por tabela de PHYSICAL_TABLES: `<t>__heap` (índice secundário em cada coluna de
+    ACCESS_COLUMNS: UNIQUE -> HASH, NOT UNIQUE -> B+), `<t>__bt_<col>` e `<t>__hs_<col>`
+    (índices B+ NOT UNIQUE nas outras colunas NOT UNIQUE). Mais `aluno__bt_dre_inc`
+    (carga incremental, P6 §4.4) e um par hash por join com N e seed iguais (bucket-join).
+    """
     plan = []
 
     def add(table, name, org, column=None, params=None, bulk=True):
@@ -24,25 +43,31 @@ def physical_plan(stats):
         indexes = []
         for col in ACCESS_COLUMNS[table]:
             field = schema.get(col)
+            # Arquitetura §5.3: sobre B+/hash primário só há secundário B+ NOT UNIQUE.
             if org == Org.HEAP or (col != column and not field.unique):
                 kind = IndexKind.HASH if field.unique else IndexKind.BTREE
                 indexes.append(asdict(IndexSpec(name, col, kind, field.unique)))
         plan.append(dict(source=table, name=name, org=asdict(spec), indexes=indexes, bulk=bulk))
 
-    for i, table in enumerate(SCHEMAS):
+    for table in PHYSICAL_TABLES:
+        seed = SEEDS[table]  # seeds distintas entre tabelas: caso "sem bucket-join"
         add(table, f'{table}__heap', Org.HEAP)
         for col in ACCESS_COLUMNS[table]:
             add(table, f'{table}__bt_{col}', Org.BTREE, col, {'fill': .9})
             add(table, f'{table}__hs_{col}', Org.HASH, col,
-                {'expected_records': stats[table]['n'], 'seed': 480 + i, 'load': .8})
+                _hash_params(table, col, stats[table], seed=seed, load=.8))
     add('aluno', 'aluno__bt_dre_inc', Org.BTREE, 'dre', {'fill': .9}, bulk=False)
-    # Uma dupla por join permite o bucket-join do P5 nas três combinações.
     for combo, r, rc, s, sc in JOINS:
-        buckets = max(1, math.ceil(max(
-            stats[t]['n'] / max(1, stats[t]['estimated_bfr']) for t in (r, s)) / .8))
+        # D-P6-01 (provisória): N comum = menor N padrão do par, limitado por V(A)
+        # do lado NOT UNIQUE. O lado pequeno não ganha buckets vazios; o grande
+        # ganha cadeias de overflow com blocos cheios (ver docs/decisoes/P6.md).
+        buckets = min(_default_buckets(stats[r]), _default_buckets(stats[s]))
+        for table, col in ((r, rc), (s, sc)):
+            if not SCHEMAS[table].get(col).unique:
+                buckets = min(buckets, stats[table]['distinct'][col])
         for table, col in ((r, rc), (s, sc)):
             add(table, f'{table}__hs_{col}_eq_{combo}', Org.HASH, col,
-                {'buckets': buckets, 'seed': 480, 'expected_records': stats[table]['n']})
+                _hash_params(table, col, stats[table], buckets=buckets, seed=480))
     return plan
 
 
@@ -113,7 +138,6 @@ def prepare(output, dataset, block_sizes=(2048, 4096, 8192), work_pages=64, forc
                     print(f'Carregando {table}: {dataset.counts[table]} registros', flush=True)
                     ref.load(table, dataset.records(table))
                 ref.add_reference_indexes()
-                courses = ref.subsets(work_pages=work_pages)
             if list(ref.conn.execute('PRAGMA foreign_key_check')):
                 raise ValueError('Falha de integridade referencial')
             if ref.conn.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
@@ -126,9 +150,8 @@ def prepare(output, dataset, block_sizes=(2048, 4096, 8192), work_pages=64, forc
                 reports[block_size] = {table: ref.stats(table, block_size) for table in SCHEMAS}
                 plans[block_size] = physical_plan(reports[block_size])
             schema = {name: asdict(value) for name, value in SCHEMAS.items()}
-            metadata = dict(format_version=1, scale=dataset.scale, rows=dataset.counts, seeds=SEEDS,
-                            overrides=dict(dataset.row_overrides), subset_courses=courses,
-                            subset_block_size=2048, work_pages=work_pages, schema=schema,
+            metadata = dict(format_version=2, scale=dataset.scale, rows=dataset.counts, seeds=SEEDS,
+                            overrides=dict(dataset.row_overrides), work_pages=work_pages, schema=schema,
                             sizes={b: size_checks(s, work_pages) for b, s in reports.items()})
             ref.conn.execute('CREATE TABLE _preparation (metadata TEXT NOT NULL)')
             ref.conn.execute('INSERT INTO _preparation VALUES (?)', (json.dumps(metadata),))
@@ -161,7 +184,8 @@ def main():
     parser.add_argument('--results', type=Path, default=Path('results'),
                         help='Diretório do CSV de estatísticas versionável')
     parser.add_argument('--block-sizes', type=int, nargs='+', default=[2048, 4096, 8192])
-    parser.add_argument('--work-pages', type=int, default=64)
+    parser.add_argument('--work-pages', type=int, default=64,
+                        help='Páginas WORK (M) usadas para conferir se a tabela menor cabe em M-2')
     parser.add_argument('--rows', action='append', default=[], metavar='TABLE=N',
                         help='Ajusta um volume; detalhes sempre acompanha aluno')
     parser.add_argument('--force', action='store_true', help='Recria a preparação lógica existente')

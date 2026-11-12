@@ -36,3 +36,20 @@
 - Testes do adaptador usam dublê do catálogo; isso não constitui validação da
   pilha física, ainda ausente.
 - Contratos e esquemas são comparados aos trechos literais da arquitetura.
+
+## N comum dos pares bucket-join inflava o lado menor — corrigido (08/11, #5)
+
+- Arquivo: `bench/build.py`, `physical_plan`, laço dos pares `_eq_`.
+- Categoria: eficiência / metodologia experimental (afeta a contagem medida).
+- Defeito: a versão gerada pela IA nesta sessão usava `N = max(N_r, N_s)`
+  (limitado por V(A)) para o par hash do bucket-join. Na escala 1, B = 4096,
+  `curso` passaria de ~2 para 34–50 blocos e `aluno` de ~1 962 para ~5 735
+  blocos, quase todos com um bucket meio vazio. O custo do bucket-join é
+  `b_r + b_s`, então esses blocos entrariam direto na medição.
+- Detecção: conta de blocos feita ao escrever o cartão D-P6-01 (antes do commit),
+  comparando as opções com os volumes de `results/base_stats.csv`.
+- Correção: `N = min(N_r, N_s)`, limitado por V(A) do lado NOT UNIQUE. Total
+  estimado no par aluno ⋈ inscricao cai de ~11 470 para ~7 360 blocos.
+- Regressão: `test_plan_and_catalog_adapter` confere N e seed iguais no par e
+  N ≤ V(A). A confirmação física depende da carga real (#14).
+- Status da decisão: provisória (D-P6-01), a rever com o integrante.

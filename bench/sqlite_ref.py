@@ -122,45 +122,10 @@ class SQLiteReference:
                 yield from_sql(schema, row)
 
     def add_reference_indexes(self):
-        # Apenas acelera o oráculo; esses índices não são os índices físicos P2/P3.
-        for table, column in (('aluno', 'curso'), ('aluno', 'orientador'),
-                              ('turma', 'professor'), ('disciplina', 'curso'),
-                              ('inscricao', 'turma')):
+        # Apenas acelera o oráculo e o foreign_key_check; não são os índices físicos P2/P3.
+        for table, column in (('aluno', 'curso'), ('disciplina', 'curso'), ('inscricao', 'turma')):
             self.conn.execute(f'CREATE INDEX {quote("ref_" + table + "_" + column)} '
                               f'ON {quote(table)} ({quote(column)})')
-
-    def subsets(self, block_size=2048, work_pages=64):
-        """Dois últimos cursos, limitados pelo orçamento para ambos os lados UNIQUE.
-
-        Usa o menor bloco suportado, conservando os mesmos dados entre 2/4/8 KiB.
-        A ocupação definitiva deve ser confirmada pelo catálogo físico.
-        """
-        if work_pages < 3:
-            raise ValueError('WORK deve ter pelo menos 3 páginas')
-        # Margem de 20% para folhas B+ com fill=0.9 e metadados.
-        budget = int((work_pages - 2) * (block_size - 28) * .8)
-        courses = [row[0] for row in self.conn.execute('SELECT codigo FROM curso ORDER BY codigo DESC LIMIT 2')]
-        used_a = used_d = 0
-        placeholders = ','.join('?' for _ in courses)
-        for student in self.records('aluno', f'curso IN ({placeholders})', courses):
-            detail = from_sql(SCHEMAS['detalhes'], self.conn.execute(
-                'SELECT * FROM detalhes WHERE cpf=?', (student[1],)).fetchone())
-            sa = record_bytes(SCHEMAS['aluno'], student) + 4
-            sd = record_bytes(SCHEMAS['detalhes'], detail) + 4
-            if used_a + sa > budget or used_d + sd > budget:
-                break
-            self.load('aluno_p', (student,))
-            self.load('detalhes_p', (detail,))
-            used_a += sa
-            used_d += sd
-        used_t = 0
-        for row in self.records('turma', 'professor IN (SELECT orientador FROM aluno_p WHERE orientador IS NOT NULL)'):
-            size = record_bytes(SCHEMAS['turma'], row) + 4
-            if used_t + size > budget:
-                break
-            self.load('turma_p', (row,))
-            used_t += size
-        return courses
 
     def stats(self, table, block_size=4096):
         schema = SCHEMAS[table]
@@ -180,7 +145,7 @@ class SQLiteReference:
             total += size
         distinct = {}
         from bench.schema import ACCESS_COLUMNS
-        for col in ACCESS_COLUMNS[table]:
+        for col in ACCESS_COLUMNS.get(table, ()):
             distinct[col] = self.conn.execute(
                 f'SELECT COUNT(DISTINCT {quote(col)}) FROM {quote(table)}').fetchone()[0]
         return dict(n=n, estimated_blocks=blocks, estimated_bfr=n / blocks if blocks else 0,

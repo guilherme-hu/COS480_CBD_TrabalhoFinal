@@ -1,7 +1,5 @@
 # Base de dados e carga de trabalho
 
-> **Escopo revisado.** Esta preparação foi feita antes da versão nova do enunciado e ainda inclui itens que viraram opcionais e que o grupo não fará: joins tipos 2 (CPF) e 3 (orientador = professor), os subconjuntos `aluno_p`/`detalhes_p`/`turma_p`, faixas em `dre`/`cpf` e a seletividade de 0,1% (agora 1%). O escopo atual está em [`00_ARQUITETURA_GERAL.md`](implementacao/00_ARQUITETURA_GERAL.md) §0 e a pendência de código em [P6 §2.3](implementacao/P6_bancada_relatorio.md).
-
 Esta entrega implementa a preparação dos dados da universidade do enunciado
 (`proposta.pdf`, início e §6.4) e do P6 (§2, §3 e §5), seguindo os tipos e
 interfaces de `00_ARQUITETURA_GERAL.md`. Não executa a matriz de desempenho,
@@ -39,14 +37,15 @@ python3 -m pytest -q
 É possível ajustar volumes com `--rows tabela=N` (repetível). `detalhes`
 sempre acompanha `aluno`, preservando a correspondência por CPF. Para escalas
 minúsculas, `inscricao` é limitada ao número de pares distintos aluno/turma.
-`--work-pages` controla o orçamento dos subconjuntos; mínimo 3.
+`--work-pages` (M, mínimo 3) define o limite usado para conferir se a tabela
+menor cabe em M − 2 páginas.
 
 ## Arquivos produzidos
 
 | Arquivo em `data/prepared/` | Conteúdo |
 | --- | --- |
-| `ref.sqlite` | Seis tabelas completas e três subconjuntos, PKs, UNIQUEs, FKs e índices auxiliares da referência |
-| `manifest.json` | Versão, escala, volumes, seeds, esquemas, cursos dos subconjuntos e adequação estimada dos tamanhos |
+| `ref.sqlite` | Seis tabelas completas, PKs, UNIQUEs, FKs e índices auxiliares da referência |
+| `manifest.json` | Versão, escala, volumes, seeds, esquemas e adequação estimada dos tamanhos |
 | `workload.json` | Três joins, até vinte igualdades UNIQUE, duas faixas em CR e respectivos `(count, checksum)` esperados |
 | `physical_plan_2048.json` / `4096` / `8192` | Variantes heap/B+/hash, índices secundários e parâmetros de carga |
 | `base_stats.csv` | Volumes, tamanho médio previsto do registro, cardinalidades, SHA-256 e blocagem estimada por tamanho de bloco |
@@ -85,12 +84,10 @@ duas casas; cerca de 30% dos orientadores são nulos. Detalhes têm 0–8 itens.
 Endereços usam `rua|numero|bairro|cidade|uf`. Campos e listas respeitam os
 limites em bytes UTF-8 e os tipos do codec planejado.
 
-`aluno_p` seleciona os dois últimos cursos, menos frequentes na distribuição
-Zipf, limitado por um orçamento de bytes. `detalhes_p` contém exatamente os
-CPFs desse subconjunto. Ambos cabem no mesmo orçamento estimado.
-`turma_p` contém somente professores presentes em `aluno_p`, com limite de
-bytes. Usa-se o bloco mínimo de 2048 e margem de 20%, para conservar os
-mesmos subconjuntos entre 2/4/8 KiB. A confirmação definitiva usa `stats()`.
+Não há subconjuntos (`aluno_p`, `detalhes_p`, `turma_p` existiam na versão
+anterior): as tabelas reais já cobrem as três combinações de tamanho
+(arquitetura §0). `turma` e `detalhes` ficam só na base lógica, para integridade
+referencial e para a referência SQLite; não ganham variantes físicas.
 
 Os 10 mil registros de turma originalmente sugeridos não atingem 1280 blocos
 na configuração-base. Por isso, a base final usa 100 mil turmas, documentadas
@@ -138,10 +135,14 @@ de P2, nunca `hash()` do Python. Os hashes não substituem a contagem de linhas.
 `bench.build.load_physical(eng, ref, plan)` usa exclusivamente `Catalog` para
 criar tabelas, carregar iteradores e construir os índices após a carga.
 Cada variante recebe `Schema` com seu próprio nome, mantendo campos idênticos.
-Há heap com índices UNIQUE→HASH e NOT UNIQUE→B+, B+/hash por cada coluna
-relevante e índices B+ NOT UNIQUE nas outras colunas permitidas.
+As variantes cobrem só `curso` (`codigo`), `disciplina` (`curso`), `aluno`
+(`dre`, `curso`, `cr`) e `inscricao` (`dre`). Para cada tabela há heap com
+índices UNIQUE→HASH e NOT UNIQUE→B+, B+ e hash por cada uma dessas colunas e
+índices B+ NOT UNIQUE nas outras colunas permitidas (23 variantes no total).
 Há também `aluno__bt_dre_inc` com carga incremental e um par hash com
-`buckets` e `seed` iguais para cada consulta de join (`_eq_<tamanho>`).
+`buckets` e `seed` iguais para cada join (`_eq_<tamanho>`). O N comum do par é
+o menor N padrão das duas tabelas, limitado pelo V(A) do lado NOT UNIQUE
+(D-P6-01, provisória). Toda variante hash NOT UNIQUE recebe `distinct = V(A)`.
 As variantes hash comuns têm seeds distintas entre tabelas, permitindo
 comparar também o caso sem particionamento compatível.
 
@@ -162,8 +163,3 @@ um diretório novo para reconstruir bases físicas.
 a carga física depende dessas entregas. Nenhuma contagem experimental foi
 simulada. O adaptador foi verificado com um dublê do contrato do catálogo;
 medidas e reabertura com outras políticas precisam da pilha real.
-
-Para os joins tipos 2 e 3, os planos seguem a interpretação já registrada
-no P6: a coluna pode determinar a organização física mesmo não sendo a PK
-lógica. A eventual confirmação dessa interpretação com o professor fica
-para a bancada/relatório do grupo.
