@@ -44,3 +44,7 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    - #5: removidos subconjuntos e variantes fora do escopo (23 variantes);
      `distinct = V(A)` nas variantes hash NOT UNIQUE; regra do N comum dos pares
      bucket-join (D-P6-01, provisória). Defeito da 1ª versão registrado em `review.md`.
+   - #7: docstrings no `Engine` e `tests/test_engine.py` com dublês da camada 4.
+     Teste de mutação manual: inverter a ordem de `cold()` (zerar antes do
+     `clear`) faz 2 testes falharem. O teste com a pilha real fica `skip` até
+     P1/P2 estarem no `main`.
