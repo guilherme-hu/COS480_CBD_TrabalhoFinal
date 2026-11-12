@@ -8,7 +8,7 @@ import pytest
 
 from bench.matrix import join_experiments, select_experiments
 from bench.report import (CHAPTERS, REPORT_DIR, _schematic_workload, base_section, build_pdf,
-                          generate, matrix_section, members)
+                          cover, generate, matrix_section, members)
 
 
 def test_cover_has_every_member_with_dre():
@@ -17,6 +17,9 @@ def test_cover_has_every_member_with_dre():
     assert [part for _, _, part in rows] == ['P1', 'P2', 'P3', 'P4', 'P5', 'P6']
     assert all(len(dre) == 9 and dre.isdigit() for _, dre, _ in rows)
     assert ('Bernardo Brandão Pozzato C. Costa', '123289593', 'P6') in rows
+    # Os nomes vão no `author` do YAML: saem na página de título, antes do sumário.
+    header = cover('README.md').split('---')[1]
+    assert 'author:' in header and all(f'DRE {dre}' in header for _, dre, _ in rows)
 
 
 def test_base_tables_come_from_base_stats(tmp_path):

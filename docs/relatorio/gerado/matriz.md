@@ -13,7 +13,7 @@ Contada a partir de `bench/matrix.py`.
 Total: 117 linhas de junção (3 combinações de tamanho × 3 algoritmos × 13 configurações físicas), mais 4 com o lado externo ou construtor forçado.
 
 
-| Seleção | Caminho | Linhas |
+| Seleção | Configuração | Linhas |
 | :--- | :--- | ---: |
 | eq_unique | a | 20 |
 | eq_unique | b | 40 |

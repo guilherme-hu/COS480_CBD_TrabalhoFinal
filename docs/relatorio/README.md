@@ -5,6 +5,7 @@ Fonte em Markdown, montada em PDF pelo pandoc (motor `tectonic` ou `xelatex`).
 ```sh
 python -m bench.report          # regenera gerado/ (capa, tabelas da base, matriz)
 python -m bench.report --pdf    # e monta relatorio.pdf nesta pasta
+python -m bench.report --capa   # só a folha de rosto (capa.pdf), para os demais integrantes postarem (§7.3)
 ```
 
 - `0N_*.md`: capítulos escritos à mão, na ordem de `CHAPTERS` em `bench/report.py`.

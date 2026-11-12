@@ -7,7 +7,7 @@ lista que já existe em outro lugar é gerado aqui, para nunca ser redigitado:
   de bloco e a conferência dos tamanhos dos joins, lidos de `base_stats.csv`;
 - metodologia: composição da matriz contada a partir de `bench.matrix`.
 
-Uso: `python -m bench.report [--stats results/base_stats.csv] [--pdf]`.
+Uso: `python -m bench.report [--stats results/base_stats.csv] [--pdf] [--capa]`.
 Grava `docs/relatorio/gerado/*.md`; com `--pdf`, monta `docs/relatorio/relatorio.pdf`
 com pandoc (motor tectonic ou xelatex). Não lê nem mede nada do SGBD.
 """
@@ -41,14 +41,15 @@ def members(readme):
 
 
 def cover(readme):
+    """Folha de rosto (enunciado §7.3). Os integrantes vão no `author` do pandoc para
+    sair na página de título, ANTES do sumário (com `--toc` o corpo vem depois dele)."""
     lines = ['---',
              'title: "Avaliação 2 — Indexação e Processamento de Consultas"',
              'subtitle: "COS480 Construção de Banco de Dados — Grupo 3 — UFRJ, 2026.2"',
-             'lang: pt-BR',
-             '---', '',
-             '| Integrante | DRE | Parte |', '| :--- | :---: | :---: |']
-    lines += [f'| {name} | {dre} | {part} |' for name, dre, part in members(readme)]
-    return '\n'.join(lines) + '\n\n\\newpage\n'
+             'author:']
+    lines += [f'  - "{name} — DRE {dre} ({part})"' for name, dre, part in members(readme)]
+    lines += ['lang: pt-BR', '---', '']
+    return '\n'.join(lines) + '\n'
 
 
 def read_stats(path):
@@ -135,7 +136,7 @@ def matrix_section():
              f'externo ou construtor forçado.']
     selects = select_experiments(_schematic_workload())
     by_type = Counter((e.sel_type, e.config) for e in selects)
-    parts += ['\n', _table(['Seleção', 'Caminho', 'Linhas'],
+    parts += ['\n', _table(['Seleção', 'Configuração', 'Linhas'],
                            [(t, c, n) for (t, c), n in sorted(by_type.items())], numeric=(2,)),
               f'\nTotal: {len(selects)} linhas de seleção ({EQ_SAMPLES} igualdades em `dre` e '
               f'{len(CR_RANGES)} faixas em `cr`).']
@@ -151,14 +152,19 @@ def generate(stats, readme='README.md', out_dir=REPORT_DIR):
     return target
 
 
-def build_pdf(out_dir=REPORT_DIR, output='relatorio.pdf'):
-    """pandoc + motor LaTeX. LIMITAÇÃO: precisa de pandoc e tectonic (ou xelatex) instalados."""
+def build_pdf(out_dir=REPORT_DIR, output='relatorio.pdf', cover_only=False):
+    """pandoc + motor LaTeX. LIMITAÇÃO: precisa de pandoc e tectonic (ou xelatex) instalados.
+
+    `cover_only`: só a folha de rosto (`capa.pdf`), que os demais integrantes postam
+    no lugar do relatório (enunciado §7.3).
+    """
     engine = next((e for e in ('tectonic', 'xelatex') if shutil.which(e)), None)
     if not shutil.which('pandoc') or engine is None:
         raise RuntimeError('instale pandoc e tectonic (ou xelatex) para gerar o PDF')
     out_dir = Path(out_dir)
-    subprocess.run(['pandoc', *CHAPTERS, '-o', output, f'--pdf-engine={engine}',
-                    '-V', 'geometry:margin=2.5cm', '--toc'],
+    sources = [CHAPTERS[0]] if cover_only else [*CHAPTERS, '--toc']
+    subprocess.run(['pandoc', *sources, '-o', output, f'--pdf-engine={engine}',
+                    '-V', 'geometry:margin=2.5cm'],
                    cwd=out_dir, check=True)
     return out_dir / output
 
@@ -167,10 +173,13 @@ def main():
     parser = argparse.ArgumentParser(description='Gera as partes automáticas do relatório e, opcionalmente, o PDF.')
     parser.add_argument('--stats', type=Path, default=Path('results/base_stats.csv'))
     parser.add_argument('--pdf', action='store_true', help='monta docs/relatorio/relatorio.pdf com pandoc')
+    parser.add_argument('--capa', action='store_true', help='monta só a folha de rosto em docs/relatorio/capa.pdf')
     args = parser.parse_args()
     print('partes geradas em', generate(args.stats))
     if args.pdf:
         print('PDF em', build_pdf())
+    if args.capa:
+        print('folha de rosto em', build_pdf(output='capa.pdf', cover_only=True))
 
 
 if __name__ == '__main__':

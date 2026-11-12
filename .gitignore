@@ -9,4 +9,4 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
-docs/relatorio/relatorio.pdf
+docs/relatorio/*.pdf
