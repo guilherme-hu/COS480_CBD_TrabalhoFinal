@@ -160,3 +160,89 @@ achados abaixo foram reproduzidos antes da correção (teste que falhava).
   saía errado e a seletividade virava `0`.
 - Detecção: `test_select_series_averages_the_20_dres` (KeyError em `'0.01'`).
 - Correção: separa pelo último ponto (`rsplit('.', 1)`).
+
+## Revisão independente da pilha #24/#22/#23/#6/#19/#3/#8 (12/11)
+
+Três revisores (subagentes de contexto limpo, só leitura) com focos de
+corretude, aderência ao contrato e qualidade dos testes. Cada achado abaixo foi
+reproduzido pelo agente antes de ser aceito (testes do revisor em scratchpad:
+8 falhando antes da correção; mutações aplicadas numa cópia: 18 de 21 sobreviviam).
+Código bruto: `ai/P6/raw/compare_cost_v1.py`, `plots_v1.py`, `report_v1.py`,
+`matrix_factors_v1.py`.
+
+### Linha com resultado errado entrava no estimado × medido e nas figuras (#22/#23)
+- Arquivos: `bench/compare_cost.py` (`compare`), `bench/plots.py` (`join_series`, `select_series`).
+- Categoria: corretude (validação ignorada).
+- Defeito: `summarize` grava a tentativa com `status='ok'` e `valid='False'`; os dois
+  módulos filtravam só por `status`. Uma junção errada com `io.reads = est.reads`
+  saía "dentro da tolerância" e virava barra normal no gráfico.
+- Detecção: revisores de corretude e de contrato (P6 §5: `False` bloqueia o relatório).
+- Correção: linha inválida não é comparada nem desenhada; vai para a lista de
+  pendências com motivo "resultado inválido" e aparece como "INVÁLIDO" na figura.
+
+### Motivo de uma métrica "explicava" a diferença da outra (#22)
+- Arquivo: `bench/compare_cost.py` (`explained = within or bool(why)`).
+- Categoria: corretude (regra larga demais).
+- Defeito: bastava uma regra disparar para a linha inteira contar como explicada.
+  Ex.: leituras 3× acima do estimado e gravações abaixo saíam como "páginas
+  temporárias descartadas", fora da lista de não explicadas.
+- Correção: motivos separados para leituras e gravações; a linha só é explicada se
+  cada métrica fora da tolerância tiver o próprio motivo.
+
+### Regra da faixa valia para o SCAN e a de recursão para qualquer recursão (#22)
+- Arquivo: `bench/compare_cost.py` (`reasons`).
+- Categoria: corretude (regra larga demais).
+- Defeito: "distribuição não uniforme" explicava qualquer diferença na faixa, até no
+  SCAN (custo `b_r`, que não depende da distribuição); `levels > 0` explicava toda
+  recursão como skew, inclusive a esperada com WORK = 16 (o P6 §7 diz "recursão
+  inesperada").
+- Correção: a regra da faixa só vale em caminho por índice/organização; recursão só
+  explica se o operador marcar `skew_fallback` ou `variant` com skew.
+
+### Regra "altura da B+ ≠ esperada" lia chaves que nenhum contrato define (#22)
+- Arquivo: `bench/compare_cost.py` (`info['height']`, `info['expected_height']`).
+- Categoria: contrato (aderência).
+- Defeito: nenhum operador de P4/P5 põe essas chaves em `info`; a regra nunca dispara.
+- Correção: não corrigida aqui (depende de P3/P4). Registrada como pendência da #36.
+  Enquanto isso, diferenças de B+ vão para "não explicadas" (lado conservador).
+
+### Linha 'ok' sem `io.reads` derrubava a comparação (#22)
+- Defeito: `close(None, x)` dava `TypeError`. Correção: vai para pendências como "sem medida".
+
+### Erro de operador aparecia como "N/A" e N/A sumia nas seleções (#23)
+- Arquivo: `bench/plots.py`.
+- Defeito: `'N/A' if status != 'ok'` juntava `error`/`nondeterministic` com N/A
+  legítimo; `select_series` descartava N/A e erro em silêncio (P6 §10).
+- Correção: célula com o status (`N/A`, `ERRO`, `INVÁLIDO`) nas duas figuras.
+
+### `areas_for_block` podia zerar áreas ou perder bytes (#6)
+- Arquivo: `bench/matrix.py`. Defeito: divisão inteira; com B = 65536 CATALOG = 0.
+- Correção: `ValueError` se o bloco não divide a memória da área.
+
+### Testes que não provavam o que diziam (#19, #23, #6, #3)
+- `test_each_factor_row_changes_only_its_factor` descartava a política e o teste do
+  WORK usava a própria `areas_for_block` como esperado (remover o `work` passava).
+- `test_one_command_writes_every_figure` só conferia que o PNG existe: barra com o
+  estimado no lugar do medido passava.
+- `test_size_checks_use_areas_of_each_block_size` nunca exercitava o WORK escalado.
+- **Erro do agente nesta sessão (#3):** `test_signature_detects_swapped_duplicate_with_same_count`
+  passava com XOR no lugar da soma, e `test_heap_order_is_not_key_order` aceitava
+  uma ordem decrescente (tão agrupada quanto a crescente).
+- Correção: testes reescritos com valores literais, comparação de todos os campos
+  da linha e métrica de agrupamento.
+
+### Afirmações erradas nos cartões (#3)
+- **Erro do agente nesta sessão:** a D-P6-05 dizia que o XOR "não detecta duplicata".
+  Com uma duplicata o XOR detecta; ele só ignora multiplicidade par. E, como o
+  resultado esperado é um conjunto (PKs únicas), XOR + contagem também seria
+  completo. A vantagem real da soma é valer para multiconjuntos. Cartão reescrito.
+- D-P6-03 dava valores esperados da Zipf como se fossem da base (real: 6 192 e 441);
+  D-P6-04 subestimava a lista (~18 GB com os ponteiros); D-P6-07 citava um teste que
+  não confere o CPF. Corrigidos.
+
+### Descartados
+- "matplotlib ausente, `test_plots` pulado": falso; matplotlib 3.11 está no `.venv`
+  e o teste roda (os pulados são o do Engine real e o do PDF).
+- "Fronteira da faixa sem limite de magnitude": é questão de projeto, não bug.
+  A regra agora só vale em caminho por índice; o limite de magnitude fica para
+  debate com o integrante.

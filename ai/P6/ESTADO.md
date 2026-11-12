@@ -5,7 +5,10 @@ Branches locais empilhadas sobre o `main`, **ainda não enviadas**:
 `p6/24-esqueleto-relatorio` → `p6/22-estimado-medido` → `p6/23-figuras` →
 `p6/6-memoria-constante` → `p6/19-fatores` → `p6/3-cartoes-gerador` →
 `p6/8-clustering`.
-Suíte na ponta da pilha: 79 passaram, 2 pulados (testes que precisam da pilha real).
+Suíte: cada branch da pilha passa sozinha (64 → 89 testes); na ponta, 89 passaram e 2
+pulados (o do Engine com a pilha real e o do PDF, que roda com `REPORT_PDF=1`).
+Revisão independente de 12/11 tratada (`ai/P6/review.md`); backups das branches
+anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
 
 ## Pronto (com teste que prova)
 - Carga de trabalho no escopo novo (#4): `test_all_workload_results_against_python`.
@@ -79,6 +82,17 @@ Suíte na ponta da pilha: 79 passaram, 2 pulados (testes que precisam da pilha r
   dos `exp_id` desses experimentos. Cores: slots 1–3 da paleta de referência.
 
 - #19: "os scans" do guia §4.4 foram lidos como as faixas em `cr` pelo caminho a (1% e 50%); a igualdade por scan ficou de fora (20 DREs repetiriam o mesmo scan). O toss também roda no BNL maior ⋈ maior, config a.
+
+## Pendências da revisão de 12/11
+- Regra "altura da B+ ≠ esperada" do `compare_cost` nunca dispara: nenhum contrato
+  põe `height`/`expected_height` em `info`. Combinar com P3/P4 na #36.
+- Regra da faixa ("distribuição não uniforme") não tem limite de magnitude: debater
+  com o integrante se 50× ainda deve contar como explicada.
+- Nome do P6 na capa vem abreviado do README ("C. Costa"); o §7.3 pede nome
+  completo. Confirmar também a grafia "Rizawinsk" (P3).
+- Números de configuração digitados em `03_base.md`/`04_metodologia.md` (áreas,
+  "~34%"): não são resultado, mas podem divergir de `BASE_AREAS` sem teste.
+- Tabela estimado × medido ainda não vai para `docs/relatorio/gerado/` (#26).
 
 ## Decisões provisórias a rever
 - D-P6-03 a D-P6-08 (#3, 12/11): seeds/distribuições, Feistel, soma de hashes,
