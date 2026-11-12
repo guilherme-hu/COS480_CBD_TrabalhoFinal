@@ -137,35 +137,26 @@ def test_all_workload_results_against_python(prepared):
 
 def test_heap_order_is_not_key_order(prepared):
     # D-P6-04/D-P6-06: a ordem exportada do SQLite (que vira a ordem física do heap)
-    # não pode ser a da chave; senão todo índice secundário na chave vira clustering.
+    # não pode ser agrupada pela chave, nem crescente nem decrescente; senão todo
+    # índice secundário na chave vira clustering. Numa permutação aleatória, cerca de
+    # metade dos pares vizinhos é crescente; ordenada dá ~1 (ou ~0 se decrescente).
     with SQLiteReference(prepared / 'ref.sqlite') as ref:
         for table, column in (('aluno', 'dre'), ('inscricao', 'dre')):
             keys = [row[SCHEMAS[table].idx(column)] for row in ref.records(table)]
-            assert keys != sorted(keys)
-            # Quase nenhum par vizinho em ordem crescente estrita de 1 em 1 (DRE sequencial).
-            steps = sum(b == a + 1 for a, b in zip(keys, keys[1:]))
-            assert steps < len(keys) // 10
+            rising = sum(b > a for a, b in zip(keys, keys[1:])) / (len(keys) - 1)
+            assert .35 < rising < .65, (table, rising)
 
 
-def test_signature_detects_swapped_duplicate_with_same_count(prepared):
-    # D-P6-05: trocar uma tupla por uma duplicata de outra mantém a contagem.
-    # A soma detecta (o XOR também detectaria aqui, mas não uma duplicata pura:
-    # x ^ x = 0); por isso a soma, e não o XOR.
+def test_checksum_is_a_sum_so_it_sees_multiplicity(prepared):
+    # D-P6-05: [r1, r1] e [r2, r2] têm a mesma contagem e o mesmo XOR (zero), mas
+    # somas diferentes. O teste falha se o checksum virar XOR.
     workload = json.loads((prepared / 'workload.json').read_text())
-    query = next(q for q in workload if q.get('sel_type') == 'range_nonunique'
-                 and q['expected']['count'] >= 2)
+    query = next(q for q in workload if q.get('sel_type') == 'range_nonunique')
     with SQLiteReference(prepared / 'ref.sqlite') as ref:
-        index = SCHEMAS['aluno'].idx('cr')
-        rows = [row for row in ref.records('aluno') if row[index] >= query['value']] \
-            if query['operator'] == '>=' else \
-            [row for row in ref.records('aluno') if row[index] <= query['value']]
-    expected = (query['expected']['count'], query['expected']['checksum'])
-    assert output_signature(query, rows) == expected
-    swapped = rows[:-1] + rows[:1]
-    count, checksum = output_signature(query, swapped)
-    assert count == expected[0] and checksum != expected[1]
-    pure_dup = output_signature(query, rows + rows[:1])
-    assert pure_dup[1] != expected[1]
+        r1, r2 = list(ref.records('aluno'))[:2]
+    assert output_signature(query, [r1, r1]) != output_signature(query, [r2, r2])
+    # Trocar uma tupla por outra também muda o checksum com a mesma contagem.
+    assert output_signature(query, [r1, r2])[1] != output_signature(query, [r1, r1])[1]
 
 
 def test_null_join_and_duplicate_multiplicity():
