@@ -97,3 +97,55 @@ def test_operators_referenced_by_name_only():
     for exp in join_experiments():
         assert exp.cost_fn == JOIN_ALGORITHMS[exp.op]
         assert exp.query_id == f'join_{exp.size_combo}'
+
+
+@pytest.fixture(scope='module')
+def workload(tmp_path_factory):
+    import json
+    from bench.build import prepare
+    from bench.generator import Dataset
+    folder = tmp_path_factory.mktemp('wl')
+    prepare(folder, Dataset(.002))
+    return json.loads((folder / 'workload.json').read_text())
+
+
+def test_select_matrix_counts(workload):
+    from bench.matrix import select_experiments
+    exps = select_experiments(workload)
+    eq = [e for e in exps if e.sel_type == 'eq_unique']
+    rng = [e for e in exps if e.sel_type == 'range_nonunique']
+    # 20 DREs × (SCAN, B+, hash, SECONDARY).
+    assert len(eq) == 20 * 4
+    # 2 seletividades × (SCAN, B+, hash e SECONDARY sobre heap, B+ e hash, cada
+    # SECONDARY sem e com sort_ptrs). Enunciado §4.2: o B+ secundário "clustering"
+    # em campo NOT UNIQUE também é método de acesso de B+ e hash primários.
+    assert len(rng) == 2 * 9
+    assert Counter((e.config, e.args['table'].org) for e in rng) == {
+        ('a', 'HEAP'): 2, ('b', 'BTREE'): 2, ('b', 'HASH'): 2,
+        ('c', 'HEAP'): 4, ('c', 'BTREE'): 4, ('c', 'HASH'): 4}
+    assert sorted(e.sort_ptrs for e in rng if e.config == 'c') == [False] * 6 + [True] * 6
+    assert len({e.exp_id for e in exps}) == len(exps)
+
+
+def test_select_values_come_from_workload(workload, plan_by_name):
+    from bench.matrix import select_experiments
+    queries = {q['id']: q for q in workload}
+    for e in select_experiments(workload):
+        q = queries[e.query_id]
+        assert e.selectivity == q['selectivity']
+        if e.op == 'select_eq':
+            assert e.args['value'] == q['value']
+        else:
+            bound = e.args['lo'] if q['operator'] == '>=' else e.args['hi']
+            other = e.args['hi'] if q['operator'] == '>=' else e.args['lo']
+            assert (bound, other) == (q['value'], None)
+        side = e.args['table']
+        item = plan_by_name[side.variant]
+        assert e.args['path'] == side.path
+        if side.path == Path.PRIMARY:
+            assert item['org']['key'] == side.column
+        if side.path == Path.SECONDARY:
+            index = next(i for i in item['indexes'] if i['column'] == side.column)
+            if side.org != 'HEAP':
+                # Sobre B+/hash primário, só B+ NOT UNIQUE (arquitetura §5.3).
+                assert (index['kind'], index['unique']) == ('BTREE', False)
