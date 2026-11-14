@@ -150,3 +150,13 @@ achados abaixo foram reproduzidos antes da correção (teste que falhava).
 - Correção: no resume, confere o cabeçalho contra `COLUMNS` e descarta a última
   linha incompleta; `CsvLog` troca quebras de linha por espaço (uma linha do CSV
   é sempre uma linha do arquivo).
+
+## `exp_id` de faixa com ponto quebrava a leitura das figuras (09/11, #23)
+
+- Arquivo: `bench/plots.py`, `select_series` (bruto em `ai/P6/raw/plots_v1.py`).
+- Categoria: correção (parsing).
+- Defeito: o código gerado separava o `exp_id` com `split('.')`, mas o id da
+  consulta de faixa tem ponto (`select.range_cr_0.01.a_scan`); o rótulo do caminho
+  saía errado e a seletividade virava `0`.
+- Detecção: `test_select_series_averages_the_20_dres` (KeyError em `'0.01'`).
+- Correção: separa pelo último ponto (`rsplit('.', 1)`).
