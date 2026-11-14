@@ -100,3 +100,19 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    atribuídas a `bepo7` (#3–#36). Push da branch e PR #75 do `AGENTS.md`.
 
 3. Pedido do usuário: registrar esta sessão aqui (esta entrada).
+
+4. Pedido do usuário: "veja os comentarios deixados nos PRs abertos e resolva".
+
+   Resultado: achados do P2 nos PRs #28, #32, #33, #35 e #75 corrigidos com teste
+   que falhava antes (registro em `review.md`); pilha rebaseada. Force-push
+   bloqueado pela permissão do modo automático: fica com o integrante.
+   D-P6-01 (#29) aguarda debate com P2 e P5.
+
+5. Pedido do usuário: "pode seguir essa ordem" (#24, depois #22 e #23).
+
+   - #24: esqueleto do relatório em `docs/relatorio/` e `bench/report.py`
+     (capa do README, tabelas de `base_stats.csv`, contagem da matriz). Bruto em
+     `ai/P6/raw/report_v1.py`. Refinamentos depois do primeiro PDF: decimal com
+     vírgula, alinhamento das colunas de texto, contagem de seleções sem depender
+     de base preparada, fonte forçada que não existia no tectonic, símbolo ⋈ sem
+     glifo na fonte padrão (trocado por `$\bowtie$`).
