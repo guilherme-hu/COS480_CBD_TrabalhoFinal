@@ -116,3 +116,6 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
      vírgula, alinhamento das colunas de texto, contagem de seleções sem depender
      de base preparada, fonte forçada que não existia no tectonic, símbolo ⋈ sem
      glifo na fonte padrão (trocado por `$\bowtie$`).
+   - #22: `bench/compare_cost.py` (razão medido/estimado, motivos por regra do
+     P6 §7, lista de não explicadas). Bruto em `ai/P6/raw/compare_cost_v1.py`;
+     a versão bruta passou nos testes sem refinamento.
