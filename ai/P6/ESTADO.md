@@ -1,10 +1,11 @@
-# Estado da parte P6 — atualizado em 09/11
+# Estado da parte P6 — atualizado em 12/11
 
-Branches locais empilhadas (nenhuma enviada ao GitHub ainda):
-`p6/4-workload-escopo` → `p6/5-variantes-escopo` → `p6/7-engine-testes` →
-`p6/9-matriz-joins` → `p6/10-matriz-selecoes` → `p6/11-protocolo-medicao` →
-`p6/12-validacao-sqlite` → `p6/13-repeticoes-resume`.
-Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
+PRs #28–#35 (#4–#13) já mesclados no `main` em 12/11.
+Branches locais empilhadas sobre o `main`, **ainda não enviadas**:
+`p6/24-esqueleto-relatorio` → `p6/22-estimado-medido` → `p6/23-figuras` →
+`p6/6-memoria-constante` → `p6/19-fatores` → `p6/3-cartoes-gerador` →
+`p6/8-clustering`.
+Suíte na ponta da pilha: 79 passaram, 2 pulados (testes que precisam da pilha real).
 
 ## Pronto (com teste que prova)
 - Carga de trabalho no escopo novo (#4): `test_all_workload_results_against_python`.
@@ -12,6 +13,8 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - Engine documentado e testado com dublês (#7): `tests/test_engine.py`.
 - Matriz: 117 joins + 4 de lado forçado (#9) e 98 seleções (#10: 80 igualdades + 18 faixas, com o B+ secundário clustering sobre B+ e hash): `tests/test_matrix.py`.
 - Experimentos de fator único (#19): `factor_experiments` (bloco, toss, prefetch, WORK; 70 linhas), `--only factors`: `test_factor_matrix_counts`, `test_each_factor_row_changes_only_its_factor`.
+- Cartões retroativos do gerador e da referência (#3): D-P6-03 a D-P6-08, `test_heap_order_is_not_key_order`, `test_signature_detects_swapped_duplicate_with_same_count`.
+- Volumes (#6): D-P6-02, `test_size_checks_use_areas_of_each_block_size`.
 - Protocolo de medição, CSV §6.3, validação SQLite, repetições, `--resume`,
   `summary.csv` (#11, #12, #13): `tests/test_run.py`.
 
@@ -19,8 +22,6 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - Nada pela metade.
 
 ## Falta
-- #3 cartões retroativos das decisões do gerador (debate com o integrante).
-- #6 decisão sobre volumes (aluno em B = 8192 abaixo de 1 280 blocos).
 - #8 pergunta ao professor sobre "índice secundário clustering".
 - #14 carga física real, #15 integração ponta a ponta: dependem de P1–P5 no `main`.
 - #16, #17 experimentos de justificativa (#19 já tem a lista; falta medir com a pilha real); #18 revisores independentes;
@@ -80,6 +81,8 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - #19: "os scans" do guia §4.4 foram lidos como as faixas em `cr` pelo caminho a (1% e 50%); a igualdade por scan ficou de fora (20 DREs repetiriam o mesmo scan). O toss também roda no BNL maior ⋈ maior, config a.
 
 ## Decisões provisórias a rever
+- D-P6-03 a D-P6-08 (#3, 12/11): seeds/distribuições, Feistel, soma de hashes,
+  `INT` no SQLite, CPF sintético, JSON/ISO. Retroativas, adotadas sem debate.
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
   O P2 pediu (PR #29) para ele e o P5 participarem da revisão.
 
