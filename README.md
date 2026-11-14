@@ -41,8 +41,8 @@ python3 -m bench.build --scale 0.1
 python3 -m pytest -q
 ```
 
-Para a base final calibrada: `python3 -m bench.build --scale 1 --rows turma=100000`.
-Os comandos geram os dados universitários, subconjuntos, consultas com respostas
+Para a base final: `python3 -m bench.build --scale 1`.
+Os comandos geram os dados universitários, consultas com respostas
 SQLite e planos de carga heap/B+/hash em `data/prepared/`, além de
 `results/base_stats.csv`. Use `--force` para recriar uma preparação existente.
 
