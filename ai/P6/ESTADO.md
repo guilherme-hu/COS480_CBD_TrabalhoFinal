@@ -94,6 +94,15 @@ anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
   "~34%"): não são resultado, mas podem divergir de `BASE_AREAS` sem teste.
 - Tabela estimado × medido ainda não vai para `docs/relatorio/gerado/` (#26).
 
+## Achados da revisão do PR #2 (P1) que afetam o P6 (13/11)
+- O fator prefetch (#19) usa os scans de faixa, mas num scan de um arquivo só o
+  prefetch não muda `io.reads` nem `io.seeks` (medido: 20 leituras e 1 seek com
+  prefetch 0 ou 8); só troca misses por hits (17 de 20 viram hits, o que infla
+  `bp.hit_rate`). O efeito em seeks só aparece com acessos intercalados (ex.: BNL).
+  Rever com o integrante quais linhas o fator prefetch deve repetir.
+- O prefetch só liga se o dono do arquivo chamar `bp.allow_prefetch(fid, DATA)`;
+  o guia do P2 não cita essa chamada. Sem ela o fator prefetch mede zero efeito.
+
 ## Decisões provisórias a rever
 - D-P6-03 a D-P6-08 (#3, 12/11): seeds/distribuições, Feistel, soma de hashes,
   `INT` no SQLite, CPF sintético, JSON/ISO. Retroativas, adotadas sem debate.
