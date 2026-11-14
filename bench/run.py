@@ -415,11 +415,12 @@ def report_invalid(invalid):
 
 
 def main():
-    from bench.matrix import join_experiments, select_experiments
+    from bench.matrix import factor_experiments, join_experiments, select_experiments
     parser = argparse.ArgumentParser(description='Roda a matriz de experimentos e grava o CSV bruto.')
     parser.add_argument('--data', type=FsPath, default=FsPath('data/prepared'),
                         help='Pasta de bench.build (workload.json e db_<B>k/ da carga física)')
-    parser.add_argument('--only', choices=('joins', 'selects', 'all'), default='all')
+    parser.add_argument('--only', choices=('joins', 'selects', 'factors', 'all'), default='all',
+                        help='factors = experimentos de fator único (P6 §4.4)')
     parser.add_argument('--output', type=FsPath, default=None, help='CSV de saída (padrão results/raw/<data>_<only>.csv)')
     parser.add_argument('--resume', action='store_true',
                         help='Continua um CSV existente: pula exp_id/rep já gravados (rodada que caiu)')
@@ -432,6 +433,8 @@ def main():
         exps += join_experiments()
     if args.only in ('selects', 'all'):
         exps += select_experiments(workload)
+    if args.only in ('factors', 'all'):
+        exps += factor_experiments(workload)
     output = args.output or FsPath('results/raw') / f'{date.today().isoformat()}_{args.only}.csv'
     if read_rows(output) and not args.resume:
         parser.error(f'{output} já tem linhas; use --resume para continuar sem duplicar')

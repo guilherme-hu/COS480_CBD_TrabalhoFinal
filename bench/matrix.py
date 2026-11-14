@@ -12,10 +12,12 @@ mais as linhas com lado externo/construtor forçado. `r` é sempre o mestre.
 Seleções: igualdade em aluno.dre (20 valores) e faixa em aluno.cr (1% e 50%),
 nos caminhos a (SCAN), b (PRIMARY em B+ e em hash) e c (SECONDARY; na faixa,
 também o B+ secundário sobre os arquivos B+ e hash, enunciado §4.2).
+Experimentos de fator único (P6 §4.4, `factor_experiments`): repetem consultas da
+matriz principal mudando um único fator (bloco, toss-immediate, prefetch, WORK).
 Combinações que o operador recusar (NotApplicable) continuam na lista: o
 orquestrador grava a linha com status N/A e o motivo, nunca a omite.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from bench.workload import JOINS
@@ -203,4 +205,53 @@ def select_experiments(workload):
                     algorithm=operator, sel_type=q['sel_type'], selectivity=q['selectivity'],
                     path=side.path.value, sort_ptrs=sort_ptrs,
                     policy=POLICY_BY_ALGORITHM[operator], query_id=q['id']))
+    return out
+
+
+# Experimentos de fator único (P6 §4.4, issue #19). Níveis do guia; a base é o nível
+# do meio (B = 4096, toss off, prefetch 0, WORK = 64). PENDENTE: o PR do P1
+# (branch Arquivos_Buffer_Pool, cartões D-P1-09 toss e D-P1-12 prefetch) ainda não
+# está no main; se um desses fatores não entrar, as linhas dele viram N/A com motivo
+# (critério da #19), em vez de sumir.
+BLOCK_SIZES = (2048, 4096, 8192)
+TOSS_LEVELS = (False, True)
+PREFETCH_LEVELS = (0, 8)
+WORK_LEVELS = (16, 64, 256)
+
+
+def factor_experiments(workload):
+    """70 linhas: cada uma é uma linha da matriz principal com um fator mudado.
+
+    exp_id = `factor.<fator>_<nível>.<exp_id da matriz>`, para o resto da linha
+    (operador, lados, consulta esperada) ser rastreável até a matriz principal.
+    - bloco: joins nos 3 tamanhos × 3 algoritmos, configs a e c_btree, áreas com a
+      mesma memória em bytes (D-P6-02): 3 × 18 = 54;
+    - toss-immediate: os scans (faixa em cr, caminho a, 1% e 50%) e o BNL maior ⋈
+      maior em config a: 2 × 3 = 6;
+    - prefetch: os scans de seleção (o efeito aparece em io.seeks): 2 × 2 = 4;
+    - WORK: sort-merge e hash join maior ⋈ maior em config a: 3 × 2 = 6.
+    O nível-base de cada fator também é medido, para a série de cada figura sair de
+    uma mesma rodada.
+    """
+    joins = {e.exp_id: e for e in join_experiments()}
+    scans = [e for e in select_experiments(workload)
+             if e.sel_type == 'range_nonunique' and e.path == Path.SCAN.value]
+
+    def row(exp, factor, level, **change):
+        return replace(exp, exp_id=f'factor.{factor}_{level}.{exp.exp_id}', **change)
+
+    out = []
+    block_joins = [joins[f'join.{combo}.{label}.{alg}'] for combo, *_ in JOINS
+                   for label in ('a', 'c_btree') for alg in JOIN_ALGORITHMS]
+    for b in BLOCK_SIZES:
+        out += [row(e, 'block', b, block_size=b, areas=areas_for_block(b)) for e in block_joins]
+    for toss in TOSS_LEVELS:
+        level = 'on' if toss else 'off'
+        out += [row(e, 'toss', level, toss=toss) for e in (*scans, joins['join.large_large.a.nl_join'])]
+    for k in PREFETCH_LEVELS:
+        out += [row(e, 'prefetch', k, prefetch=k) for e in scans]
+    for work in WORK_LEVELS:
+        out += [row(joins[f'join.large_large.a.{alg}'], 'work', work,
+                    areas=areas_for_block(BASE_BLOCK_SIZE, work=work))
+                for alg in ('sort_merge_join', 'hash_join')]
     return out
