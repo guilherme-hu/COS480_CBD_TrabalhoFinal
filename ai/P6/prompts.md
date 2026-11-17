@@ -179,3 +179,11 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    `cold()`, `snapshot()` com todas as colunas do CSV, `eng.M`, contadores por área
    e reabertura com MRU. Nenhum comentário no GitHub sem o ok do integrante.
    Erro do agente na sonda: supôs blocos a partir de 0; o contrato diz bno ≥ 1.
+
+2. Pedido do usuário (17/11): "faz tudo o que der (mas da pull na main antes)".
+
+   Resultado: `main` sem mudanças desde 12/11. D-P6-10 (provisória): fator prefetch
+   passa a repetir também o INL maior ⋈ maior (`b_s_btree`), com os scans como
+   controle; pilha #80–#82 rebaseada localmente (o force-push foi bloqueado pelo
+   modo automático e ficou para o integrante autorizar). Comentário no PR #2 com
+   os achados de consumidor e issue nova para o P2 (`allow_prefetch`).

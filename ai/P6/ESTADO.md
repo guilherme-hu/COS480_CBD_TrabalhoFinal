@@ -1,7 +1,7 @@
-# Estado da parte P6 — atualizado em 12/11
+# Estado da parte P6 — atualizado em 17/11
 
 PRs #28–#35 (#4–#13) já mesclados no `main` em 12/11.
-Branches locais empilhadas sobre o `main`, **ainda não enviadas**:
+PRs empilhados abertos em 13/11 (#76–#82), um por branch, na ordem:
 `p6/24-esqueleto-relatorio` → `p6/22-estimado-medido` → `p6/23-figuras` →
 `p6/6-memoria-constante` → `p6/19-fatores` → `p6/3-cartoes-gerador` →
 `p6/8-clustering`.
@@ -99,7 +99,7 @@ anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
   prefetch não muda `io.reads` nem `io.seeks` (medido: 20 leituras e 1 seek com
   prefetch 0 ou 8); só troca misses por hits (17 de 20 viram hits, o que infla
   `bp.hit_rate`). O efeito em seeks só aparece com acessos intercalados (ex.: BNL).
-  Rever com o integrante quais linhas o fator prefetch deve repetir.
+  Resolvido provisoriamente pela D-P6-10 (17/11): scans como controle + INL.
 - O prefetch só liga se o dono do arquivo chamar `bp.allow_prefetch(fid, DATA)`;
   o guia do P2 não cita essa chamada. Sem ela o fator prefetch mede zero efeito.
 
@@ -108,6 +108,8 @@ anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
   `INT` no SQLite, CPF sintético, JSON/ISO. Retroativas, adotadas sem debate.
 - D-P6-09 (#8, 12/11): "secundário clustering" = ponteiros agrupados por chave
   (arquitetura §5.3), à espera da resposta do professor. Nenhuma leitura muda a matriz.
+- D-P6-10 (#19, 17/11): fator prefetch = scans de faixa (controle) + INL maior ⋈ maior
+  com externo em heap. Depende de o P2 chamar `allow_prefetch` (issue aberta).
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
   O P2 pediu (PR #29) para ele e o P5 participarem da revisão.
 
