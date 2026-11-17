@@ -11,7 +11,7 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - Plano físico com as 23 variantes do escopo (#5): `test_plan_and_catalog_adapter`.
 - Engine documentado e testado com dublês (#7): `tests/test_engine.py`.
 - Matriz: 117 joins + 4 de lado forçado (#9) e 98 seleções (#10: 80 igualdades + 18 faixas, com o B+ secundário clustering sobre B+ e hash): `tests/test_matrix.py`.
-- Experimentos de fator único (#19): `factor_experiments` (bloco, toss, prefetch, WORK; 70 linhas), `--only factors`: `test_factor_matrix_counts`, `test_each_factor_row_changes_only_its_factor`.
+- Experimentos de fator único (#19): `factor_experiments` (bloco, toss, prefetch, WORK; 72 linhas, D-P6-10), `--only factors`: `test_factor_matrix_counts`, `test_each_factor_row_changes_only_its_factor`.
 - Protocolo de medição, CSV §6.3, validação SQLite, repetições, `--resume`,
   `summary.csv` (#11, #12, #13): `tests/test_run.py`.
 

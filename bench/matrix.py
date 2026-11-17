@@ -220,7 +220,7 @@ WORK_LEVELS = (16, 64, 256)
 
 
 def factor_experiments(workload):
-    """70 linhas: cada uma é uma linha da matriz principal com um fator mudado.
+    """72 linhas: cada uma é uma linha da matriz principal com um fator mudado.
 
     exp_id = `factor.<fator>_<nível>.<exp_id da matriz>`, para o resto da linha
     (operador, lados, consulta esperada) ser rastreável até a matriz principal.
@@ -228,7 +228,9 @@ def factor_experiments(workload):
       mesma memória em bytes (D-P6-02): 3 × 18 = 54;
     - toss-immediate: os scans (faixa em cr, caminho a, 1% e 50%) e o BNL maior ⋈
       maior em config a: 2 × 3 = 6;
-    - prefetch: os scans de seleção (o efeito aparece em io.seeks): 2 × 2 = 4;
+    - prefetch: os scans de seleção como controle (um arquivo só: sem efeito em
+      io.seeks) e o INL maior ⋈ maior com o externo em heap (b_s_btree), em que o
+      scan do externo se intercala com as buscas no índice: 2 × 3 = 6 (D-P6-10);
     - WORK: sort-merge e hash join maior ⋈ maior em config a: 3 × 2 = 6.
     O nível-base de cada fator também é medido, para a série de cada figura sair de
     uma mesma rodada.
@@ -249,7 +251,10 @@ def factor_experiments(workload):
         level = 'on' if toss else 'off'
         out += [row(e, 'toss', level, toss=toss) for e in (*scans, joins['join.large_large.a.nl_join'])]
     for k in PREFETCH_LEVELS:
-        out += [row(e, 'prefetch', k, prefetch=k) for e in scans]
+        # D-P6-10: o prefetch só economiza seeks se o scan for intercalado com outro
+        # arquivo; os scans puros ficam como controle (ver docs/decisoes/P6.md).
+        out += [row(e, 'prefetch', k, prefetch=k)
+                for e in (*scans, joins['join.large_large.b_s_btree.nl_join'])]
     for work in WORK_LEVELS:
         out += [row(joins[f'join.large_large.a.{alg}'], 'work', work,
                     areas=areas_for_block(BASE_BLOCK_SIZE, work=work))

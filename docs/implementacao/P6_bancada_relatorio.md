@@ -162,7 +162,7 @@ O relatório tem de justificar **todas** as escolhas comparando com as preterida
 | **política de substituição** (obrigatório) | as implementadas pelo P1 (LRU e MRU; Clock e FIFO ficaram de fora pela D-P1-08, PR #2) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
 | tamanho de bloco | 2048, 4096, 8192, com as áreas escaladas para a **mesma memória em bytes** (`areas_for_block`, D-P6-02) | joins (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
 | toss-immediate | off/on | os scans e o BNL |
-| prefetch | 0, 8 | os scans (o efeito aparece em `io.seeks`) |
+| prefetch | 0, 8 | os scans de faixa como controle (um arquivo só: o prefetch não muda `io.reads` nem `io.seeks`) e o INL maior ⋈ maior com o externo em heap, em que o scan do externo se intercala com as buscas no índice e o efeito aparece em `io.seeks` (D-P6-10) |
 | memória (`WORK`) | 16, 64, 256 | sort-merge e hash join grandes (passadas, recursão) |
 | bulk × incremental | `bulk=True/False` | ocupação e altura da B+ e tempo de carga (indicador §6.1.1) |
 | carga de manutenção (obrigatório, indicador §6.1.1) | +10% inserts, −10% deletes aleatórios via `Table` | `stats()` de dados e índices antes e depois (indicador §6.1.1) |

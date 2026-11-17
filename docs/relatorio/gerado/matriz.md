@@ -29,7 +29,7 @@ Total: 98 linhas de seleção (20 igualdades em `dre` e 2 faixas em `cr`).
 | :--- | ---: |
 | tamanho de bloco | 54 |
 | toss-immediate | 6 |
-| prefetch | 4 |
+| prefetch | 6 |
 | memória WORK | 6 |
 
-Total: 70 linhas de fator único, cada uma igual a uma linha da matriz principal com um só fator mudado.
+Total: 72 linhas de fator único, cada uma igual a uma linha da matriz principal com um só fator mudado.

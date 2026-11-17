@@ -184,8 +184,9 @@ def test_factor_matrix_counts(workload):
     by_factor = Counter(e.exp_id.split('.')[1].rsplit('_', 1)[0] for e in exps)
     # bloco: 3 tamanhos de bloco × 3 combinações × (a, c_btree) × 3 algoritmos = 54;
     # toss: 2 níveis × (2 scans de seleção + BNL maior ⋈ maior) = 6;
-    # prefetch: 2 níveis × 2 scans de seleção = 4; WORK: 3 níveis × (SMJ, HJ) = 6.
-    assert by_factor == {'block': 54, 'toss': 6, 'prefetch': 4, 'work': 6}
+    # prefetch: 2 níveis × (2 scans de controle + INL maior ⋈ maior) = 6 (D-P6-10);
+    # WORK: 3 níveis × (SMJ, HJ) = 6.
+    assert by_factor == {'block': 54, 'toss': 6, 'prefetch': 6, 'work': 6}
     assert len({e.exp_id for e in exps}) == len(exps)
     from bench.matrix import join_experiments, select_experiments
     main_ids = {e.exp_id for e in join_experiments() + select_experiments(workload)}
@@ -249,5 +250,5 @@ def test_factor_rows_are_the_queries_of_the_guide(workload):
     assert rows['block'] == {('join', c, cfg, a, '') for c in combos for cfg in ('a', 'c_btree') for a in algs}
     scans = {('select', '', 'a', 'select_range', 'range_nonunique')}
     assert rows['toss'] == scans | {('join', 'large_large', 'a', 'nl_join', '')}
-    assert rows['prefetch'] == scans
+    assert rows['prefetch'] == scans | {('join', 'large_large', 'b_s_btree', 'nl_join', '')}
     assert rows['work'] == {('join', 'large_large', 'a', a, '') for a in ('sort_merge_join', 'hash_join')}
