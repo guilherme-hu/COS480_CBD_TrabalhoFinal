@@ -79,3 +79,13 @@ as seleções, preservando os critérios de memória, custo e verificação fís
 O registro foi criado em `PENDENCIAS_EXTERNAS.md`. Na branch consultada,
 `cbd/exec/access.py` estava disponível e `external_sort.py` e `selection.py`
 ainda não existiam.
+
+## 18/11/2026 — Seleções e nested-loop
+
+Ferramenta: Codex (GPT-6).
+
+> Continue o que ficou pendente da etapa 3 e 4 [...] Implementar a variante em blocos e a indexada. Debater como `outer="auto"` escolhe o lado externo e usar a mesma regra na execução e na estimativa.
+
+A branch da #59 parte do commit local da #54. A #58, que tem sua própria
+branch local, é independente para esta tarefa e ainda aguarda implementação.
+O integrante escolheu a heurística proposta no guia para `outer="auto"` na #60.

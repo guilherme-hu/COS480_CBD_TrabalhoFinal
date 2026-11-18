@@ -128,18 +128,18 @@ Registros esperados:
 | A1 scan | `b_r` (igualdade UNIQUE: `b_r / 2` em média) |
 | A2 B+ primário, igualdade na chave UNIQUE | `h` |
 | A3 B+ primário, igualdade NOT UNIQUE | `h − 1 + ⌈n / f_r⌉` |
-| Hash primário, igualdade | `1 + overflow_blocks / buckets` (UNIQUE); para NOT UNIQUE, os blocos da cadeia do bucket ≈ `1 + overflow_blocks / buckets` mais `⌈n / f_r⌉ − 1` se os iguais transbordarem |
+| Hash primário, igualdade | `1 + overflow_blocks / buckets` (UNIQUE); para NOT UNIQUE, somar `⌈n / f_r⌉ − 1` quando positivo e limitar pelo máximo de `1 + overflow_blocks` blocos em uma cadeia |
 | A4 secundário, igualdade (B+) | `h_i + (blocos da posting) + n · fetch_cost` |
 | A4 secundário, igualdade (Hash) | `1 + overflow/buckets + n · fetch_cost` |
 | A5 B+ primário, faixa | `h − 1 + ⌈n / f_r⌉` |
-| A6 secundário, faixa | `h_i − 1 + (folhas do índice na faixa) + n · fetch_cost` |
+| A6 secundário, faixa | `h_i − 1 + (folhas do índice na faixa) + (blocos estimados de listas de ponteiros) + n · fetch_cost` |
 | A6 com `sort_ptrs` | idem, trocando `n · fetch_cost` por `b_r · (1 − (1 − 1/b_r)^n)` (Cardenas) |
 
 Seeks (`Cost.seeks`): scan = 1; descida de árvore = 1 por nível; cada `fetch` aleatório = 1. Preencha `Cost.formula` com o texto e os números (ex.: `"A3: h-1+ceil(n/f) = 3-1+ceil(100/25) = 6"`). O P6 joga isso direto no relatório.
 
 ### 4.3 Parâmetro de seletividade
 
-A bancada escolhe `lo`/`hi` para obter 1% e 50% (§5.2.2 do enunciado). A estimativa pela uniformidade pode errar se a distribuição não for uniforme (ex.: CR). **Não corrija isso no custo**: o erro vira análise no relatório. Se `info` vier com `"sel"`, preencha **também** `Cost` com o `n` real numa segunda linha da fórmula, para mostrar as duas.
+A bancada escolhe `lo`/`hi` para obter 1% e 50% (§5.2.2 do enunciado). A estimativa pela uniformidade pode errar para CR. O estimador atual recebe os limites, enquanto a seletividade real e `sort_ptrs` ficam nos dados do experimento. A estimativa ajustada para `sort_ptrs` e o encaminhamento dos argumentos dependem de alinhamento na #36.
 
 ---
 

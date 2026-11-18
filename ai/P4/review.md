@@ -51,3 +51,34 @@
   quebraria o `RID` de heap/hash e a tupla da B+ (arquitetura §5.4).
 - **Correção:** usar os dois formatos de ponteiro nos dublês de índice e
   verificar que `fetch` recebe cada ponteiro no formato original.
+
+## 18/11/2026 — Seleções (#59)
+
+- **Faixa em B+ e nulos** (`raw/selection_v1.py`, `_primary_range` e
+  `_secondary`). A revisão observou que a varredura exclui nulos e os
+  adaptadores de faixa dependiam de o cursor também fazer isso. Um dublê que
+  entrega a chave nula reproduz saída incompatível com o filtro SQL. A
+  seleção deve aplicar a mesma regra de nulos em todos os caminhos.
+- **Extremo inclusivo na estimativa** (`_range_share`). Uma faixa como
+  `cr >= max(cr)` era estimada sem resultados porque o intervalo recortado
+  tinha largura zero. A consulta pode encontrar o máximo. O caso pontual
+  deve usar a média de registros por valor distinto quando o extremo pertence
+  ao intervalo.
+- **Listas de ponteiros no custo secundário** (`select_range_cost`). A
+  revisão de I/O mostrou que o modelo contava folhas e fetches, mas fora
+  das folhas o índice também precisa ler listas de ponteiros. O modelo
+  deve incluir a proporção estimada de `overflow_blocks` no intervalo.
+- **Contrato da bancada.** A revisão confirmou que passar `sort_ptrs` aos
+  estimadores da arquitetura resulta em `TypeError`. O ajuste entre partes
+  permanece na #36 e em `PENDENCIAS_EXTERNAS.md`.
+- **Limite de overflow no hash NOT UNIQUE** (`select_eq_cost`). A média
+  de overflow somada ao espaço dos repetidos estimava cinco leituras para
+  um único balde com dois blocos de overflow. A estimativa da cadeia fica
+  limitada pelo total de blocos que uma cadeia pode ter.
+- **Indicador de ordenação sem resultados** (`_report`). A revisão confirmou
+  que uma faixa vazia aparecia como `sort_ptrs_applied=True` mesmo sem montar
+  lote. O indicador deve começar falso e mudar ao produzir uma linha do lote.
+- **Cobertura de despacho e lotes.** A revisão dos testes apontou que trocar
+  uma igualdade indexada por varredura ainda devolveria a mesma tupla, e que
+  ordenar somente o primeiro lote passaria na comparação por conjunto.
+  Os testes passam a exigir as chamadas exatas e a ordem de todos os lotes.

@@ -21,9 +21,14 @@
 ## Em andamento
 
 - Aceites entre partes estão listados em [Pendências externas](PENDENCIAS_EXTERNAS.md).
-- A #58 está em debate de projeto. Falta escolher o limite dos lotes e o
-  número de entradas na última fusão antes de implementar. A #59 vem depois,
-  com o alinhamento de `sort_ptrs` registrado como pendência externa.
+- Decisão da #58 confirmada pelo integrante: bytes codificados e última
+  fusão com até `M` entradas. Implementação ainda pendente na branch da #58.
+- #59 implementada localmente na branch `p4/59-selecoes`, com matriz de
+  caminhos e estimativas em `tests/test_selection.py`. A revisão reproduziu
+  e corrigiu falhas com nulos, extremos inclusivos e estimativas de overflow.
+  A suíte teve 115 aprovações e três testes pulados. I/O físico e passagem
+  de `sort_ptrs` pela bancada continuam em aberto.
+- Na #60, o integrante escolheu a heurística do guia para `outer="auto"`.
 - Conforme orientação do integrante, manter em aberto os aceites que
   dependem de P1–P3, P5 ou P6 sem acesso. A parte implementável e testável
   localmente da #54 está concluída. O aceite físico continua pendente.
@@ -59,7 +64,7 @@
 | §5.1 nested-loop em blocos e configurações a–e | Matriz em `bench/matrix.py`; `cbd/exec/nested_loop.py` pendente | `test_config_paths_match_architecture` prova a matriz. Testes do operador pendentes. |
 | §5.1 orientação externa/interna e combinações de tamanho | Casos em `bench/workload.py` e `bench/matrix.py`; escolha no operador pendente | `test_join_matrix_size` prova a quantidade de casos, inclusive os de lados forçados. Contagens físicas pendentes. |
 | §5.1 sort-merge, etapa de ordenação da P4 | `cbd/exec/external_sort.py` pendente | Pendente. |
-| §5.2 igualdade em `dre` e faixa em `cr`, caminhos a–c | Matriz em `bench/matrix.py`; `cbd/exec/selection.py` pendente | `test_select_matrix_counts` e `test_select_values_come_from_workload` provam a matriz. Testes do operador pendentes. |
+| §5.2 igualdade em `dre` e faixa em `cr`, caminhos a–c | `cbd/exec/selection.py` e `bench/matrix.py` | `test_select_eq_matrix`, `test_select_range_matrix`, `test_sort_ptrs_batches_and_closes_early`, `test_select_costs_use_documented_block_models`. I/O real e ajustes na bancada pendentes. |
 | §5 comparação com implementação de referência | `bench/sqlite_ref.py` e `bench/run.py` já disponíveis | `test_validation_detects_extra_or_missing_tuple_without_touching_counters` cobre a validação da bancada. Integração com operadores reais pendente. |
 
 ## Desvios ou dúvidas sobre o contrato
