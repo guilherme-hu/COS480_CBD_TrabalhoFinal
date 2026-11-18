@@ -82,3 +82,7 @@
   uma igualdade indexada por varredura ainda devolveria a mesma tupla, e que
   ordenar somente o primeiro lote passaria na comparação por conjunto.
   Os testes passam a exigir as chamadas exatas e a ordem de todos os lotes.
+- **Cobertura de `close()` e custo de igualdade secundária.** Remover o
+  fechamento explícito passava porque o dublê era destruído no CPython.
+  O teste guarda uma referência ao cursor e verifica que foi liberado.
+  A estimativa A4 agora é conferida tanto para hash quanto para B+.

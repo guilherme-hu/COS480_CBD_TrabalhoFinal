@@ -181,15 +181,19 @@ def test_null_equality_and_non_unique_scan():
     assert list(select_eq(None, t, "cr", 7.0, Path.SCAN)) == [ROWS[1], ROWS[3]]
 
 
-def test_sort_ptrs_batches_and_closes_early():
+def test_sort_ptrs_batches_and_closes_early(monkeypatch):
     eng = SimpleNamespace(M=1, bp=FakeBuffer())
     t = table(Org.HEAP, index=("cr", IndexKind.BTREE))
     ix = t.indexes["cr"]
     info = {}
-    with closing(select_range(eng, t, "cr", None, None, path=Path.SECONDARY, sort_ptrs=True, info=info)) as rows:
-        assert next(rows) == ROWS[3]
-        assert ix.yielded == 2  # Um frame de 16 bytes comporta dois RIDs de 8 bytes.
-        assert eng.bp.reserved == 1
+    # A referência local impede que a destruição automática feche o cursor.
+    source = ix.range(None, None, True, True)
+    with monkeypatch.context() as patch:
+        patch.setattr(ix, "range", lambda *bounds: source)
+        with closing(select_range(eng, t, "cr", None, None, path=Path.SECONDARY, sort_ptrs=True, info=info)) as rows:
+            assert next(rows) == ROWS[3]
+            assert ix.yielded == 2  # Um frame de 16 bytes comporta dois RIDs de 8 bytes.
+            assert eng.bp.reserved == 1
     assert ix.active == eng.bp.reserved == 0
     result = list(select_range(eng, t, "cr", None, None, path=Path.SECONDARY, sort_ptrs=True, info=info))
     assert result == [ROWS[3], ROWS[1], ROWS[0], ROWS[4], ROWS[5]]
@@ -237,6 +241,10 @@ def test_select_costs_use_documented_block_models():
     assert select_eq_cost(None, table(Org.BTREE, "dre"), "dre", 2, Path.PRIMARY).reads == 3
     assert select_eq_cost(None, table(Org.HASH, "dre"), "dre", 2, Path.PRIMARY).reads == 1.5
     assert select_eq_cost(None, table(Org.BTREE, "cr"), "cr", 7.0, Path.PRIMARY).reads == 3
+    hashed = table(Org.HEAP, index=("dre", IndexKind.HASH))
+    assert select_eq_cost(None, hashed, "dre", 2, Path.SECONDARY).reads == 2.5
+    by_cr = table(Org.HEAP, index=("cr", IndexKind.BTREE))
+    assert select_eq_cost(None, by_cr, "cr", 7.0, Path.SECONDARY).reads == pytest.approx(2 + 2 / 3 + 2)
     assert select_range_cost(None, table(Org.BTREE, "cr"), "cr", 7.0, 8.0, path=Path.PRIMARY).reads == 4
     indexed = table(Org.BTREE, "dre", index=("cr", IndexKind.BTREE))
     # Um nó interno + duas folhas + metade dos 2 blocos de ponteiros
