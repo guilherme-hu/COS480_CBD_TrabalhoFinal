@@ -17,6 +17,15 @@
 - Suíte após a implementação em `p4/54-adaptador-acesso`: 90 passaram e
   2 foram pulados. Ambos exigem `cbd.storage.buffer_pool`. Nenhuma medição
   física da P4 foi executada.
+- #64, estresse local concluído com cinco casos aprovados e dois físicos
+  pulados. SQLite confirmou 600 tuplas da junção, a ordem da disciplina e
+  o caso histórico do BNL com uma passada a menos após a correção.
+  [Relatório de estresse](stress.md).
+- #67, pacote local consolidado na branch `p4/67-fechamento`. A suíte
+  completa teve 166 aprovações e 10 pulados pela pilha real. O resumo das
+  decisões, [post-mortem](post_mortem.md), guia de estudo, prompts, bruto e
+  histórico de revisão estão preservados. As verificações de dependências
+  e acesso a disco não retornaram violações.
 
 ## Em andamento
 
@@ -60,10 +69,15 @@
 
 ## Falta
 
-- Integração da #54, #58, #59 e #60. Execução da #64 e fechamento da #67
-  ainda pendentes. O guia P4 §9 traz a sequência e os bloqueios.
-- Medições de blocos com a pilha real, revisão do código e evidências para
-  o relatório de IA conforme os componentes forem implementados.
+- Aceites físicos de #54, #58, #59, #60 e #64. A tentativa isolada da #64
+  com camada 4 do PR #2 passou pelos cinco casos locais e pulou os dois
+  físicos pela falta de `cbd.files.catalog`.
+- P5 consumir a ordenação. P6 ajustar `sort_ptrs` nos estimadores das
+  variantes secundárias e executar a matriz. O carregador da bancada
+  resolveu as seis funções de seleção, nested-loop e custo. O teste de
+  assinatura reproduziu `TypeError` ao passar `sort_ptrs` aos dois custos.
+- Aceite da #67 no `main`, publicação conforme condição do integrante e
+  integração do post-mortem da P4 na consolidação do grupo (#72).
 
 ## Requisitos do enunciado cobertos
 
@@ -74,12 +88,13 @@
 | §5.1 orientação externa/interna e combinações de tamanho | `cbd/exec/nested_loop.py`, `bench/workload.py`, `bench/matrix.py` | `test_outer_choice_and_cost_use_the_same_plan` prova a escolha local e `test_join_matrix_size` prova as configurações da bancada. |
 | §5.1 sort-merge, etapa de ordenação da P4 | `cbd/exec/external_sort.py` | `test_external_sort_small_M`, `test_external_sort_final_pass_accepts_all_m_inputs`, `test_external_sort_two_interleaved_sorts_share_the_budget`. Aceite físico pendente. |
 | §5.2 igualdade em `dre` e faixa em `cr`, caminhos a–c | `cbd/exec/selection.py` e `bench/matrix.py` | `test_select_eq_matrix`, `test_select_range_matrix`, `test_sort_ptrs_batches_and_closes_early`, `test_select_costs_use_documented_block_models`. I/O real e ajustes na bancada pendentes. |
-| §5 comparação com implementação de referência | `bench/sqlite_ref.py` e `bench/run.py` já disponíveis | `test_validation_detects_extra_or_missing_tuple_without_touching_counters` cobre a validação da bancada. Integração com operadores reais pendente. |
+| §5 comparação com implementação de referência | `bench/sqlite_ref.py`, `bench/run.py` e `tests/stress/test_p4_stress.py` | `test_p4_bnl_stress_sqlite_and_work_limit` compara tuplas inteiras e assinatura. `test_p4_sort_stress_sqlite_and_work_limit` compara o sort com SQLite. Bancada física pendente. |
+| §7.2.3 comparação entre bruto e revisado em estresse | `ai/P4/raw/`, `ai/P4/stress.md` e `ai/P4/post_mortem.md` | `test_p4_historical_bnl_extra_pass` e `test_p4_bnl_stress_sqlite_and_work_limit` observam passadas e pico do lote. Transferências físicas pendentes. |
 
 ## Desvios ou dúvidas sobre o contrato
 
-- A P6 passa `sort_ptrs` ao estimador de faixa, fora de sua assinatura
-  oficial. Alinhar na #36.
+- A P6 passa `sort_ptrs` aos estimadores de igualdade e faixa nas linhas
+  secundárias, fora de suas assinaturas oficiais. Alinhar na #36.
 - O guia da P5 referencia `_bfr_from_sample`, auxiliar privado fora da
   arquitetura §7.1. A integração precisa combinar como compartilhar esse cálculo.
 
