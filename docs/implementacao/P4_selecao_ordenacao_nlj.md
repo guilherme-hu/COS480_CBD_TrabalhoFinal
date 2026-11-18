@@ -231,13 +231,20 @@ Use `M = mem or eng.M`, igual ao operador. Com `b = n_blocks` e `P = ⌈log_{M�
 | Situação | Variante | Externo |
 | :--- | :--- | :--- |
 | nenhum lado com caminho (config. a) | **block** (BNL) | o de **menos blocos** (`b_r`) |
-| só um lado com `can_lookup` (b, d com 1 indexado) | **indexed** (INL) | o lado **sem** caminho; o indexado é o interno |
+| só um lado com `can_lookup` (b) | **indexed** (INL) | o lado **sem** caminho; o indexado é o interno |
 | os dois com caminho (c, d, e) | **indexed** | o de **menos registros** (`n_r`), porque o custo é `b_ext + n_ext · c` |
 | `outer="r"` / `"s"` forçado | indexed se o interno tiver caminho, senão block | o indicado |
 
 Registre em `info`: `variant`, `outer` ("r"/"s"), `outer_blocks`, `passes` (iterações do laço externo no BNL).
 
 ### 6.2 BNL
+
+A decisão D-P4-02 complementa o pseudocódigo abaixo. A média `bfr` impõe um
+limite de quantidade. O tamanho de cada registro codificado e seu slot
+impõem o limite de ocupação por página, sem dividir uma linha entre páginas.
+O registro que abre o próximo lote permanece no cursor de entrada enquanto
+o lote anterior é processado. Compare `info["passes"]` com as passadas do
+modelo, que usa os blocos do arquivo de dados.
 
 ```python
 with bp.reserve_work(M - 2) as k:                  # bloco externo: M-2 páginas
@@ -273,6 +280,13 @@ O `lookup` cria um gerador por registro externo, e cada um faz pin/unpin. Feche-
 | :--- | :--- |
 | block | `⌈b_ext / (M − 2)⌉ · b_int + b_ext`; seeks `2⌈b_ext / (M − 2)⌉` |
 | indexed | `b_ext + n_ext · c`, com `c` = custo de uma busca de igualdade no interno pelo caminho dele (use `select_eq_cost(..., path)` do interno, com `n` = registros por chave = `n_int / V(col, int)`) |
+
+No BNL implementado, o número de lotes estimado considera também o teto
+da arquitetura em registros. Seja `L = floor((M−2) × n_ext / b_ext)`
+(no mínimo 1). Para exterior não vazio, use o maior valor entre
+`ceil(b_ext/(M−2))` e `ceil(n_ext/L)`. A soma ainda é estimada porque o
+empacotamento variável por bytes pode mudar as passadas e o buffer pode
+reusar páginas entre varreduras.
 
 O custo usa a **mesma** regra de escolha do externo que o operador (§6.1). Extraia a regra para uma função `_plan(eng, r, s, outer)` usada pelos dois, para que não divirjam.
 

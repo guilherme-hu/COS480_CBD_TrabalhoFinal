@@ -29,6 +29,11 @@
   A suíte teve 115 aprovações e três testes pulados. I/O físico e passagem
   de `sort_ptrs` pela bancada continuam em aberto.
 - Na #60, o integrante escolheu a heurística do guia para `outer="auto"`.
+  Também confirmou o limite por bytes codificados. As duas variantes e a
+  estimativa foram implementadas em `p4/60-nested-loop`, com revisão em quatro
+  focos e testes locais. A suíte teve 140 aprovações e seis testes pulados
+  pela ausência da pilha física. Leituras frias do BNL e INL, comparação
+  LRU × MRU e a cobertura de BNL na matriz a–e aguardam as partes externas.
 - Conforme orientação do integrante, manter em aberto os aceites que
   dependem de P1–P3, P5 ou P6 sem acesso. A parte implementável e testável
   localmente da #54 está concluída. O aceite físico continua pendente.
@@ -61,8 +66,8 @@
 | Enunciado § | Onde está | Teste que prova |
 | :--- | :--- | :--- |
 | §5.1 a–e, leitura das entradas e buscas diretas | `cbd/exec/access.py`, chamado pelos futuros joins | `test_access_paths`, `test_scan_always_reads_physical_order` e `test_incompatible_paths_raise_before_opening_a_cursor` provam a lógica com dublês. Teste físico pendente. |
-| §5.1 nested-loop em blocos e configurações a–e | Matriz em `bench/matrix.py`; `cbd/exec/nested_loop.py` pendente | `test_config_paths_match_architecture` prova a matriz. Testes do operador pendentes. |
-| §5.1 orientação externa/interna e combinações de tamanho | Casos em `bench/workload.py` e `bench/matrix.py`; escolha no operador pendente | `test_join_matrix_size` prova a quantidade de casos, inclusive os de lados forçados. Contagens físicas pendentes. |
+| §5.1 nested-loop em blocos e indexado | `cbd/exec/nested_loop.py` | `test_block_preserves_multiplicity_nulls_and_orientation`, `test_indexed_preserves_multiplicity_and_orientation` e `test_indexed_supports_secondary_on_either_side`. I/O físico e BNL a–e na matriz pendentes. |
+| §5.1 orientação externa/interna e combinações de tamanho | `cbd/exec/nested_loop.py`, `bench/workload.py`, `bench/matrix.py` | `test_outer_choice_and_cost_use_the_same_plan` prova a escolha local e `test_join_matrix_size` prova as configurações da bancada. |
 | §5.1 sort-merge, etapa de ordenação da P4 | `cbd/exec/external_sort.py` pendente | Pendente. |
 | §5.2 igualdade em `dre` e faixa em `cr`, caminhos a–c | `cbd/exec/selection.py` e `bench/matrix.py` | `test_select_eq_matrix`, `test_select_range_matrix`, `test_sort_ptrs_batches_and_closes_early`, `test_select_costs_use_documented_block_models`. I/O real e ajustes na bancada pendentes. |
 | §5 comparação com implementação de referência | `bench/sqlite_ref.py` e `bench/run.py` já disponíveis | `test_validation_detects_extra_or_missing_tuple_without_touching_counters` cobre a validação da bancada. Integração com operadores reais pendente. |

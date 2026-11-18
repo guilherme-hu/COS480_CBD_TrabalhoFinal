@@ -86,3 +86,31 @@
   fechamento explícito passava porque o dublê era destruído no CPython.
   O teste guarda uma referência ao cursor e verifica que foi liberado.
   A estimativa A4 agora é conferida tanto para hash quanto para B+.
+
+## 18/11/2026 — Nested-loop (#60)
+
+- **Passadas subestimadas quando o limite por registros é arredondado**
+  (`raw/nested_loop_v1.py`, `_block` e `nl_join_cost`). A revisão encontrou
+  um caso com quatro linhas em três blocos, `M = 3` e `bfr = 4/3`. O lote
+  aceita no máximo um registro e o operador varre o interno quatro vezes,
+  mas a estimativa do livro previa três. O custo deve usar o máximo entre
+  a conta por blocos e a conta por registros, com o mesmo limite de lote.
+  A ocupação variável por bytes ainda pode fazer o medido divergir.
+- **Arredondamento binário do limite médio** (`raw/nested_loop_v1.py`,
+  `_block`). Com 501 linhas em 62 páginas, `int(62 × (501/62))` pode dar
+  500. A divisão inteira de `k × n_records` por `n_blocks` implementa
+  `floor(k × bfr)` sem arredondamento anterior.
+- **Dublê de índice ligava um nome indefinido** (`tests/test_nested_loop.py`,
+  `make_side`). Os casos `SECONDARY` falharam com `NameError` no primeiro
+  teste. O índice do dublê deve usar `table.data`, o arquivo criado para a tabela.
+- **Cenário LRU × MRU mascarado pelo pin do externo** (`test_bnl_flooding`).
+  Na revisão por traço de frames, o cenário com quatro blocos internos e
+  três frames DATA podia produzir as mesmas quinze leituras nas duas
+  políticas. O teste agora usa seis blocos internos e cinco frames para
+  expor reuso mesmo quando um frame está fixado pelo externo. A contagem
+  real segue pendente.
+- **Cobertura do BNL por posição, ocupação e duração de lotes.** As
+  mutações poderiam passar quando todas as chaves ocupavam o primeiro
+  campo, um lote ficava retido após seu uso ou o limite incluía somente
+  cargas estritamente menores que a página. Os testes cobrem posições
+  distintas, encaixe exato, referência a lotes descartados e externo vazio.

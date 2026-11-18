@@ -89,3 +89,6 @@ Ferramenta: Codex (GPT-6).
 A branch da #59 parte do commit local da #54. A #58, que tem sua própria
 branch local, é independente para esta tarefa e ainda aguarda implementação.
 O integrante escolheu a heurística proposta no guia para `outer="auto"` na #60.
+Também confirmou a ocupação por bytes codificados para o lote externo.
+Cartões D-P4-01 e D-P4-02 em `docs/decisoes/P4.md`. As duas variantes foram
+implementadas e revisadas. Os aceites físicos e de bancada ficaram em aberto.
