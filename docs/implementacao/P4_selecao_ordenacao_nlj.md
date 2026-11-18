@@ -309,3 +309,85 @@ O custo usa a **mesma** regra de escolha do externo que o operador (§6.1). Extr
 - Iterador abandonado no meio (`break`) sem `close()`: pin vazado.
 
 Registre em `ai/P4/review.md`. Guarde uma versão **executável** do BNL ingênuo da IA (que carrega o externo inteiro) em `ai/P4/raw/` para o teste ingênuo × refatorado: com `M` pequeno a versão ingênua viola a memória, e a refatorada não.
+
+---
+
+## 9. Plano de execução — 18/11/2026
+
+O §5.1 do enunciado pede comparar três algoritmos para o NATURAL JOIN
+mestre-detalhe. A P4 entrega o nested-loop, e a P5 entrega os outros dois.
+A ordenação externa da P4 é uma etapa do sort-merge. Para o §5.2, a P4
+entrega igualdade em `aluno.dre` e faixa em `aluno.cr`. A P6 monta a matriz,
+executa as primitivas e compara as saídas com o SQLite.
+
+O `main` (`f81c3c5`) já tem os contratos, o Engine, a referência SQLite,
+a matriz e o protocolo de medição. Ainda faltam os módulos `cbd/exec/`,
+`cbd/files/` e `cbd/storage/` no `main`. A camada 4 está no PR #2,
+vinculado à #37. As seis issues da P4 estão abertas e atribuídas a Raphael.
+
+| Ordem sugerida | Entrega | O que pode avançar e o que falta para o aceite |
+| :--- | :--- | :--- |
+| 1 · [#54](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/54) | Adaptador `access.py` | Começar com `TableLike` e cursores dublês. Provar `SCAN`, `PRIMARY` e `SECONDARY`, o retorno literal `None` quando o caminho válido não fornece ordem ou busca, `NotApplicable` em caminho incompatível e o fechamento do cursor em consumo parcial. A integração exige #46 e #49. |
+| 2 · [#58](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/58) | Ordenação externa e custo | Priorizar porque a P5 precisa da assinatura e de `mem`. Validar formação dos lotes ordenados (runs), fusões, limpeza no fechamento e `M = 3` com dublês. Depois medir com `Catalog.temp()` e `reserve_work` reais, quando #37, #43 e #54 estiverem resolvidas. |
+| 3 · [#59](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/59) | Seleções e custos | Cobrir scan, organização primária e índice secundário, inclusive faixa hash como `NotApplicable`. Exercitar nulos, limites abertos e inclusivos/exclusivos, e comparar tuplas completas nos testes pequenos. Dependências formais: #54, #48, #52 e #53. |
+| 4 · [#60](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/60) | Nested-loop em blocos e indexado | Depende formalmente da #54. A variante em blocos pode avançar após o adaptador. Para completar a estimativa da variante indexada, usar o custo de busca da #59. Testar as orientações forçadas, saída `r_rec + s_rec`, multiplicidade, nulos e impacto de LRU/MRU nas varreduras repetidas. |
+| 5 · [#64](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/64) | Estresse e evidência de autoria | Após #58 e #60, executar com `M = 3`, tabelas 50 vezes maiores que `M`, chaves concentradas e referência SQLite. Comparar com a primeira versão executável preservada em `ai/P4/raw/`. |
+| 6 · [#67](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/67) | Fechamento | Após #54, #58, #59, #60 e #64, consolidar cartões, verificações, estudo e post-mortem. Os operadores e custos reais alimentam a integração da P6 (#36). |
+
+### Pontos para decidir ou alinhar antes do código correspondente
+
+- **Adaptador e encerramento de cursores (#54).** A arquitetura §6.1 exige
+  liberar a página ao abandonar o iterador. O pseudocódigo do §3 usa expressões
+  geradoras, que não invocam explicitamente `close()` no cursor de origem.
+  Comparar com delegação e fechamento explícito. O teste deve manter uma
+  referência ao cursor de origem e verificar o fechamento após uma linha.
+  Alinhar com a P5 os auxiliares que ela usará, sobretudo a referência do seu
+  guia a `_bfr_from_sample`, um nome privado ausente da interface oficial.
+- **Orçamento e passadas da ordenação (#58).** O tamanho médio da amostra não
+  garante que registros maiores caibam no lote, e a amostra do pseudocódigo
+  é lida antes da reserva. Comparar limite por bytes codificados (incluindo
+  slots e cabeçalhos) com limite conservador pelo maior registro do esquema.
+  O modelo deve reproduzir a regra escolhida de fusão. No guia, com `M = 3`
+  e três runs, há uma fusão final de três entradas. A fórmula baseada só em
+  fan-in `M − 1` prevê duas fusões. Testar também dois sorts intercalados com
+  `mem` parcial e fechamento durante a fusão.
+- **Seleção e métricas (#59).** A bancada atual gera 80 igualdades pontuais
+  e 18 linhas de faixa, incluindo secundário B+ sobre heap, hash e B+.
+  Igualdade UNIQUE retorna no máximo uma linha, enquanto as faixas em CR
+  cobrem as metas de 1% e 50%. A estimativa recebe `**args` (inclusive
+  `sort_ptrs` nas variantes secundárias de faixa) e a assinatura oficial
+  de `select_range_cost` não o recebe. O `info` também começa vazio.
+  Alinhar com a P6 na #36 o encaminhamento desses argumentos e a distinção
+  entre custo base e custo com ponteiros ordenados. Para o teste de
+  ordenação por lotes, isolar leituras de dados das leituras de índice.
+  O total pode ultrapassar `b_r` mesmo quando a ordenação ajuda, pois há
+  leituras do índice e o mesmo bloco pode reaparecer em lotes diferentes.
+- **Plano e contagem do nested-loop (#60).** A configuração d tem dois
+  caminhos pesquisáveis (`PRIMARY` + `SECONDARY`). O `auto` recomendado
+  no guia usa menos blocos no BNL e menos registros no indexado quando
+  ambos têm acesso. Debater essa heurística e a alternativa de comparar
+  as duas estimativas completas, pois o arredondamento dos lotes e o custo
+  por busca podem mudar a melhor orientação. Com `B = 4096` e `M = 64`,
+  `aluno ⋈ inscricao` com `aluno` externo tem estimativa de
+  `1962 + ceil(1962/62) × 4588 = 148778` leituras na fórmula sem reuso.
+  São blocos estimados para heap. A pilha real pode registrar acertos entre
+  varreduras, e um scan B+ pode incluir nós internos além das folhas.
+  Para LRU × MRU, considerar também o frame DATA fixado pelo cursor externo.
+
+### Critério de avanço
+
+Nas etapas da P4, valide localmente o que puder ser testado com os contratos
+disponíveis. Quando o aceite exigir código ou validação de outra parte
+(P1–P3, P5 ou P6) sem acesso nesta sessão, registre a pendência e prossiga
+com o trabalho independente quando ele estiver autorizado. O teste com dublês
+comprova a lógica do operador. A medição física fica aberta até a pilha real
+estar disponível.
+
+Após o debate de cada decisão, registrar o cartão e guardar a primeira versão
+executável antes de refiná-la. Validar primeiro com dublês (N1). Assim que a
+camada inferior estiver disponível, medir contagens calculadas à mão em cache
+frio (N2), comparar a base pequena com o SQLite (N3) e explicar diferenças
+entre modelo e contagem (N4). Por fim, executar estresse (N5), autorrevisão,
+revisão independente e suíte completa. Conferir `bp.pinned() == 0` tanto no
+término normal quanto após fechamento antecipado. Consultar SKS 15.3–15.5 e
+E&N cap. 19 conforme a etapa, com a edição usada pelo grupo.
