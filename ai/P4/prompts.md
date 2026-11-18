@@ -92,3 +92,16 @@ O integrante escolheu a heurística proposta no guia para `outer="auto"` na #60.
 Também confirmou a ocupação por bytes codificados para o lote externo.
 Cartões D-P4-01 e D-P4-02 em `docs/decisoes/P4.md`. As duas variantes foram
 implementadas e revisadas. Os aceites físicos e de bancada ficaram em aberto.
+
+## 18/11/2026 — Implementação da ordenação externa (#58)
+
+Ferramenta: Codex (GPT-6).
+
+> Finalize o que ficou pendente da etapa 2
+
+O integrante já havia confirmado lotes limitados pelos bytes codificados e
+fusão final com até `M` entradas. A decisão consta do cartão D-P4-03. O código
+inicial foi preservado em `raw/external_sort_v1.py`. A etapa local foi
+implementada e revisada na branch `p4/58-ordenacao-externa`, após incorporar
+os commits locais das seleções e do nested-loop. Os aceites com armazenamento
+e P5 estão listados em `PENDENCIAS_EXTERNAS.md`.

@@ -114,3 +114,27 @@
   campo, um lote ficava retido após seu uso ou o limite incluía somente
   cargas estritamente menores que a página. Os testes cobrem posições
   distintas, encaixe exato, referência a lotes descartados e externo vazio.
+
+## 18/11/2026 — Ordenação externa (#58)
+
+- **Cursor aberto após falha de validação** (`raw/external_sort_v1.py`,
+  `external_sort`). A revisão reproduziu um cursor já consumido até a
+  primeira linha que permanecia aberto se `mem` fosse inválido ou a chave
+  não existisse. A validação precisa estar dentro do contexto que fecha a
+  entrada, antes de reservar WORK.
+- **Orçamento da fonte.** Um `TempFile.scan()` já utiliza uma página
+  WORK. `mem = eng.M` não deixa espaço para o sort e para essa fonte. A
+  arquitetura dá `mem` ao sort, e a P5 usa fontes em DATA e INDEX. O guia
+  e os testes explicitam o caso de uma fonte WORK com orçamento separado.
+- **Estimado × medido.** O modelo recebe só os blocos da entrada. O mesmo
+  conjunto de registros pode ocupar um número diferente de blocos depois
+  de ordenado (o empacotamento depende da ordem). O custo em blocos assume
+  blocagem comparável entre as passadas e precisa dizer isso expressamente.
+- **Cobertura de streaming e ocupação.** A revisão fez três mutações em
+  memória que passavam: materializar a fusão intermediária em uma lista,
+  desconsiderar o slot e zerar os seeks. Agora o teste verifica leitores
+  abertos na primeira gravação de uma fusão, a cobrança de cabeçalho e
+  slot e os seeks estimados para seis e cinquenta blocos.
+- **Cobertura da posição da coluna.** Fixar a primeira coluna em uma
+  mutação passava porque todos os casos usavam a chave nessa posição. Um
+  teste em múltiplos runs pede ordenação pelo segundo campo.

@@ -21,8 +21,12 @@
 ## Em andamento
 
 - Aceites entre partes estão listados em [Pendências externas](PENDENCIAS_EXTERNAS.md).
-- Decisão da #58 confirmada pelo integrante: bytes codificados e última
-  fusão com até `M` entradas. Implementação ainda pendente na branch da #58.
+- #58 implementada em `p4/58-ordenacao-externa`. Lotes limitados pelos
+  bytes codificados e última fusão com até `M` entradas, conforme D-P4-03.
+  Os testes locais cobrem a saída com `M = 3`, contagem de passadas,
+  formação de lotes, dois sorts simultâneos e limpeza após fechamento
+  antecipado ou exceções. A suíte teve 161 aprovações e oito testes pulados
+  pela ausência da pilha física. A integração com armazenamento e P5 segue aberta.
 - #59 implementada localmente na branch `p4/59-selecoes`, com matriz de
   caminhos e estimativas em `tests/test_selection.py`. A revisão reproduziu
   e corrigiu falhas com nulos, extremos inclusivos e estimativas de overflow.
@@ -56,8 +60,8 @@
 
 ## Falta
 
-- Integração da #54, seguida de #58, #59, #60, #64 e #67. O guia P4 §9 traz
-  a sequência e os bloqueios.
+- Integração da #54, #58, #59 e #60. Execução da #64 e fechamento da #67
+  ainda pendentes. O guia P4 §9 traz a sequência e os bloqueios.
 - Medições de blocos com a pilha real, revisão do código e evidências para
   o relatório de IA conforme os componentes forem implementados.
 
@@ -68,7 +72,7 @@
 | §5.1 a–e, leitura das entradas e buscas diretas | `cbd/exec/access.py`, chamado pelos futuros joins | `test_access_paths`, `test_scan_always_reads_physical_order` e `test_incompatible_paths_raise_before_opening_a_cursor` provam a lógica com dublês. Teste físico pendente. |
 | §5.1 nested-loop em blocos e indexado | `cbd/exec/nested_loop.py` | `test_block_preserves_multiplicity_nulls_and_orientation`, `test_indexed_preserves_multiplicity_and_orientation` e `test_indexed_supports_secondary_on_either_side`. I/O físico e BNL a–e na matriz pendentes. |
 | §5.1 orientação externa/interna e combinações de tamanho | `cbd/exec/nested_loop.py`, `bench/workload.py`, `bench/matrix.py` | `test_outer_choice_and_cost_use_the_same_plan` prova a escolha local e `test_join_matrix_size` prova as configurações da bancada. |
-| §5.1 sort-merge, etapa de ordenação da P4 | `cbd/exec/external_sort.py` pendente | Pendente. |
+| §5.1 sort-merge, etapa de ordenação da P4 | `cbd/exec/external_sort.py` | `test_external_sort_small_M`, `test_external_sort_final_pass_accepts_all_m_inputs`, `test_external_sort_two_interleaved_sorts_share_the_budget`. Aceite físico pendente. |
 | §5.2 igualdade em `dre` e faixa em `cr`, caminhos a–c | `cbd/exec/selection.py` e `bench/matrix.py` | `test_select_eq_matrix`, `test_select_range_matrix`, `test_sort_ptrs_batches_and_closes_early`, `test_select_costs_use_documented_block_models`. I/O real e ajustes na bancada pendentes. |
 | §5 comparação com implementação de referência | `bench/sqlite_ref.py` e `bench/run.py` já disponíveis | `test_validation_detects_extra_or_missing_tuple_without_touching_counters` cobre a validação da bancada. Integração com operadores reais pendente. |
 
@@ -81,9 +85,9 @@
 
 ## Armadilhas conhecidas / bugs abertos
 
-- Confirmar fechamento de cursores na pilha real. Limite de memória com
-  registros variáveis e número de passadas do sort seguem em aberto.
-  Cenários no guia P4 §9.
+- Confirmar fechamento de cursores na pilha real, contagens e consumo do
+  sort pela P5. O custo da ordenação supõe a mesma ocupação dos blocos
+  antes e depois de ordenar.
 - A interpretação de índice secundário clustering segue a arquitetura §5.3
   enquanto a questão do grupo na #8 estiver aberta.
 

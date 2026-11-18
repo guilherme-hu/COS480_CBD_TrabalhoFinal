@@ -43,8 +43,8 @@ Enquanto a camada 3 não chega, teste a **lógica** com um dublê (`FakeTable` s
 
 ## 2. Regras de memória (geral §3.4). Valem para todo o seu código
 
-1. Qualquer lista, dict ou heap Python que acumule **registros** precisa estar dentro de um `with eng.bp.reserve_work(k)` e ter no máximo `k · bfr` registros.
-2. `bfr` da entrada: `table.stats().bfr` quando a entrada é uma tabela. Quando é um fluxo (ex.: a saída de outro operador), estime com `_bfr_from_sample(schema, amostra)`: média de `len(RecordCodec(schema).encode(r))` em até 100 registros, então `SlottedPage.max_record(B) // (média + 4)`.
+1. Lotes de **registros** acumulados em estruturas Python exigem `with eng.bp.reserve_work(k)` e precisam caber nas `k` páginas. Na fusão, a fila de prioridade retém um registro por página de entrada já fixada.
+2. A ordenação e o BNL conferem os bytes codificados de cada registro, mais slot e cabeçalho, para respeitar a capacidade das páginas. O BNL mantém também o limite por linha calculado com `table.stats().bfr`.
 3. **Ponteiros** (para `sort_ptrs`) também ocupam memória: no máximo `k · (B // ptr_size)` por lote.
 4. Iteradores de entrada fixam 1 página cada (DATA/INDEX), e temporários fixam 1 página cada (WORK). Planeje: **reserva + temporários abertos ≤ M**.
 5. Feche os geradores que abandonar (`it.close()`) ou use `contextlib.closing`. Pin vazado aparece na fixture como `pin sem unpin`.
@@ -149,58 +149,25 @@ O enunciado não pede para medir a ordenação sozinha, mas o sort-merge join (P
 
 ### 5.1 Algoritmo (SKS 15.4, merge-sort externo)
 
-```python
-_END = object()
+Seja `M` o orçamento deste sort (`mem`, ou `eng.M` quando omitido). A
+decisão D-P4-03 define a formação de lotes e a última fusão.
+As fontes de tabela da P5 usam DATA/INDEX. Quando a própria fonte usa uma
+página WORK, o chamador deve excluí-la do orçamento `mem` do sort.
 
-def external_sort(eng, source, schema, key, n_blocks_hint=None, mem=None, info=None):
-    M, bp, cat = (mem or eng.M), eng.bp, eng.catalog   # daqui para baixo, "M" = memória DESTE sort
-    if M < 3:
-        raise ValueError("external_sort precisa de mem >= 3 (fan-in >= 2)")
-    k = schema.idx(key)
-    keyf = lambda r: (r[k] is None, r[k])              # None vai para o fim
-    it = iter(source)
-    sample = list(islice(it, 100))
-    bfr = _bfr_from_sample(schema, sample)             # §2
-    it = chain(sample, it)
-    runs = []
-    try:
-        # ---- fase 1: run montado em M-1 páginas reservadas; o frame WORK restante é a página de saída
-        while True:
-            with bp.reserve_work(M - 1) as pages:
-                buf = list(islice(it, pages * bfr))
-                if not buf:
-                    break
-                buf.sort(key=keyf)
-                peek = next(it, _END)
-                if peek is _END and not runs:          # tudo coube: 0 gravações, nenhum temporário
-                    yield from buf
-                    return
-                t = cat.temp(schema)                   # grava o run DENTRO da reserva (1 frame livre)
-                for r in buf:
-                    t.append(r)
-                t.finish()
-                runs.append(t)
-            if peek is _END:
-                break
-            it = chain([peek], it)
-        # ---- fase 2: fusões com fan-in M-1 (+1 de saída); a ÚLTIMA tem fan-in M e não grava
-        while len(runs) > M:
-            nxt = []
-            for i in range(0, len(runs), M - 1):
-                g = runs[i:i + M - 1]
-                t = cat.temp(schema)
-                for r in heapq.merge(*(x.scan() for x in g), key=keyf):
-                    t.append(r)
-                t.finish()
-                nxt.append(t)
-                for x in g:
-                    x.drop()
-            runs = nxt
-        yield from heapq.merge(*(x.scan() for x in runs), key=keyf)
-    finally:
-        for x in runs:
-            x.drop()                                   # também se o consumidor abandonar o gerador
-```
+1. Reserve `M − 1` páginas para o lote em memória. Meça o registro codificado
+   e o slot. Avance para outra página quando a linha não couber inteira na
+   atual. O registro que inicia o próximo lote é o único registro lido à
+   frente. `n_blocks_hint` é uma estimativa, e o orçamento usa os registros
+   efetivamente consumidos.
+2. Ordene o lote pela coluna com `None` no fim. Se toda a entrada couber,
+   entregue o lote da memória. Se houver mais entrada, grave o lote em
+   `Catalog.temp(schema)` usando a página WORK que sobrou e limpe o lote.
+3. Enquanto houver mais de `M` runs (lotes já ordenados), intercale grupos
+   de até `M − 1` para produzir novos runs. Descarte os antigos depois de
+   liberar os cursores. A última fusão intercala até `M` entradas e usa
+   `yield`, sem alocar página de saída.
+4. Feche os cursores antes de remover temporários. Libere as reservas
+   durante exceções e se o consumidor fechar o iterador antes do fim.
 
 Pontos em que a IA costuma errar:
 
@@ -212,13 +179,19 @@ Pontos em que a IA costuma errar:
 
 ### 5.2 Custo (`external_sort_cost(eng, n_blocks, mem=None)`)
 
-Use `M = mem or eng.M`, igual ao operador. Com `b = n_blocks` e `P = ⌈log_{M−1}(⌈b / (M−1)⌉)⌉` passadas de fusão (o expoente é o número de runs iniciais):
+Use `M = eng.M` quando `mem` for `None`. Com `b = n_blocks`, estime
+`R = ceil(b / (M − 1))` runs iniciais. Se `R ≤ 1`, estime zero fusões.
+Caso contrário, conte uma fusão final e, enquanto `R > M`, substitua
+`R` por `ceil(R / (M − 1))` e some uma fusão intermediária. Esse processo
+chega a `P`, o número total de fusões. A estimativa assume blocagem
+comparável na entrada e nos temporários. Registros variáveis e páginas
+esparsas podem alterar o número real de runs.
 
 | Item | Valor |
 | :--- | :--- |
 | `b ≤ M − 1` | `reads = b`, `writes = 0` |
 | caso geral | `reads = b·(P + 1)`, `writes = b·P` → total `b(2P + 1)` (SKS, sem gravar a saída final) |
-| seeks (SKS) | `2⌈b / M⌉ + b·(2P − 1)` (com b_b = 1) |
+| seeks (modelo com uma página por acesso) | `2R_inicial + b·(2P − 1)` no caso externo |
 
 **Diferença esperada medido × estimado:** páginas de run que nunca saíram da área `WORK` antes do `drop()` não são gravadas (geral §3.4 / P2 §5.4). Com `b` próximo de `M` o medido fica **abaixo** da fórmula. Documente; não "conserte" gravando à força.
 
