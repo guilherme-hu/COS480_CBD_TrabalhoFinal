@@ -105,3 +105,15 @@ inicial foi preservado em `raw/external_sort_v1.py`. A etapa local foi
 implementada e revisada na branch `p4/58-ordenacao-externa`, após incorporar
 os commits locais das seleções e do nested-loop. Os aceites com armazenamento
 e P5 estão listados em `PENDENCIAS_EXTERNAS.md`.
+
+## 18/11/2026 — Estresse e fechamento local (#64 e #67)
+
+Ferramenta: Codex (GPT-6).
+
+> Prossiga com as ultimas etapas, tome as decisões mais coerentes e recomendadas a partir da literatura que estamos usando coomo fonte
+
+O integrante pediu o estresse com `M = 3`, escala 50 vezes WORK, concentração
+de chaves, comparação com SQLite e fechamento da documentação da P4.
+Foi usada a configuração do guia P1 §6. Para identificar a origem de cada
+evidência, foi preservado o bruto histórico e criado o controle separado
+`raw/nested_loop_unbounded_baseline.py`, que materializa todo o externo.

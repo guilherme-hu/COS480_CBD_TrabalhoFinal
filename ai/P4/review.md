@@ -138,3 +138,29 @@
 - **Cobertura da posição da coluna.** Fixar a primeira coluna em uma
   mutação passava porque todos os casos usavam a chave nessa posição. Um
   teste em múltiplos runs pede ordenação pelo segundo campo.
+
+## 18/11/2026 — Estresse e integração (#64)
+
+- A primeira mensagem de diagnóstico do BNL usava uma seta Unicode. Com
+  stdout redirecionada em CP1252, o teste falhava durante a impressão, depois
+  das verificações. Substituímos a seta por texto compatível com o terminal.
+- O teste de sort que usa a FK concentrada preservava todas as tuplas, mas
+  uma mutação que ordenava sempre por uma coluna constante também passava.
+  Incluímos um caso com `codigo` embaralhado na mesma base e comparamos com
+  a ordem do SQLite. A fonte de teste também limita quantas linhas podem ser
+  puxadas antes de criar o primeiro run, detectando `list(source)` no operador.
+- O teste original de BNL mantinha a FK concentrada no interno. O teste
+  adicional põe o detalhe no externo para validar múltiplos registros
+  da mesma chave no lote e a orientação `r_rec + s_rec` com lados invertidos.
+- O primeiro teste físico de sort aceitava números de I/O incompatíveis
+  com os 150 blocos de runs iniciais. A asserção agora inclui o limite
+  inferior de páginas que saem de WORK e precisam ser relidas. Os imports
+  da pilha real são testados antes de pedir o diretório temporário no Windows.
+- A revisão demonstrou que observar os lotes não detecta, isoladamente,
+  a retenção de todos os lotes antigos em outro contêiner. O relatório
+  atribui o pico ao lote observado. O teste unitário com referências
+  fracas verifica separadamente a liberação dos lotes antigos.
+- A primeira asserção de leitura antecipada só verificava até o primeiro
+  temporário. Um mutante materializava as 591 linhas restantes logo depois
+  e passava. Comparamos agora, para cada registro da ingestão, o total já
+  consumido e o total gravado nos runs iniciais.
