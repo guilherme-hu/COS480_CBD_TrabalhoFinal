@@ -162,3 +162,28 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    todos `provisória`, porque o integrante pediu para seguir sem debate.
    Testes novos: `test_heap_order_is_not_key_order`,
    `test_signature_detects_swapped_duplicate_with_same_count`.
+
+---
+
+# Sessão de 13/11/2026 — PRs da pilha e revisão do PR #2
+
+Ferramenta: Claude Code, modelo Claude Opus 5.5.
+
+1. Pedido do usuário: "tem algum pr meu que possa ser revisado e mergeado? tem algum
+   outro PR pra abrir?" e depois "pode fazer ambos".
+
+   Resultado: nenhum PR do P6 aberto. Abertos os PRs empilhados #76–#82
+   (#24, #22, #23, #6, #19, #3 e Refs #8). Revisão do PR #2 (P1) como consumidor,
+   numa worktree descartável com o PR mesclado sobre a pilha: 130 testes passam;
+   sonda do Engine real (FileManager + BufferPool do PR, catálogo dublê) confere
+   `cold()`, `snapshot()` com todas as colunas do CSV, `eng.M`, contadores por área
+   e reabertura com MRU. Nenhum comentário no GitHub sem o ok do integrante.
+   Erro do agente na sonda: supôs blocos a partir de 0; o contrato diz bno ≥ 1.
+
+2. Pedido do usuário (17/11): "faz tudo o que der (mas da pull na main antes)".
+
+   Resultado: `main` sem mudanças desde 12/11. D-P6-10 (provisória): fator prefetch
+   passa a repetir também o INL maior ⋈ maior (`b_s_btree`), com os scans como
+   controle; pilha #80–#82 rebaseada localmente (o force-push foi bloqueado pelo
+   modo automático e ficou para o integrante autorizar). Comentário no PR #2 com
+   os achados de consumidor e issue nova para o P2 (`allow_prefetch`).
