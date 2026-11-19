@@ -251,3 +251,12 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    cobrir o melhor argumento contra (leitura B, do E&N), o capítulo 2 diz qual linha mede o
    *clustering index* do livro (B+ primária em `cr`). Nenhum cartão da P6 segue provisório.
 
+6. Pedidos do usuário: "pode começar a #5" e "pode escolher a que achar melhor". Ferramenta:
+   Claude Code (Claude Opus 5.5).
+
+   Resultado: a #5 já estava fechada (plano físico mesclado em 12/11); faltava o cartão.
+   Debate do D-P6-11 (A: todas as combinações organização × coluna; B: uma por tabela pela PK;
+   C: sem `aluno.cr`; D: sem hash em `cr`), com a contagem das 23 variantes e a conferência de
+   que toda variante é usada pela matriz, menos `aluno__bt_dre_inc`, que é da #17. O integrante
+   delegou; o agente manteve A. Capítulo 2 cita o cartão no lugar de "cartão pendente (P6)".
+

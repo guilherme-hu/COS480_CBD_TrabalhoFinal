@@ -31,7 +31,7 @@ ser apagados.
   (organização escolhida pelo integrante em 19/11) e índice gerado `gerado/decisoes.md`.
   Faltam os cartões de P2 (#62), P3 (#44/#63), P5 (#71) e o PR do P4 (#67); lacunas
   comentadas nas issues em 19/11. Linhas "cartão pendente" trocam pelo id quando chegarem.
-  Lacuna própria: cartão do plano físico (campos de ordenação, #5).
+  Lacuna própria fechada em 19/11: D-P6-11 (campos de ordenação, plano físico da #5).
 - #16, #17 experimentos de justificativa (#19 já tem a lista; falta medir com a pilha real); #18 revisores independentes;
   #20–#23 rodada final e análise; #24–#27 relatório e fechamento.
 
@@ -135,6 +135,8 @@ achados da revisão do P2 de 12/11 (script na sessão, não versionado):
 - Nenhuma. D-P6-09 decidida em 19/11 (sem canal com o professor; delegada ao agente).
 
 ## Decisões tomadas nesta parte
+- D-P6-11 (19/11): uma variante por organização e coluna de acesso (23 por tamanho de
+  bloco); retroativo ao plano da #5, delegado ao agente após o debate.
 - Revisão das provisórias em 19/11 (branch `p6/revisao-provisorias`): D-P6-01
   confirmada pelo integrante (B); D-P6-10 (C) e D-P6-03 a D-P6-08 delegadas pelo
   integrante ao agente, que manteve a recomendação de cada cartão. A D-P6-01 tinha
