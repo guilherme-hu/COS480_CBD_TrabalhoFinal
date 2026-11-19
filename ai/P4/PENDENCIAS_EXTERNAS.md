@@ -16,6 +16,16 @@ física e o aceite entre partes são registrados quando executados.
 | #64 · Estresse físico | P1 #37, P2 #39, #40, #43 e #46 | Rodar `pytest -q -s -m stress` com heap, codec e temporários reais. Registrar leituras, gravações e tempos a frio e explicar a diferença para os custos estimados em `stress.md`. | Cinco cenários locais passaram com SQLite. Os dois físicos foram pulados. Em cópia com P1, a execução parou na ausência de catálogo. |
 | #67 · Aceite do grupo | P1 #72, P6 #36 e os aceites externos acima | Incorporar a P4 no `main`, validar os operadores e estimativas pela bancada e incluir o post-mortem da P4 na consolidação da raiz. | Fechamento local registrado. Aceite e publicação em aberto. |
 
-Última conferência: 18/11/2026. As issues de armazenamento acima ainda estavam
-abertas. Ao retomar uma linha, registrar o commit da pilha testada, o comando,
-o resultado e as contagens que confirmam o aceite.
+Na conferência de 19/11/2026, `origin/main` continuava em `f81c3c5` e as
+issues principais de armazenamento, integração da bancada e consumo pela P5
+continuavam abertas. Para retomar o aceite:
+
+1. Com a pilha de P1–P3 disponível, rodar primeiro os testes físicos do
+   adaptador, sort, seleção e nested-loop. Em seguida rodar `pytest -q -s -m stress`
+   e registrar as leituras e gravações medidas ao lado da estimativa em `stress.md`.
+2. Com P5 e P6, validar o consumo intercalado do sort, encaminhar `sort_ptrs`
+   aos destinos acordados e conferir a cobertura de BNL nas configurações a–e.
+   Rodar a matriz e comparar saídas com o SQLite.
+3. Para cada linha aceita, registrar o commit da pilha, o comando, o resultado
+   e as contagens. Depois, conferir a suíte no `main` e repassar o post-mortem
+   para a consolidação da P1.

@@ -1,4 +1,4 @@
-# Estado da parte P4 — atualizado em 18/11/2026
+# Estado da parte P4 — atualizado em 19/11/2026
 
 ## Pronto (com teste que prova)
 
@@ -26,6 +26,9 @@
   decisões, [post-mortem](post_mortem.md), guia de estudo, prompts, bruto e
   histórico de revisão estão preservados. As verificações de dependências
   e acesso a disco não retornaram violações.
+- Em 19/11, detalhamos arquitetura, formatos, parâmetros e justificativas
+  em [Decisões da P4](../../docs/decisoes/P4.md), com separação entre escolhas
+  confirmadas pelo integrante e convenções do contrato compartilhado.
 
 ## Em andamento
 

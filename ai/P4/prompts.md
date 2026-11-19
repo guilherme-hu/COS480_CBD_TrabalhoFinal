@@ -117,3 +117,12 @@ de chaves, comparação com SQLite e fechamento da documentação da P4.
 Foi usada a configuração do guia P1 §6. Para identificar a origem de cada
 evidência, foi preservado o bruto histórico e criado o controle separado
 `raw/nested_loop_unbounded_baseline.py`, que materializa todo o externo.
+
+## 19/11/2026 — Conferência de completude e documentação da defesa
+
+Ferramenta: Codex (GPT-6).
+
+O integrante pediu confirmar a completude local e garantir dois registros
+separados, um de pendências externas e outro com arquitetura, formatos,
+parâmetros e justificativas. O inventário foi acrescentado a
+`docs/decisoes/P4.md` e a conferência a `PENDENCIAS_EXTERNAS.md` e `ESTADO.md`.
