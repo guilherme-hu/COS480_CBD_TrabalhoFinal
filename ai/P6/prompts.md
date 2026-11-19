@@ -119,3 +119,7 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    - #22: `bench/compare_cost.py` (razão medido/estimado, motivos por regra do
      P6 §7, lista de não explicadas). Bruto em `ai/P6/raw/compare_cost_v1.py`;
      a versão bruta passou nos testes sem refinamento.
+   - #23 (parcial): `bench/plots.py` com joins e seleções, medido ao lado do
+     estimado; `matplotlib` como dependência opcional `.[plots]`. Bruto em
+     `ai/P6/raw/plots_v1.py`; defeito de parsing do `exp_id` achado por teste
+     (`review.md`). Desenho conferido com summary sintético (não é medição).
