@@ -1,14 +1,14 @@
-# Estado da parte P6 — atualizado em 17/11
+# Estado da parte P6 — atualizado em 19/11
 
-PRs #28–#35 (#4–#13) já mesclados no `main` em 12/11.
-PRs empilhados abertos em 13/11 (#76–#82), um por branch, na ordem:
-`p6/24-esqueleto-relatorio` → `p6/22-estimado-medido` → `p6/23-figuras` →
-`p6/6-memoria-constante` → `p6/19-fatores` → `p6/3-cartoes-gerador` →
-`p6/8-clustering`.
-Suíte: cada branch da pilha passa sozinha (64 → 89 testes); na ponta, 89 passaram e 2
-pulados (o do Engine com a pilha real e o do PDF, que roda com `REPORT_PDF=1`).
+PRs #28–#35 (#4–#13) mesclados no `main` em 12/11. Pilha #76–#82 mesclada em 19/11
+(fecha #24, #22, #23, #6, #19, #3; a #8 segue aberta à espera do professor).
+PR #2 do P1 (camada 4: `FileManager`, `BufferPool`, LRU/MRU, toss, prefetch)
+mesclado em 19/11, depois da revisão final do P6 (ver "Camada 4 no `main`" abaixo).
+Suíte no `main`: 130 passaram e 2 pulados (o do Engine com a pilha real, que agora
+espera só `cbd.files.catalog` do P2, e o do PDF, que roda com `REPORT_PDF=1`).
 Revisão independente de 12/11 tratada (`ai/P6/review.md`); backups das branches
-anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
+anteriores ao rebase em `backup/p6-*` e branches `p6/*` locais já mescladas podem
+ser apagados.
 
 ## Pronto (com teste que prova)
 - Carga de trabalho no escopo novo (#4): `test_all_workload_results_against_python`.
@@ -26,7 +26,9 @@ anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
 
 ## Falta
 - #8: enviar ao professor a pergunta pronta na D-P6-09 e registrar a resposta (o agente não envia).
-- #14 carga física real, #15 integração ponta a ponta: dependem de P1–P5 no `main`.
+- #14 carga física real, #15 integração ponta a ponta: dependem de P2–P5 no `main`
+  (a camada 4 do P1 já entrou em 19/11).
+- #25 (consolidar as decisões no relatório): desbloqueada em 19/11 com a #24 fechada.
 - #16, #17 experimentos de justificativa (#19 já tem a lista; falta medir com a pilha real); #18 revisores independentes;
   #20–#23 rodada final e análise; #24–#27 relatório e fechamento.
 
@@ -62,7 +64,9 @@ anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
   para a matriz não depender de P4/P5; `bench/run.py` resolve por `OPERATORS`.
 - CLI: `python -m bench.run --data <pasta>` em vez de `--scale` (a escala vem da
   pasta preparada por `bench.build`, evitando medir uma base com a escala errada).
-- O `Engine` ainda não foi testado com a pilha real (P1/P2 ausentes).
+- O `Engine` ainda não foi testado com a pilha real no `main`: a camada 4 entrou,
+  falta o catálogo do P2 (`cbd.files.catalog`). Em 17/11 ele foi sondado com a camada
+  4 do PR #2 e um catálogo dublê, e passou.
 
 ## Armadilhas conhecidas / bugs abertos
 - Tempos de execução muito curtos (ms) tendem a nunca estabilizar em 5% e vão
@@ -103,13 +107,34 @@ anteriores ao rebase em `backup/p6-*` (apagar depois dos PRs).
 - O prefetch só liga se o dono do arquivo chamar `bp.allow_prefetch(fid, DATA)`;
   o guia do P2 não cita essa chamada. Sem ela o fator prefetch mede zero efeito.
 
+## Camada 4 no `main` (PR #2 mesclado em 19/11)
+Revisão final antes do merge, no `f64e3e3` mesclado com o `main`, reproduzindo os
+achados da revisão do P2 de 12/11 (script na sessão, não versionado):
+- Prefetch entre cursores (LRU, 2 scans intercalados de 40 blocos): 80 leituras em
+  DATA = 8/16/32 e k = 0/4/8 (antes até 584). Seeks caem de 80 para 6–16.
+- Prefetch com MRU (DATA = 128, 2 × 300 blocos): 600 leituras com k = 0/4/8 (antes
+  1068); seeks 600 → 120 → 68. **O fator prefetch da D-P6-10 tem efeito mensurável.**
+- `allow_prefetch` só em arquivo de um tipo de página: a B+ primária (folhas DATA e
+  nós INDEX no mesmo `fid`) não pode chamá-lo; o uso indevido dá `ValueError`.
+- `toss_immediate=True` com MRU dá o mesmo que LRU (interno de 200 blocos 5×, DATA =
+  128: 1000 leituras contra 488 com `False`). D-P1-09 manda rodar LRU × MRU com
+  `toss_immediate=False`; a bancada usa `toss=False` fora do fator toss. **Na #16,
+  manter `toss=False`**, senão a comparação de políticas sai empatada por construção.
+- No fator toss (#19), o BNL com MRU e `toss=True` vai ler mais que com `False`:
+  é o efeito acima, não defeito da bancada. Explicar no relatório.
+- Commits do P6 na branch do P1 para destravar o merge (com o ok do integrante):
+  merge do `main` (conflito só na linha da política do guia P6 §4.4; ficou a do
+  `main`) e registro do marcador `stress` no `pyproject.toml`, que o `fb54146`
+  dizia registrar mas não estava no diff.
+
 ## Decisões provisórias a rever
 - D-P6-03 a D-P6-08 (#3, 12/11): seeds/distribuições, Feistel, soma de hashes,
   `INT` no SQLite, CPF sintético, JSON/ISO. Retroativas, adotadas sem debate.
 - D-P6-09 (#8, 12/11): "secundário clustering" = ponteiros agrupados por chave
   (arquitetura §5.3), à espera da resposta do professor. Nenhuma leitura muda a matriz.
 - D-P6-10 (#19, 17/11): fator prefetch = scans de faixa (controle) + INL maior ⋈ maior
-  com externo em heap. Depende de o P2 chamar `allow_prefetch` (issue aberta).
+  com externo em heap. Depende de o P2 chamar `allow_prefetch` (#83). A camada 4
+  mesclada confirma que o prefetch reduz seeks com acessos intercalados.
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
   O P2 pediu (PR #29) para ele e o P5 participarem da revisão.
 
