@@ -13,8 +13,8 @@ lista todos os cartões com o seu status.
 > **Situação em 19/11.** Os cartões de P1 e P6 estão no `main`. Os do P4 estão na
 > branch `p4/67-fechamento`. P2, P3 e P5 ainda não registraram cartões. Nas linhas
 > marcadas **cartão pendente**, o texto descreve o projeto atual do guia da parte
-> e ainda não tem a comparação registrada pelo dono. A única decisão *provisória*
-> (D-P6-09) aguarda a resposta do professor.
+> e ainda não tem a comparação registrada pelo dono. Nenhuma decisão da P6 está
+> provisória.
 
 ## Tamanhos de bloco
 
@@ -98,7 +98,7 @@ lista todos os cartões com o seu status.
 | Ordenação externa: runs formadas por bytes com $M - 1$ páginas, fusões intermediárias com $M - 1$ entradas e a final com até $M$ | dimensionar pela média; limitar a fusão final a $M - 1$ | O orçamento de memória fica explícito, e há uma fusão a menos quando sobram exatamente $M$ runs. | D-P4-03 |
 | Sort-merge join: $M$ dividido igualmente entre os lados que precisam ser ordenados, e a fusão do join feita em *pipeline* com a última passada de cada sort | $M$ inteiro para cada sort; materializar a saída ordenada (fórmula do livro, $b_r + b_s$ + sorts) | Projeto atual do guia P5 §3: as duas fusões finais correm ao mesmo tempo e dividem $M$, o que pode exigir mais passadas. O *pipeline* economiza uma gravação e uma leitura de cada lado. | **cartão pendente (P5, #71)** |
 | Validação de cada resultado por (contagem, soma de `hash_value` da chave lógica) contra o SQLite | comparar as saídas inteiras; XOR; hash da tupla inteira | Valida em memória constante, independe da ordem da saída e detecta falta, sobra, duplicata e par trocado. Limitação: uma coluna errada fora da chave não é detectada. | D-P6-05 |
-| "Índice secundário clustering" (§4.2) lido como B+ NOT UNIQUE com os ponteiros de cada chave agrupados | *clustering index* de livro; secundário sobre tabela agrupada; ponteiros ordenados | É a estrutura que o enunciado descreve. As outras leituras já têm linhas na matriz, então a resposta do professor só muda os rótulos. | D-P6-09 *(provisória, aguarda o professor)* |
+| "Índice secundário clustering" (§4.2) lido como B+ NOT UNIQUE com os ponteiros de cada chave agrupados | *clustering index* de livro; secundário sobre tabela agrupada; ponteiros ordenados | É a estrutura que o enunciado descreve. O termo dos livros (*clustering index* do E&N: arquivo ordenado pelo campo NOT UNIQUE) também é medido: é a linha B+ primária em `cr`. Assim o relatório mostra as duas leituras com número. | D-P6-09 |
 
 > Os cartões do P4 (D-P4-01 a D-P4-03) estão na branch `p4/67-fechamento` e entram no
 > índice abaixo quando o PR do P4 for mesclado.

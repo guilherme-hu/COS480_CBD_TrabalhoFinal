@@ -1,7 +1,7 @@
 # Estado da parte P6 — atualizado em 19/11
 
 PRs #28–#35 (#4–#13) mesclados no `main` em 12/11. Pilha #76–#82 mesclada em 19/11
-(fecha #24, #22, #23, #6, #19, #3; a #8 segue aberta à espera do professor).
+(fecha #24, #22, #23, #6, #19, #3; a #8 foi decidida sem consulta ao professor em 19/11, D-P6-09).
 PR #2 do P1 (camada 4: `FileManager`, `BufferPool`, LRU/MRU, toss, prefetch)
 mesclado em 19/11, depois da revisão final do P6 (ver "Camada 4 no `main`" abaixo).
 Suíte no `main`: 130 passaram e 2 pulados (o do Engine com a pilha real, que agora
@@ -25,7 +25,6 @@ ser apagados.
 - Nada pela metade.
 
 ## Falta
-- #8: enviar ao professor a pergunta pronta na D-P6-09 e registrar a resposta (o agente não envia).
 - #14 carga física real, #15 integração ponta a ponta: dependem de P2–P5 no `main`
   (a camada 4 do P1 já entrou em 19/11).
 - #25 (consolidar as decisões no relatório): capítulo 2 escrito por item do enunciado §7.2.2.a
@@ -133,8 +132,7 @@ achados da revisão do P2 de 12/11 (script na sessão, não versionado):
   dizia registrar mas não estava no diff.
 
 ## Decisões provisórias a rever
-- D-P6-09 (#8, 12/11): "secundário clustering" = ponteiros agrupados por chave
-  (arquitetura §5.3), à espera da resposta do professor. Nenhuma leitura muda a matriz.
+- Nenhuma. D-P6-09 decidida em 19/11 (sem canal com o professor; delegada ao agente).
 
 ## Decisões tomadas nesta parte
 - Revisão das provisórias em 19/11 (branch `p6/revisao-provisorias`): D-P6-01
