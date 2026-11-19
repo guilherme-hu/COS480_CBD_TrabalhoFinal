@@ -1,7 +1,5 @@
 # Base de dados e carga de trabalho
 
-> **Escopo revisado.** Esta preparação foi feita antes da versão nova do enunciado e ainda inclui itens que viraram opcionais e que o grupo não fará: joins tipos 2 (CPF) e 3 (orientador = professor), os subconjuntos `aluno_p`/`detalhes_p`/`turma_p`, faixas em `dre`/`cpf` e a seletividade de 0,1% (agora 1%). O escopo atual está em [`00_ARQUITETURA_GERAL.md`](implementacao/00_ARQUITETURA_GERAL.md) §0 e a pendência de código em [P6 §2.3](implementacao/P6_bancada_relatorio.md).
-
 Esta entrega implementa a preparação dos dados da universidade do enunciado
 (`proposta.pdf`, início e §6.4) e do P6 (§2, §3 e §5), seguindo os tipos e
 interfaces de `00_ARQUITETURA_GERAL.md`. Não executa a matriz de desempenho,
@@ -17,10 +15,10 @@ Na raiz do repositório, para desenvolvimento:
 python3 -m bench.build --scale 0.1
 ```
 
-Base final calibrada para a configuração-base (B=4096, WORK=64, DATA=128):
+Base final (B=4096 com WORK=64 e DATA=128, e as mesmas memórias em bytes nos outros blocos):
 
 ```sh
-python3 -m bench.build --scale 1 --rows turma=100000 --output data/prepared
+python3 -m bench.build --scale 1 --output data/prepared
 ```
 
 Se a base já existe, o comando recusa sobrescrevê-la. Acrescente `--force`
@@ -39,15 +37,16 @@ python3 -m pytest -q
 É possível ajustar volumes com `--rows tabela=N` (repetível). `detalhes`
 sempre acompanha `aluno`, preservando a correspondência por CPF. Para escalas
 minúsculas, `inscricao` é limitada ao número de pares distintos aluno/turma.
-`--work-pages` controla o orçamento dos subconjuntos; mínimo 3.
+`--work-pages` (M em B = 4096, mínimo 3) define o limite usado para conferir se a
+tabela menor cabe em M − 2 páginas; nos outros blocos ele escala (D-P6-02).
 
 ## Arquivos produzidos
 
 | Arquivo em `data/prepared/` | Conteúdo |
 | --- | --- |
-| `ref.sqlite` | Seis tabelas completas e três subconjuntos, PKs, UNIQUEs, FKs e índices auxiliares da referência |
-| `manifest.json` | Versão, escala, volumes, seeds, esquemas, cursos dos subconjuntos e adequação estimada dos tamanhos |
-| `workload.json` | Nove joins, até vinte igualdades UNIQUE, seis faixas e respectivos `(count, checksum)` esperados |
+| `ref.sqlite` | Seis tabelas completas, PKs, UNIQUEs, FKs e índices auxiliares da referência |
+| `manifest.json` | Versão, escala, volumes, seeds, esquemas e adequação estimada dos tamanhos |
+| `workload.json` | Três joins, até vinte igualdades UNIQUE, duas faixas em CR e respectivos `(count, checksum)` esperados |
 | `physical_plan_2048.json` / `4096` / `8192` | Variantes heap/B+/hash, índices secundários e parâmetros de carga |
 | `base_stats.csv` | Volumes, tamanho médio previsto do registro, cardinalidades, SHA-256 e blocagem estimada por tamanho de bloco |
 
@@ -85,32 +84,34 @@ duas casas; cerca de 30% dos orientadores são nulos. Detalhes têm 0–8 itens.
 Endereços usam `rua|numero|bairro|cidade|uf`. Campos e listas respeitam os
 limites em bytes UTF-8 e os tipos do codec planejado.
 
-`aluno_p` seleciona os dois últimos cursos, menos frequentes na distribuição
-Zipf, limitado por um orçamento de bytes. `detalhes_p` contém exatamente os
-CPFs desse subconjunto. Ambos cabem no mesmo orçamento estimado.
-`turma_p` contém somente professores presentes em `aluno_p`, com limite de
-bytes. Usa-se o bloco mínimo de 2048 e margem de 20%, para conservar os
-mesmos subconjuntos entre 2/4/8 KiB. A confirmação definitiva usa `stats()`.
+Não há subconjuntos (`aluno_p`, `detalhes_p`, `turma_p` existiam na versão
+anterior): as tabelas reais já cobrem as três combinações de tamanho
+(arquitetura §0). `turma` e `detalhes` ficam só na base lógica, para integridade
+referencial e para a referência SQLite; não ganham variantes físicas.
 
-Os 10 mil registros de turma originalmente sugeridos não atingem 1280 blocos
-na configuração-base. Por isso, a base final usa 100 mil turmas, documentadas
-no manifesto. Escalas menores servem para desenvolvimento e podem não ter
-tabelas grandes. O manifesto informa explicitamente toda combinação que
-não atende pequena ≤ WORK−2 ou grande ≥ 10×DATA; a CLI destaca a situação
-para B=4096. O critério mais forte de 10×DATA é calibrado para B=4096.
+A base final usa os volumes padrão (`--scale 1`, 10 mil turmas). O override
+`--rows turma=100000` da versão anterior existia para um join com `turma` que
+saiu do escopo. O manifesto confere, para cada tamanho de bloco, pequena ≤ M − 2
+e grande ≥ 10 × DATA com as áreas daquele bloco: a memória do buffer é a mesma
+em bytes nos três tamanhos (D-P6-02), então M e DATA em páginas escalam com B
+(WORK = 128/64/32 e DATA = 256/128/64 páginas em 2/4/8 KiB). Com isso a escala 1
+é adequada nos três tamanhos. Escalas menores servem para desenvolvimento e podem
+não ter tabelas grandes; a CLI avisa cada combinação inadequada.
 
 ## Consultas de referência
 
-`bench/workload.py` cobre os três tipos de join e as três combinações de
-tamanho do P6. O join usa igualdade explícita e saída concatenada
-`r_rec + s_rec`, conforme o contrato, inclusive para mestre/detalhe.
-Nulos não se juntam. Repetições em colunas NOT UNIQUE preservam a multiplicidade.
+`bench/workload.py` cobre só o escopo obrigatório (arquitetura §0): os três
+NATURAL JOINs mestre-detalhe (curso ⋈ disciplina, curso ⋈ aluno,
+aluno ⋈ inscricao), com o mestre sempre como `r`. O join usa igualdade explícita
+e saída concatenada `r_rec + s_rec`, conforme o contrato. Nulos não se juntam.
+Repetições em colunas NOT UNIQUE preservam a multiplicidade.
 
-As seleções incluem DREs sorteados com seed fixa, faixas de DRE e CPF e
-faixas de CR com metas de 0,1% e 50%. Os limites são quantis dos dados
-efetivamente carregados, e a seletividade real é registrada: empates de CR
-podem impedir exatamente 0,1%. As igualdades UNIQUE retornam uma linha,
-portanto sua seletividade é 1/n.
+As seleções são 20 igualdades em `aluno.dre` (sorteadas com seed 490) e duas
+faixas em `aluno.cr`: `cr >= q` com meta de 1% (CR alto) e `cr <= q` com meta
+de 50%. `q` é o quantil dos dados efetivamente carregados e a seletividade
+real fica registrada em `selectivity`: empates de CR podem fazer a resposta
+passar um pouco da meta (na escala 0,1: 1,02% e 50,12%). As igualdades UNIQUE
+retornam uma linha, portanto sua seletividade é 1/n.
 
 Exemplo de consumo por um futuro teste de operador:
 
@@ -136,17 +137,21 @@ de P2, nunca `hash()` do Python. Os hashes não substituem a contagem de linhas.
 `bench.build.load_physical(eng, ref, plan)` usa exclusivamente `Catalog` para
 criar tabelas, carregar iteradores e construir os índices após a carga.
 Cada variante recebe `Schema` com seu próprio nome, mantendo campos idênticos.
-Há heap com índices UNIQUE→HASH e NOT UNIQUE→B+, B+/hash por cada coluna
-relevante e índices B+ NOT UNIQUE nas outras colunas permitidas.
+As variantes cobrem só `curso` (`codigo`), `disciplina` (`curso`), `aluno`
+(`dre`, `curso`, `cr`) e `inscricao` (`dre`). Para cada tabela há heap com
+índices UNIQUE→HASH e NOT UNIQUE→B+, B+ e hash por cada uma dessas colunas e
+índices B+ NOT UNIQUE nas outras colunas permitidas (23 variantes no total).
 Há também `aluno__bt_dre_inc` com carga incremental e um par hash com
-`buckets` e `seed` iguais para cada consulta de join (`_eq_<tipo>_<tamanho>`).
+`buckets` e `seed` iguais para cada join (`_eq_<tamanho>`). O N comum do par é
+o menor N padrão das duas tabelas, limitado pelo V(A) do lado NOT UNIQUE
+(D-P6-01, provisória). Toda variante hash NOT UNIQUE recebe `distinct = V(A)`.
 As variantes hash comuns têm seeds distintas entre tabelas, permitindo
 comparar também o caso sem particionamento compatível.
 
 Quando P1/P2/P3 estiverem implementados, execute:
 
 ```sh
-python3 -m bench.build --scale 1 --rows turma=100000 --force --physical
+python3 -m bench.build --scale 1 --force --physical
 ```
 
 `cbd/engine.py` já liga as interfaces acordadas e oferece `cold`, `snapshot`,
@@ -160,8 +165,3 @@ um diretório novo para reconstruir bases físicas.
 a carga física depende dessas entregas. Nenhuma contagem experimental foi
 simulada. O adaptador foi verificado com um dublê do contrato do catálogo;
 medidas e reabertura com outras políticas precisam da pilha real.
-
-Para os joins tipos 2 e 3, os planos seguem a interpretação já registrada
-no P6: a coluna pode determinar a organização física mesmo não sendo a PK
-lógica. A eventual confirmação dessa interpretação com o professor fica
-para a bancada/relatório do grupo.

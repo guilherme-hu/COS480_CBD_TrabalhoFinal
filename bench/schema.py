@@ -32,30 +32,24 @@ DETALHES = Schema("detalhes", (
 
 # Nomes e ordem dos campos são o contrato da arquitetura §8.3.
 SCHEMAS = {s.name: s for s in (CURSO, DISCIPLINA, TURMA, ALUNO, INSCRICAO, DETALHES)}
-for name, base in (("aluno_p", ALUNO), ("detalhes_p", DETALHES), ("turma_p", TURMA)):
-    SCHEMAS[name] = Schema(name, base.fields)
 
 PK = {
     "curso": ("codigo",), "disciplina": ("codigo",), "turma": ("numero",),
     "aluno": ("dre",), "inscricao": ("dre", "turma"), "detalhes": ("cpf",),
-    "aluno_p": ("dre",), "detalhes_p": ("cpf",), "turma_p": ("numero",),
 }
+# Colunas de join/seleção do escopo obrigatório (P6 §3). Só estas tabelas ganham
+# variantes físicas; turma e detalhes ficam na base lógica (integridade e SQLite).
 ACCESS_COLUMNS = {
-    "curso": ("codigo",), "disciplina": ("curso",), "turma": ("professor",),
-    "aluno": ("dre", "cpf", "curso", "orientador", "cr"),
-    "inscricao": ("dre",), "detalhes": ("cpf",),
-    "aluno_p": ("dre", "cpf", "curso", "orientador", "cr"),
-    "detalhes_p": ("cpf",), "turma_p": ("professor",),
+    "curso": ("codigo",), "disciplina": ("curso",),
+    "aluno": ("dre", "curso", "cr"), "inscricao": ("dre",),
 }
+PHYSICAL_TABLES = tuple(ACCESS_COLUMNS)
 FOREIGN_KEYS = {
     "disciplina": (("curso", "curso", "codigo"),),
     "turma": (("disciplina", "disciplina", "codigo"),),
     "aluno": (("curso", "curso", "codigo"),),
     "inscricao": (("dre", "aluno", "dre"), ("turma", "turma", "numero")),
     "detalhes": (("cpf", "aluno", "cpf"),),
-    "aluno_p": (("dre", "aluno", "dre"),),
-    "detalhes_p": (("cpf", "aluno_p", "cpf"),),
-    "turma_p": (("numero", "turma", "numero"),),
 }
 
 

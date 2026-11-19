@@ -8,3 +8,5 @@ data/
 __pycache__/
 *.pyc
 .venv/
+*.egg-info/
+docs/relatorio/*.pdf

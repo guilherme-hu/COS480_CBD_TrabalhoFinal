@@ -597,7 +597,7 @@ class Catalog:
 | `BTREE, unique=True` ou `False` | campo NOT UNIQUE → `BTREE, unique=False` |
 | `HASH, unique=True` ou `False` | campo NOT UNIQUE → `BTREE, unique=False` |
 
-"Índice secundário clustering" (§4.2): interpretamos como índice B+ sobre campo NOT UNIQUE em que **todos os ponteiros de uma mesma chave ficam agrupados** num só bloco ou lista de ponteiros (a chave aparece uma vez na folha). **Confirmar com o professor** e registrar no relatório.
+"Índice secundário clustering" (§4.2): interpretamos como índice B+ sobre campo NOT UNIQUE em que **todos os ponteiros de uma mesma chave ficam agrupados** num só bloco ou lista de ponteiros (a chave aparece uma vez na folha). **Confirmar com o professor** e registrar no relatório. Alternativas e texto da pergunta: D-P6-09 em `docs/decisoes/P6.md`.
 
 Pela tabela, todo índice B+ secundário é NOT UNIQUE e todo índice secundário UNIQUE é hash (só sobre heap). Por isso o `BTreeIndex` **não precisa** de modo UNIQUE. Se algum dia for preciso, o formato NOT UNIQUE com 1 ponteiro por chave já atende.
 
@@ -901,7 +901,7 @@ Antes de a camada de baixo ficar pronta, **escreva contra a interface** e teste 
 
 ### 10.2 Git
 
-- Uma branch por pessoa e funcionalidade (`p3/btree-split`), com PR para o `main`. Precisa de 1 revisão de quem consome a interface (P2 revisa P3 e vice-versa; P4/P5 revisam P2/P3; P6 revisa P4/P5; qualquer um revisa P1).
+- Uma branch por pessoa e issue (`px/<n>-<slug>`, ex.: `p3/47-btree-insert`), com PR para o `main` e `Closes #<n>` (fluxo de issues no `AGENTS.md` §10.1). Precisa de 1 revisão de quem consome a interface (P2 revisa P3 e vice-versa; P4/P5 revisam P2/P3; P6 revisa P4/P5; qualquer um revisa P1).
 - Mudança em `contracts.py` ou neste documento: pode acontecer sempre que o grupo decidir. Faça em PR próprio, avise e peça revisão de quem é afetado.
 - `pytest -q` precisa passar no `main`.
 

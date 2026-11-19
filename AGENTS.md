@@ -39,15 +39,16 @@ O escopo completo está em `docs/implementacao/00_ARQUITETURA_GERAL.md` §0. Em 
 
 ## 1. Antes de começar qualquer sessão
 
-1. **Descubra com quem você está falando.** Se o integrante não disse qual parte é a dele (P1–P6), pergunte. A tabela está no `README.md`.
+1. **Descubra com quem você está falando.** O integrante se identifica no início da sessão com a parte dele ("sou o P3"). Se não disse, pergunte antes de qualquer ação. A tabela de nomes está no `README.md`, e a de labels e logins, no §10.1.
 2. **Leia, nesta ordem:**
    - `proposta.md`: o enunciado. A fonte final do que é pedido.
    - `docs/implementacao/00_ARQUITETURA_GERAL.md`: escopo (§0) e contratos entre módulos. Em conflito com o guia da parte, **vale este**.
    - `docs/implementacao/Px_*.md`: o guia da parte do integrante. As tabelas "Decisões" dele são recomendações a debater, não decisões tomadas.
    - A seção da arquitetura da **camada logo abaixo**, que é a que ele vai usar.
    - `ai/Px/ESTADO.md` e `docs/decisoes/Px.md`, se existirem: onde a sessão anterior parou e o que já foi decidido.
-3. **Rode os testes** (`python -m pytest -q`; em Linux/macOS pode ser `python3`) para saber o estado real antes de mexer.
-4. **Diga ao integrante, em poucas linhas,** o que entendeu da tarefa, o que já existe, o que falta e quais decisões vêm pela frente. Peça confirmação antes de codar.
+3. **Liste as issues da parte** (§10.1): `gh issue list --label parte:Px --state open`. Elas dizem o que falta, em que ordem e o que bloqueia o quê.
+4. **Rode os testes** (`python -m pytest -q`; em Linux/macOS pode ser `python3`) para saber o estado real antes de mexer.
+5. **Diga ao integrante, em poucas linhas,** o que entendeu da tarefa, o que já existe, o que falta, qual issue sugere pegar agora e quais decisões vêm pela frente. Peça confirmação antes de codar.
 
 ---
 
@@ -334,13 +335,66 @@ Escreva com fatos e números. Inclua o que deu errado: é a parte mais valiosa.
 
 ---
 
-## 10. Git
+## 10. Issues e Git
+
+### 10.1 Issues: pegar, resolver e complementar
+
+Todo o trabalho do grupo está em issues no GitHub. Cada issue cabe em um PR e tem três seções: `O que construir`, `Critérios de aceite` (checkboxes verificáveis) e `Bloqueado por` (números de issue, ou "Nenhum").
+
+**De quem é cada issue.** A label `parte:Px` diz a parte, e a issue vem atribuída ao dono:
+
+| Parte | Label | Login no GitHub |
+| :--- | :--- | :--- |
+| P1 | `parte:P1` | `mssvivian` |
+| P2 | `parte:P2` | `guilherme-hu` |
+| P3 | `parte:P3` | `gabrielxmit10` |
+| P4 | `parte:P4` | `PhelHilha` |
+| P5 | `parte:P5` | `EnzoSamp` |
+| P6 | `parte:P6` | `bepo7` |
+| todos | `parte:grupo` | — |
+
+As outras labels são `area:*` (onde é o trabalho), `prio:alta|media|baixa` e `size:S|M|L` (horas, meio dia, um dia).
+
+**Ordem dos milestones.** Os milestones não têm data no GitHub, mas seguem as entregas da arquitetura §10.1. "Milestone mais cedo" quer dizer a data mais cedo nesta tabela; as duas trilhas (C e M) correm em paralelo:
+
+| Data prevista | Milestone | O que precisa funcionar |
+| :--- | :--- | :--- |
+| 05/11 | `C1: Camada 4 mínima e contratos` | `FileManager`, `BufferPool` e fixtures no `main` |
+| 09/11 | `C2: Camada 3 básica` | codec, slotted page, heap, catálogo; B+ com insert e busca |
+| 09/11 | `M1: Base e referência no escopo novo` | base, carga de trabalho e referência SQLite (P6) |
+| 12–14/11 | `C3: Camadas completas` | hash, B+ completa e todos os operadores com custo |
+| 16/11 | `M2: Matriz ponta a ponta em escala pequena` | matriz rodando com a pilha real |
+| 18/11 | `M3: Rodada final e análise` | rodada final e estresse |
+| 20/11 | `M4: Relatório técnico` | relatório, post-mortem, slides |
+
+**Como escolher e resolver uma issue:**
+
+1. Liste as da sua parte e as do grupo: `gh issue list --label parte:Px --state open` e `gh issue list --label parte:grupo --state open`.
+2. Pegue a de milestone mais cedo e prioridade mais alta cujo `Bloqueado por` esteja todo fechado. O `gh issue view <n>` mostra só a própria issue: confira cada número do `Bloqueado por` com `gh issue view <m> --json state --jq .state` (precisa dar `CLOSED`).
+3. Confira se ela é sua ou está livre: `gh issue view <n> --json state,assignees`. Livre: reivindique com `gh issue edit <n> --add-assignee @me` e consulte de novo (o GitHub não trava a issue). Issue de outra pessoa só se ela concordar, e o acordo fica registrado num comentário da própria issue; nunca remova a atribuição de alguém.
+4. Crie a branch a partir do `main` atualizado: `px/<n>-<slug>`, por exemplo `p3/47-btree-insert`.
+5. Resolva seguindo este arquivo inteiro: debate das decisões (§3), testes (§7), revisão (§8), registro de IA (§6).
+6. Abra o PR com `Closes #<n>` e confira cada critério de aceite antes de pedir revisão. A issue fecha sozinha quando o PR entra no `main`.
+7. Se parar no meio, comente na issue onde parou e o que falta, e atualize o `ai/Px/ESTADO.md`.
+
+**Complementar as issues (suas e dos colegas).** O backlog não está completo, e cada um vai achar trabalho que falta ao longo da execução: um requisito do enunciado que nenhuma issue cobre, um bug na camada de outro, uma interface que precisa mudar, um teste de integração entre partes. Nesses casos:
+
+- **Crie uma issue nova**, no mesmo formato e com um milestone, `parte:*`, `area:*`, `prio:*` e `size:*`. Se for de outro integrante, use a `parte:Py` dele, atribua a ele e explique de onde veio (issue, PR ou teste que revelou o problema).
+- **Ligue as dependências.** Se a sua issue depende da nova, acrescente o número no `Bloqueado por` da sua. A recíproca vale: se você vai entregar algo que destrava a de outro, cite a dele.
+- **Não reescreva o escopo da issue de outra pessoa.** Para propor um critério que falta ou apontar um erro, comente na issue. Edite só os campos objetivos, como `Bloqueado por` com números novos, e diga no comentário o que mudou.
+- **Antes de criar, procure:** `gh issue list --state all --search "<termo>"`. Se já existir, comente nela em vez de duplicar.
+
+**Toda escrita no GitHub passa pelo integrante.** Criar ou editar issue, comentar, atribuir, abrir ou comentar PR e fazer push ficam visíveis para o grupo. O agente de IA propõe o texto e só executa depois do ok do integrante, como na regra 11 do §0. Um ok vale para o que foi pedido, não para as próximas escritas.
+
+O objetivo é que, juntas, as issues cubram a proposta inteira e a integração entre as partes. Se você notar que algo do enunciado não aparece em issue nenhuma, isso já é motivo para abrir uma.
+
+### 10.2 Git
 
 Conforme arquitetura geral §10.2:
 
-- Uma branch por pessoa e funcionalidade: `p3/btree-split`, `p5/hash-join`.
+- Uma branch por pessoa e issue: `px/<n>-<slug>` (ex.: `p3/47-btree-insert`, `p5/61-hash-join`).
 - Commits pequenos, com mensagem dizendo o que e por quê. Referencie cartões de decisão quando houver (`D-P3-04`).
-- PR para o `main` com revisão de quem consome a interface. `python -m pytest -q` passando.
+- PR para o `main` com `Closes #<n>` e revisão de quem consome a interface. `python -m pytest -q` passando.
 - Mudança em `contracts.py` ou na arquitetura geral: PR separado, avisado ao grupo.
 - Não versione `data/`, `refs/` (livros, direitos autorais) nem bases geradas.
 
@@ -358,6 +412,7 @@ Antes de encerrar, confira e diga ao integrante o que ficou de fora:
 - [ ] Revisores independentes rodados e achados tratados.
 - [ ] `ai/Px/prompts.md`, `raw/` e `review.md` atualizados.
 - [ ] `ai/Px/ESTADO.md` atualizado, incluindo a tabela de requisitos cobertos.
+- [ ] Issues em dia (§10.1): critérios conferidos no PR, comentário onde parou, issues novas criadas (com o ok do integrante) para o trabalho descoberto, suas e dos colegas.
 - [ ] Resumo de estudo acrescentado em `docs/estudo/Px.md`.
 - [ ] Explicação final no formato do §4.
 

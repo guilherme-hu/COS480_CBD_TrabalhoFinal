@@ -64,7 +64,7 @@ Calibre com `B = 4096` e `M = 64`. A tabela **pequena** cabe em `M − 2 = 62` b
 | inscricao | 500 000 | `dre` uniforme em alunos (≈ 10/aluno); `turma` uniforme |
 | detalhes | 50 000 | `cpf` = cpf dos alunos (embaralhado); LIST com 0–8 itens |
 
-Para cada tabela, **imprima e grave** `n`, `b` (blocos), `bfr` e `V(A)` das colunas usadas (`results/base_stats.csv`) e confira os tamanhos: pequena ≤ 62 blocos, grande ≥ 1 280. Ajuste os volumes se o `bfr` real fugir muito do esperado. `turma` e `detalhes` não entram nos experimentos (geral §0). O `--rows turma=100000` do código atual existia para o join tipo 3 e não é mais necessário.
+Para cada tabela, **imprima e grave** `n`, `b` (blocos), `bfr` e `V(A)` das colunas usadas (`results/base_stats.csv`) e confira os tamanhos: pequena ≤ 62 blocos, grande ≥ 1 280. Ajuste os volumes se o `bfr` real fugir muito do esperado. `turma` e `detalhes` não entram nos experimentos (geral §0). O `--rows turma=100000` da versão anterior existia para o join tipo 3 e foi retirado (#6). Nos outros tamanhos de bloco o critério usa as áreas daquele bloco, com a mesma memória em bytes (D-P6-02): com `scale = 1`, `aluno` em B = 8192 tem ~968 blocos para um limite de 10 × 64 = 640.
 
 Comece com `--scale 0.1` para desenvolver. Meça o tempo de 1 join grande e escolha a escala final para que a matriz inteira rode em **≤ 4 h** (§6.4).
 
@@ -78,7 +78,7 @@ Só o NATURAL JOIN mestre-detalhe está no escopo (geral §0), e as tabelas reai
 
 Não há subconjuntos. Confirme por `stats()` que cada "menor" tem `b ≤ M − 2` **em todos os tamanhos de bloco medidos** (com B = 2048, `disciplina` fica perto do limite: ~55 blocos estimados) e registre isso na tabela do relatório.
 
-**Pendência no código atual** (`bench/workload.py`, `bench/schema.py`, `bench/build.py` e `tests/test_data_preparation.py`): ainda gera os joins tipos 2 e 3, os subconjuntos `aluno_p`/`detalhes_p`/`turma_p`, as faixas em `dre`/`cpf` e a seletividade de 0,1%. Ajuste para o escopo novo antes da integração.
+**Pendência resolvida (08/11, issues #4 e #5):** a carga de trabalho só tem os 3 NATURAL JOINs, as igualdades em `dre` e as faixas em `cr` a 1% e 50%; os subconjuntos e as variantes fora do escopo foram removidos. N comum dos pares bucket-join: D-P6-01 (`docs/decisoes/P6.md`).
 
 ---
 
@@ -159,10 +159,10 @@ O relatório tem de justificar **todas** as escolhas comparando com as preterida
 
 | Fator | Níveis | Experimentos |
 | :--- | :--- | :--- |
-| **política de substituição** (obrigatório) | as implementadas pelo P1 (`LRU` e `MRU` — `D-P1-08`; `Clock` e `FIFO` preteridas) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
-| tamanho de bloco | 2048, 4096, 8192 | joins tipo 1 (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
+| **política de substituição** (obrigatório) | as implementadas pelo P1 (LRU e MRU; Clock e FIFO ficaram de fora pela D-P1-08, PR #2) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
+| tamanho de bloco | 2048, 4096, 8192, com as áreas escaladas para a **mesma memória em bytes** (`areas_for_block`, D-P6-02) | joins (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
 | toss-immediate | off/on | os scans e o BNL |
-| prefetch | 0, 8 | os scans (o efeito aparece em `io.seeks`) |
+| prefetch | 0, 8 | os scans de faixa como controle (um arquivo só: o prefetch não muda `io.reads` nem `io.seeks`) e o INL maior ⋈ maior com o externo em heap, em que o scan do externo se intercala com as buscas no índice e o efeito aparece em `io.seeks` (D-P6-10) |
 | memória (`WORK`) | 16, 64, 256 | sort-merge e hash join grandes (passadas, recursão) |
 | bulk × incremental | `bulk=True/False` | ocupação e altura da B+ e tempo de carga (indicador §6.1.1) |
 | carga de manutenção (obrigatório, indicador §6.1.1) | +10% inserts, −10% deletes aleatórios via `Table` | `stats()` de dados e índices antes e depois (indicador §6.1.1) |
@@ -209,14 +209,14 @@ write_row(exp, rep, n, chk, snap, est, info, dt)
 
 ### 6.2 Repetições (enunciado §6)
 
-No mínimo **3** repetições, até a variação entre elas ficar abaixo de 5%: `max/min − 1 < 0.05` em `io.reads + io.writes` **e** no tempo, com no máximo 10. As contagens são determinísticas (mesma base, cache frio), então a variação vem só do tempo. Grave todas as repetições, e o resumo usa a mediana.
+No mínimo **3** repetições, até a variação do **tempo** ficar abaixo de 5% (`max/min − 1 < 0.05`), com no máximo 10. Os contadores `io.*` e `bp.*` têm de ser **idênticos** entre as repetições: com a mesma base e cache frio a contagem é determinística, então qualquer diferença é bug (no `cold()`, na política ou no prefetch). A repetição divergente é gravada com `status = nondeterministic` e bloqueia o relatório, como `valid = False`. Grave todas as repetições, e o resumo usa a mediana. (Revisto em 09/11 na revisão do PR #35: a versão anterior aceitava 5% de variação também no I/O, o que esconderia esse bug.)
 
 ### 6.3 CSV (`results/raw/<data>_<parte>.csv`)
 
 Colunas, nesta ordem:
 
 ```
-exp_id, rep, status, note, kind, join_type, size_combo, config, algorithm, variant,
+exp_id, rep, dataset, status, note, kind, join_type, size_combo, config, algorithm, variant,
 sel_type, selectivity, path, sort_ptrs,
 r_table, r_org, r_rows, r_blocks, s_table, s_org, s_rows, s_blocks,
 block_size, policy, area_catalog, area_index, area_data, area_work, toss, prefetch,
@@ -227,7 +227,9 @@ bp.DATA.hits, bp.DATA.misses, bp.INDEX.hits, bp.INDEX.misses, bp.WORK.hits, bp.W
 est.reads, est.writes, est.seeks, est.formula, info_json, time_s
 ```
 
-`results/summary.csv`: uma linha por `exp_id` com as medianas. `results/occupancy.csv`: `stats()` de cada arquivo e índice antes e depois da carga de manutenção.
+`dataset` identifica a base: os 12 primeiros hexadecimais do SHA-256 do `workload.json` usado na rodada. O `--resume` recusa um CSV de outra base, e o `results/summary.csv` só junta linhas de uma base. `status` é `ok`, `N/A`, `error` ou `nondeterministic`.
+
+`results/summary.csv`: uma linha por `exp_id` com as medianas da última tentativa (depois de um `error`, o `--resume` mede de novo). `results/occupancy.csv`: `stats()` de cada arquivo e índice antes e depois da carga de manutenção.
 
 ### 6.4 Tempo de execução
 
@@ -237,7 +239,7 @@ O Python é lento: meça antes. Opções, nesta ordem:
 2. paralelizar por processo (`multiprocessing`), **uma cópia da pasta da base por processo** (os temporários e o catálogo gravam);
 3. rodar as repetições 2 e 3 só da contagem se o tempo da 1ª já estiver estável (justifique).
 
-`--resume`: pule os `exp_id`/`rep` que já estão no CSV, porque a rodada final vai cair no meio.
+`--resume`: pule os `exp_id`/`rep` que já estão no CSV, porque a rodada final vai cair no meio. N/A é final; `error`, `nondeterministic` e `valid = False` são medidos de novo. Uma última linha incompleta (queda no meio da gravação) é descartada.
 
 ---
 

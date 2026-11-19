@@ -84,15 +84,16 @@ print(hashlib.sha256(repr(list(Dataset(.002).records("aluno"))).encode()).hexdig
     assert hash_value('abc', 0) != hash_value('abc', 1)
 
 
-def test_sqlite_integrity_and_subsets(prepared):
+def test_sqlite_integrity_without_subsets(prepared):
     with SQLiteReference(prepared / 'ref.sqlite') as ref:
         assert list(ref.conn.execute('PRAGMA foreign_key_check')) == []
         assert ref.conn.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
         for table in BASE_COUNTS:
             assert list(ref.records(table)) == list(Dataset(.002).records(table))
-        assert {r[1] for r in ref.records('aluno_p')} == {r[0] for r in ref.records('detalhes_p')}
-        for table in ('aluno_p', 'turma_p', 'detalhes_p'):
-            assert ref.stats(table, 2048)['estimated_blocks'] <= 62
+        tables = {row[0] for row in ref.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE '\\_%' ESCAPE '\\'")}
+        # Escopo novo (arquitetura §0): só as seis tabelas, sem aluno_p/detalhes_p/turma_p.
+        assert tables == set(BASE_COUNTS)
         assert ref.conn.execute('SELECT COUNT(*) FROM aluno WHERE orientador IS NULL').fetchone()[0] > 0
         with pytest.raises(sqlite3.IntegrityError):
             ref.conn.execute('INSERT INTO inscricao VALUES (999999,1,100,NULL)')
@@ -100,9 +101,19 @@ def test_sqlite_integrity_and_subsets(prepared):
 
 def test_all_workload_results_against_python(prepared):
     workload = json.loads((prepared / 'workload.json').read_text())
-    assert len([q for q in workload if q['kind'] == 'join']) == 9
+    joins = [q for q in workload if q['kind'] == 'join']
+    assert [(q['r_table'], q['s_table']) for q in joins] == [
+        ('curso', 'disciplina'), ('curso', 'aluno'), ('aluno', 'inscricao')]
     assert len([q for q in workload if q.get('sel_type') == 'eq_unique']) == 20
-    assert len([q for q in workload if q.get('sel_type', '').startswith('range')]) == 6
+    ranges = [q for q in workload if q.get('sel_type', '').startswith('range')]
+    # Escopo novo: só faixa NOT UNIQUE em aluno.cr, metas de 1% e 50%.
+    assert [(q['column'], q['operator'], q['target_selectivity']) for q in ranges] == [
+        ('cr', '>=', .01), ('cr', '<=', .5)]
+    assert all(q['sel_type'] == 'range_nonunique' for q in ranges)
+    n_aluno = Dataset(.002).counts['aluno']
+    for q in ranges:
+        # Quantil empírico: nunca abaixo da meta; acima só por empates (até 10% + 1 registro).
+        assert q['target_selectivity'] <= q['selectivity'] <= q['target_selectivity'] * 1.1 + 1 / n_aluno
     with SQLiteReference(prepared / 'ref.sqlite') as ref:
         for query in workload:
             r = query['r_table']
@@ -122,6 +133,30 @@ def test_all_workload_results_against_python(prepared):
             assert output_signature(query, reversed(output)) == (expected['count'], expected['checksum'])
             sql, params = query_sql(query)
             assert ref.conn.execute('SELECT COUNT(*) FROM (' + sql + ')', params).fetchone()[0] == len(output)
+
+
+def test_heap_order_is_not_key_order(prepared):
+    # D-P6-04/D-P6-06: a ordem exportada do SQLite (que vira a ordem física do heap)
+    # não pode ser agrupada pela chave, nem crescente nem decrescente; senão todo
+    # índice secundário na chave vira clustering. Numa permutação aleatória, cerca de
+    # metade dos pares vizinhos é crescente; ordenada dá ~1 (ou ~0 se decrescente).
+    with SQLiteReference(prepared / 'ref.sqlite') as ref:
+        for table, column in (('aluno', 'dre'), ('inscricao', 'dre')):
+            keys = [row[SCHEMAS[table].idx(column)] for row in ref.records(table)]
+            rising = sum(b > a for a, b in zip(keys, keys[1:])) / (len(keys) - 1)
+            assert .35 < rising < .65, (table, rising)
+
+
+def test_checksum_is_a_sum_so_it_sees_multiplicity(prepared):
+    # D-P6-05: [r1, r1] e [r2, r2] têm a mesma contagem e o mesmo XOR (zero), mas
+    # somas diferentes. O teste falha se o checksum virar XOR.
+    workload = json.loads((prepared / 'workload.json').read_text())
+    query = next(q for q in workload if q.get('sel_type') == 'range_nonunique')
+    with SQLiteReference(prepared / 'ref.sqlite') as ref:
+        r1, r2 = list(ref.records('aluno'))[:2]
+    assert output_signature(query, [r1, r1]) != output_signature(query, [r2, r2])
+    # Trocar uma tupla por outra também muda o checksum com a mesma contagem.
+    assert output_signature(query, [r1, r2])[1] != output_signature(query, [r1, r1])[1]
 
 
 def test_null_join_and_duplicate_multiplicity():
@@ -188,10 +223,34 @@ def test_plan_and_catalog_adapter(prepared):
                 else:
                     assert index['kind'] == IndexKind.BTREE and not index['unique']
                     assert index['column'] != item['org']['key']
+        # P6 §3: só curso, disciplina, aluno e inscricao, nas colunas de join/seleção.
+        assert {v['name'] for v in plan} == {
+            'curso__heap', 'curso__bt_codigo', 'curso__hs_codigo',
+            'disciplina__heap', 'disciplina__bt_curso', 'disciplina__hs_curso',
+            'aluno__heap', 'aluno__bt_dre', 'aluno__hs_dre', 'aluno__bt_curso',
+            'aluno__hs_curso', 'aluno__bt_cr', 'aluno__hs_cr',
+            'inscricao__heap', 'inscricao__bt_dre', 'inscricao__hs_dre',
+            'aluno__bt_dre_inc',
+            'curso__hs_codigo_eq_small_small', 'disciplina__hs_curso_eq_small_small',
+            'curso__hs_codigo_eq_small_large', 'aluno__hs_curso_eq_small_large',
+            'aluno__hs_dre_eq_large_large', 'inscricao__hs_dre_eq_large_large'}
+        for item in plan:
+            org = item['org']
+            if org['org'] == Org.HASH:
+                assert org['params']['expected_records'] == stats[item['source']]['n']
+                if not org['unique']:
+                    assert org['params']['distinct'] == stats[item['source']]['distinct'][org['key']]
         paired = [item for item in plan if '_eq_' in item['name']]
         for r, s in zip(paired[::2], paired[1::2]):
             assert r['org']['params']['seed'] == s['org']['params']['seed']
             assert r['org']['params']['buckets'] == s['org']['params']['buckets']
+            # N comum nunca passa do V(A) do lado NOT UNIQUE (D-P6-01).
+            for side in (r, s):
+                if not side['org']['unique']:
+                    assert r['org']['params']['buckets'] <= side['org']['params']['distinct']
+        plain_seeds = {item['source']: item['org']['params']['seed'] for item in plan
+                       if '__hs_' in item['name'] and '_eq_' not in item['name']}
+        assert len(set(plain_seeds.values())) == len(plain_seeds)
         eng = SimpleNamespace(catalog=FakeCatalog())
         rows = load_physical(eng, ref, plan)
         for item in plan:
@@ -208,3 +267,20 @@ def test_row_override():
     assert dataset.counts['detalhes'] == dataset.counts['aluno'] == 100
     with pytest.raises(ValueError):
         Dataset(1, (('detalhes', 2),))
+
+
+def test_size_checks_use_areas_of_each_block_size():
+    # D-P6-02: o critério acompanha as áreas do bloco (memória constante em bytes).
+    from bench.build import size_checks_for_block
+    stats = {'curso': dict(estimated_blocks=1), 'disciplina': dict(estimated_blocks=14),
+             'aluno': dict(estimated_blocks=968), 'inscricao': dict(estimated_blocks=2273)}
+    assert all(c['status'] == 'ok' for c in size_checks_for_block(stats, 8192))
+    # Com as áreas fixas em páginas (DATA = 128) o mesmo aluno seria "pequeno demais".
+    assert any(c['status'] == 'inadequate' for c in size_checks(stats))
+    # O lado "menor" usa o WORK do próprio bloco: disciplina com 40 blocos cabe em
+    # M − 2 = 126 (B = 2048), mas não em M − 2 = 30 (B = 8192).
+    big = dict(stats, disciplina=dict(estimated_blocks=40), aluno=dict(estimated_blocks=4037),
+               inscricao=dict(estimated_blocks=9260))
+    small_small = lambda b: next(c for c in size_checks_for_block(big, b) if c['size_combo'] == 'small_small')
+    assert small_small(2048)['status'] == 'ok'
+    assert small_small(8192)['problems'] == ['disciplina: 40 blocos, esperado <= 30']
