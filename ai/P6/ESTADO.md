@@ -25,6 +25,14 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 - #16, #17, #19 experimentos de justificativa; #18 revisores independentes;
   #20–#23 rodada final e análise; #24–#27 relatório e fechamento.
 
+## Relatório técnico (#24)
+- Esqueleto em `docs/relatorio/` (Markdown → PDF via pandoc + tectonic), partes
+  numéricas geradas por `bench/report.py` e testadas em `tests/test_report.py`.
+  Formato escolhido pelo agente com aval do integrante ("pode seguir"); trocar
+  para LaTeX puro só muda a montagem.
+- Pendentes no texto: resumo das conclusões (#26), decisões (#25), política e
+  fatores (#16, #19), decisão de volumes (#6).
+
 ## Requisitos do enunciado cobertos
 | Enunciado § | Onde está | Teste que prova |
 | :--- | :--- | :--- |
@@ -37,6 +45,8 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 | §6 repetições até < 5% no tempo, mínimo 3, contadores idênticos | `bench/run.py` (`stable`, `run`) | `test_stable_measure_stops_at_three`, `test_unstable_time_repeats_until_ten`, `test_io_divergence_is_flagged_nondeterministic` |
 | §6 retomada da rodada sem misturar bases | `bench/run.py` (`dataset`, `load_previous`, `last_attempt`) | `test_rows_carry_dataset_and_resume_refuses_other_dataset`, `test_resume_retries_error_but_not_na`, `test_resume_drops_truncated_last_line_and_checks_header`, `test_summary_refuses_mixed_datasets_and_filters_by_dataset` |
 | §6.1.2 contagem de blocos/buffer por operação | `bench/run.py` (`measure`) + `cbd/engine.py` | `test_row_counts_whole_output_inside_window`, `test_cold_flushes_before_resetting` |
+| §7.3 folha de rosto com nome e DRE de todos | `bench/report.py` (`cover`, `members`) | `test_cover_has_every_member_with_dre` |
+| §7.2.2 relatório: base e metodologia | `docs/relatorio/03_base.md`, `04_metodologia.md`, `gerado/` | `test_base_tables_come_from_base_stats`, `test_generated_parts_are_up_to_date` |
 | §6.1.1 ocupação antes/depois da manutenção | — (#17) | — |
 | §6.1.3 estimado × medido | colunas `est.*` no CSV; análise em #22 | `test_row_counts_whole_output_inside_window` (só grava) |
 
