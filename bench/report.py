@@ -20,8 +20,8 @@ import re
 import shutil
 import subprocess
 
-from bench.build import size_checks
-from bench.matrix import BASE_AREAS, join_experiments, select_experiments
+from bench.build import size_checks_for_block
+from bench.matrix import areas_for_block, join_experiments, select_experiments
 from bench.workload import CR_RANGES, EQ_SAMPLES
 from cbd.contracts import PageType
 
@@ -103,15 +103,19 @@ def base_section(stats_path):
         [(t, *(_int(by_block[b][t]['estimated_blocks']) for b in sizes),
           *(_dec(by_block[b][t]['estimated_bfr']) for b in sizes)) for t in tables],
         numeric=range(1, 1 + 2 * len(sizes))))
-    work, data = BASE_AREAS[PageType.WORK], BASE_AREAS[PageType.DATA]
-    parts.append(f'\n## Adequação das combinações de tamanho\n\n'
-                 f'Critério (P6 §2.3): a tabela menor cabe em M − 2 = {work - 2} blocos e a maior tem '
-                 f'pelo menos 10 × DATA = {10 * data} blocos (WORK = {work}, DATA = {data}).\n')
+    parts.append('\n## Adequação das combinações de tamanho\n\n'
+                 'Critério (P6 §2.3): a tabela menor cabe em M − 2 blocos e a maior tem pelo menos '
+                 '10 × DATA blocos. As áreas do buffer têm a mesma memória em bytes em todos os '
+                 'tamanhos de bloco (D-P6-02), então M e DATA, em páginas, dependem de B:\n')
+    parts.append(_table(['B', 'WORK = M', 'DATA', 'menor ≤', 'maior ≥'],
+                        [(b, a[PageType.WORK], a[PageType.DATA], a[PageType.WORK] - 2,
+                          _int(10 * a[PageType.DATA])) for b, a in ((b, areas_for_block(b)) for b in sizes)],
+                        numeric=range(5)))
     rows = []
     for b in sizes:
-        for check in size_checks(by_block[b], work, data):
+        for check in size_checks_for_block(by_block[b], b):
             rows.append((check['size_combo'], b, 'ok' if not check['problems'] else '; '.join(check['problems'])))
-    parts.append(_table(['Combinação', 'B', 'Situação'], rows, numeric=(1,)))
+    parts.append('\n' + _table(['Combinação', 'B', 'Situação'], rows, numeric=(1,)))
     return '\n'.join(parts) + '\n'
 
 

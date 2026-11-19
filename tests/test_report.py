@@ -30,17 +30,18 @@ def test_base_tables_come_from_base_stats(tmp_path):
     aluno = next(r for r in rows if r['table'] == 'aluno' and r['block_size'] == '4096')
     text = base_section(stats)
     assert f"| aluno | {int(aluno['n']):,} |".replace(',', '.') in text
+    # Com as áreas proporcionais ao bloco (D-P6-02), a base atual é adequada nos 3 B.
+    assert 'esperado' not in text
     # Muda um número no CSV: a tabela gerada acompanha (nada digitado à mão).
     aluno_8k = next(r for r in rows if r['table'] == 'aluno' and r['block_size'] == '8192')
-    aluno_8k['estimated_blocks'] = '1300'
+    aluno_8k['estimated_blocks'] = '600'
     with stats.open('w', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=rows[0].keys())
         writer.writeheader()
         writer.writerows(rows)
     changed = base_section(stats)
-    assert '1.300' in changed
-    # Com 1300 blocos, aluno passa a ser "grande" também em B = 8192 (critério 10·DATA).
-    assert 'esperado >= 1280' in text and 'esperado >= 1280' not in changed
+    # B = 8192: DATA = 64 páginas, então "grande" exige 640 blocos.
+    assert '| aluno | 50.000 |' in changed and 'aluno: 600 blocos, esperado >= 640' in changed
 
 
 def test_matrix_counts_match_matrix_module():

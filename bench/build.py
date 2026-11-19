@@ -11,7 +11,8 @@ from bench.generator import Dataset, BASE_COUNTS, SEEDS
 from bench.schema import SCHEMAS, ACCESS_COLUMNS, PHYSICAL_TABLES
 from bench.sqlite_ref import SQLiteReference
 from bench.workload import JOINS, prepare_workload
-from cbd.contracts import Schema, Org, OrgSpec, IndexKind, IndexSpec
+from bench.matrix import areas_for_block
+from cbd.contracts import Schema, Org, OrgSpec, IndexKind, IndexSpec, PageType
 
 
 def _default_buckets(stat, load=.8):
@@ -116,6 +117,12 @@ def size_checks(stats, work_pages=64, data_pages=128, physical=False):
     return output
 
 
+def size_checks_for_block(stats, block_size, work_pages=None, physical=False):
+    """size_checks com as áreas do próprio bloco (D-P6-02: memória constante em bytes)."""
+    areas = areas_for_block(block_size, work_pages)
+    return size_checks(stats, areas[PageType.WORK], areas[PageType.DATA], physical)
+
+
 def write_json(path, value):
     Path(path).write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
 
@@ -152,7 +159,7 @@ def prepare(output, dataset, block_sizes=(2048, 4096, 8192), work_pages=64, forc
             schema = {name: asdict(value) for name, value in SCHEMAS.items()}
             metadata = dict(format_version=2, scale=dataset.scale, rows=dataset.counts, seeds=SEEDS,
                             overrides=dict(dataset.row_overrides), work_pages=work_pages, schema=schema,
-                            sizes={b: size_checks(s, work_pages) for b, s in reports.items()})
+                            sizes={b: size_checks_for_block(s, b, work_pages) for b, s in reports.items()})
             ref.conn.execute('CREATE TABLE _preparation (metadata TEXT NOT NULL)')
             ref.conn.execute('INSERT INTO _preparation VALUES (?)', (json.dumps(metadata),))
             ref.conn.commit()
@@ -185,7 +192,8 @@ def main():
                         help='Diretório do CSV de estatísticas versionável')
     parser.add_argument('--block-sizes', type=int, nargs='+', default=[2048, 4096, 8192])
     parser.add_argument('--work-pages', type=int, default=64,
-                        help='Páginas WORK (M) usadas para conferir se a tabela menor cabe em M-2')
+                        help='Páginas WORK (M) em B=4096; nos outros blocos escala para a mesma '
+                             'memória em bytes (D-P6-02). Confere se a tabela menor cabe em M-2')
     parser.add_argument('--rows', action='append', default=[], metavar='TABLE=N',
                         help='Ajusta um volume; detalhes sempre acompanha aluno')
     parser.add_argument('--force', action='store_true', help='Recria a preparação lógica existente')
@@ -200,9 +208,10 @@ def main():
     import shutil
     args.results.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(args.output / 'base_stats.csv', args.results / 'base_stats.csv')
-    for check in metadata['sizes'].get(4096, next(iter(metadata['sizes'].values()))):
-        for problem in check['problems']:
-            print(f'Volume a calibrar (estimativa): {problem}')
+    for block_size, checks in metadata['sizes'].items():
+        for check in checks:
+            for problem in check['problems']:
+                print(f'Volume a calibrar (estimativa, B={block_size}): {problem}')
     if args.physical:
         from cbd.engine import Engine
         from cbd.contracts import StorageConfig, BufferConfig, PageType
@@ -210,14 +219,13 @@ def main():
             with SQLiteReference(args.output / 'ref.sqlite') as ref:
                 for block_size in args.block_sizes:
                     plan = json.loads((args.output / f'physical_plan_{block_size}.json').read_text())
-                    cfg = BufferConfig()
-                    cfg.areas[PageType.WORK] = args.work_pages
+                    cfg = BufferConfig(areas=areas_for_block(block_size, args.work_pages))
                     with Engine(StorageConfig(str(args.output / f'db_{block_size // 1024}k'), block_size), cfg) as eng:
                         rows = load_physical(eng, ref, plan)
                     write_json(args.output / f'physical_stats_{block_size}.json', rows)
                     by_table = {row['table']: row for row in rows if row['org'] == 'HEAP'}
                     write_json(args.output / f'physical_sizes_{block_size}.json',
-                               size_checks(by_table, args.work_pages, physical=True))
+                               size_checks_for_block(by_table, block_size, args.work_pages, physical=True))
         except ModuleNotFoundError as error:
             parser.exit(2, f'Base lógica pronta. Carga física depende das partes P1–P3 ausentes: {error.name}\n')
     print(f'Base e carga de trabalho prontas em {args.output}')

@@ -77,3 +77,8 @@ Suíte: 52 passaram, 1 pulado (teste do Engine com a pilha real).
 
 ## Decisões provisórias a rever
 - D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
+  O P2 pediu (PR #29) para ele e o P5 participarem da revisão.
+
+## Decisões tomadas nesta parte
+- D-P6-02 — memória do buffer constante em bytes no experimento de bloco
+  (`areas_for_block`); base com volumes padrão, sem `--rows turma=100000` (#6).

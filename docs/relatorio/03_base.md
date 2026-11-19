@@ -25,12 +25,17 @@ Distribuições relevantes para os experimentos:
 - cerca de 30% dos orientadores são nulos (nulos não se juntam);
 - cada aluno tem em média 10 inscrições.
 
-O volume de `turma` foi aumentado de 10 mil para 100 mil registros na versão
-anterior da carga; com o escopo atual, `turma` e `detalhes` ficam só na base
-lógica, para a integridade referencial e a referência SQLite, e não entram nos
-experimentos.
+`turma` e `detalhes` ficam só na base lógica, para a integridade referencial e
+a referência SQLite, e não entram nos experimentos.
 
-> **Decisão pendente (#6):** com B = 8192 a tabela `aluno` não atinge o critério
-> de tabela grande (ver a tabela de adequação abaixo). A escolha entre aumentar a
-> base, manter e justificar ou restringir o experimento de tamanho de bloco entra
-> aqui quando for tomada.
+## Volumes e tamanhos de bloco (D-P6-02)
+
+Os volumes são os mesmos nos três tamanhos de bloco. O que muda com o bloco é o
+número de páginas de cada área do buffer: a memória em **bytes** é a mesma da
+configuração-base (DATA = 512 KiB, por exemplo, são 256, 128 ou 64 páginas em
+2, 4 ou 8 KiB). Assim, o experimento de tamanho de bloco compara blocos com a
+mesma memória, sem misturar "bloco maior" com "buffer maior". Com essa regra, a
+tabela menor de cada junção cabe em M − 2 páginas e a maior passa de 10 × DATA
+em todos os tamanhos (tabela abaixo). A alternativa preterida de aumentar a base
+para ~67 mil alunos alongaria a rodada em ~34% e manteria a mistura entre bloco e
+memória.
