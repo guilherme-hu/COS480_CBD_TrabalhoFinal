@@ -246,3 +246,62 @@ Código bruto: `ai/P6/raw/compare_cost_v1.py`, `plots_v1.py`, `report_v1.py`,
 - "Fronteira da faixa sem limite de magnitude": é questão de projeto, não bug.
   A regra agora só vale em caminho por índice; o limite de magnitude fica para
   debate com o integrante.
+
+## Revisão independente do índice de cartões (#25, 19/11)
+
+Revisor de código e testes, com contexto limpo, sobre `decision_cards`/`decisions_section`
+(`bench/report.py`) e os testes novos. Versão bruta: `ai/P6/raw/report_decisoes_v1.py`.
+Cada achado aceito foi reproduzido com um teste que falhou antes da correção
+(8 falhas em `tests/test_report.py`).
+
+### Cartão sumia do índice em silêncio (#25)
+- **Onde:** `bench/report.py`, `_CARD` e a contagem `^### D-P\d`; glob `P*.md`.
+- **Categoria:** corretude (o objetivo da função era justamente "nenhum cartão some").
+- **Como foi achado:** revisor; `#### D-P3-01 — T` dava `[]` sem erro, e `p3.md` era ignorado.
+- **Teste:** `test_malformed_cards_raise_instead_of_vanishing[####...]`, `test_lowercase_decision_file_is_not_ignored`.
+
+### Status fora do vocabulário contava errado (#25)
+- **Onde:** normalização do status (`re.match(r'[\w-]+', ...)`).
+- **Categoria:** corretude. `_provisória_` virava o status `_provisória_` (0 provisórios),
+  `provisoria` passava, `(12/11) decidida` dava `AttributeError` sem dizer o arquivo;
+  "decidida; nada foi revisto" não marcava, mas "não revista" virava "(revista)".
+- **Teste:** `test_decision_cards_normalize_status_and_keep_file_order` e os casos de status do parametrizado.
+
+### ID duplicado ou de outra parte era aceito (#25)
+- **Categoria:** corretude. O mesmo `D-P3-01` duas vezes gerava duas linhas; `D-P5-01` em `P3.md` passava.
+- **Teste:** casos "duplicado" e "outra parte" do parametrizado.
+
+### Citação dentro de nota contava como justificativa (#25)
+- **Onde:** `decisions_section` e o teste do capítulo, que usava substring crua.
+- **Categoria:** teste fraco. Um blockquote "os cartões D-P4-01 a 03 entram depois" bastava para o cartão ficar "justificado".
+- **Teste:** `test_citation_in_a_note_does_not_count_as_justification`; o teste do capítulo passou a ler o índice gerado.
+
+### Descartados
+- Cartão-modelo dentro de bloco de código entraria no índice: o efeito é ruidoso (o teste exige citá-lo), não silencioso, e nenhum arquivo de decisões tem esse bloco.
+- `## ` dentro de bloco de código trocaria a seção: o capítulo 2 não tem blocos de código.
+
+## Revisão independente do capítulo 2 do relatório (#25, 19/11)
+
+Revisor de fidelidade às fontes, com contexto limpo, sobre `docs/relatorio/02_opcoes_de_projeto.md`.
+16 achados, todos conferidos contra a fonte citada e aceitos. Os que são erro de fato:
+
+### CPF sintético "não é válido" (D-P6-07, cartão de 12/11)
+- **Onde:** `docs/decisoes/P6.md` (D-P6-07) e a linha do CPF no capítulo 2.
+- **Categoria:** afirmação falsa em cartão gerado por IA.
+- **Como foi achado:** o revisor calculou os dígitos verificadores; conferido: `00000000191` é válido
+  e 499 dos 50 mil CPFs `f"{k:011d}"` passam no teste. A escolha continua de pé (sequencial, sem
+  origem em pessoa real, sem efeito em experimento); só o motivo estava errado.
+- **Correção:** cartão e capítulo reescritos com o número medido.
+
+### Justificativa dos 4 KB contradizia a D-P6-02 (capítulo 2)
+- O texto rejeitava 2 e 8 KB pelo critério de tamanho com áreas fixas em páginas, mas a D-P6-02
+  escala as áreas e o critério vale nos três tamanhos. Reescrito: meio-termo scan × acesso pontual,
+  página do SO, e o tamanho de bloco medido como fator.
+
+### Outros (precisão e cobertura)
+- Política "escolhida por operação pela #16" atribuída à D-P1-08, que fixa LRU geral + MRU no laço interno.
+- Função de hash descrita sem o finalizador splitmix64 e sem a preterida `k mod N` (enunciado §3.5.3).
+- Motivo do escopo da base atribuído à D-P6-02 (vem da arquitetura §0 / #5); faltava apontar o cap. 3 para campos e chaves.
+- Sort-merge sem a escolha concreta (divisão de M, pipeline); hash join sem construtor e `prepartitioned`.
+- Linhas sem preterida onde o enunciado já nomeia uma (free list §3.2.1, grupo de campos §3.4.1, hash estático exigido §3.5.1, repartição por operação §2.2.2).
+- Detalhes: desempate do INL e teto do BNL (D-P4-01/02), pilha de livres persistida no `close()`, contadores por arquivo, "b_r − 1 leituras", "~2 450 buckets vazios", "várias páginas por bloco" fora do D-P1-06, e "nenhum operador usa mais de M" forte demais.
