@@ -3,6 +3,8 @@
 O texto fica em `docs/relatorio/*.md`, escrito à mão. Tudo o que é número ou
 lista que já existe em outro lugar é gerado aqui, para nunca ser redigitado:
 - capa: nomes e DREs da tabela "Integrantes" do README (enunciado §7.3);
+- decisões: índice dos cartões de `docs/decisoes/` com status e o item do
+  capítulo 2 que justifica cada um (enunciado §7.2.2.a, issue #25);
 - base: volumes, tamanho de registro, V(A), blocos e bfr estimados por tamanho
   de bloco e a conferência dos tamanhos dos joins, lidos de `base_stats.csv`;
 - metodologia: composição da matriz contada a partir de `bench.matrix`.
@@ -26,10 +28,18 @@ from bench.workload import CR_RANGES, EQ_SAMPLES
 from cbd.contracts import PageType
 
 REPORT_DIR = Path('docs/relatorio')
+DECISIONS_DIR = Path('docs/decisoes')
+DESIGN_CHAPTER = '02_opcoes_de_projeto.md'
 # Ordem dos capítulos; `gerado/` é escrito por este módulo.
-CHAPTERS = ('gerado/capa.md', '01_introducao.md', '02_opcoes_de_projeto.md', '03_base.md',
+CHAPTERS = ('gerado/capa.md', '01_introducao.md', DESIGN_CHAPTER, 'gerado/decisoes.md', '03_base.md',
             'gerado/base.md', '04_metodologia.md', 'gerado/matriz.md', '05_resultados.md',
             '06_conclusao.md')
+# Cabeçalho de cartão (AGENTS.md §3.3): "### D-P3-04 — título" e, logo abaixo, "- **Status:** ...".
+_CARD = re.compile(r'^### (D-P\d-\d\d) — (.+)\r?\n(?:\s*\n)*- \*\*Status:\*\* (.+)$', re.M)
+# Qualquer título que pareça um cartão, para nenhum fora do formato sumir em silêncio.
+_CARD_LIKE = re.compile(r'^#+\s+\**D-P\d', re.M | re.I)
+_STATUS = ('decidida', 'provisória', 'revista')
+_CARD_FORMAT = '"### D-Px-NN — título" seguido de "- **Status:** decidida|provisória|revista ..."'
 
 
 def members(readme):
@@ -152,10 +162,68 @@ def matrix_section():
     return '\n'.join(parts) + '\n'
 
 
+def decision_cards(folder=DECISIONS_DIR):
+    """Cartões de `docs/decisoes/P*.md`: lista de (id, título, status), na ordem dos arquivos.
+
+    Status resumido: a primeira palavra do campo, sem negrito, itálico ou crase
+    (decidida, provisória ou revista), mais "(revista)" quando o campo diz "revista
+    em". Levanta ValueError, com o nome do arquivo, se um título parecido com cartão
+    estiver fora do formato, se o status não for do vocabulário ou se o id se
+    repetir ou for de outra parte: um cartão fora do formato sumiria do índice em
+    silêncio, e o relatório diria que tudo está justificado.
+    """
+    cards, seen = [], set()
+    paths = sorted(p for p in Path(folder).glob('*.md') if re.fullmatch(r'p\d\.md', p.name, re.I))
+    for path in sorted(paths, key=lambda p: p.name.upper()):
+        text = path.read_text()
+        found = _CARD.findall(text)
+        if len(found) != len(_CARD_LIKE.findall(text)):
+            raise ValueError(f'{path}: cartão fora do formato; esperado {_CARD_FORMAT}')
+        for card_id, title, status in found:
+            word = re.match(r'[^\W\d_]+', status.strip('*_` ').lower())
+            if word is None or word.group(0) not in _STATUS:
+                raise ValueError(f'{path}: {card_id} com status {status!r}; esperado um de {_STATUS}')
+            word = word.group(0)
+            if word != 'revista' and re.search(r'\brevista em\b', status.lower()):
+                word += ' (revista)'
+            if card_id in seen or card_id[2:4].upper() != path.stem.upper():
+                raise ValueError(f'{path}: {card_id} repetido ou de outra parte')
+            seen.add(card_id)
+            cards.append((card_id, title.strip(), word))
+    return cards
+
+
+def decisions_section(folder=DECISIONS_DIR, chapter=REPORT_DIR / DESIGN_CHAPTER):
+    """Índice de todos os cartões com status e o item do capítulo 2 que cita cada um.
+
+    Só conta citação dentro de uma seção "## " e fora de nota: uma linha que começa
+    com ">" (ex.: "os cartões do P4 entram depois") não justifica decisão nenhuma.
+    """
+    sections, current = {}, None
+    for line in Path(chapter).read_text().splitlines():
+        if line.startswith('## '):
+            current = line[3:].strip()
+        elif current and not line.lstrip().startswith('>'):
+            for card_id in re.findall(r'D-P\d-\d\d', line):
+                sections.setdefault(card_id, [])
+                if current not in sections[card_id]:
+                    sections[card_id].append(current)
+    cards = decision_cards(folder)
+    rows = [(card_id, title.replace('|', '\\|'), status, '; '.join(sections.get(card_id, ['—'])))
+            for card_id, title, status in cards]
+    pending = sum(status.startswith('provisória') for _, _, status in cards)
+    return '\n'.join([
+        '## Índice dos cartões de decisão\n',
+        f'Gerado de `docs/decisoes/`: {len(cards)} cartões, {pending} provisórios. '
+        'A última coluna diz em que item da seção anterior o cartão é justificado.\n',
+        _table(['Cartão', 'Decisão', 'Status', 'Item'], rows)]) + '\n'
+
+
 def generate(stats, readme='README.md', out_dir=REPORT_DIR):
     target = Path(out_dir) / 'gerado'
     target.mkdir(parents=True, exist_ok=True)
     (target / 'capa.md').write_text(cover(readme))
+    (target / 'decisoes.md').write_text(decisions_section())
     (target / 'base.md').write_text(base_section(stats))
     (target / 'matriz.md').write_text(matrix_section())
     return target
