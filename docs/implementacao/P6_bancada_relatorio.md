@@ -20,7 +20,7 @@
 - **Medição:** cache frio, consumir o resultado inteiro e anotar os contadores. **Validação:** o mesmo resultado tem que sair no SQLite.
 - **Estimado × medido:** você **não escreve** as fórmulas, que vêm do P4/P5. Você coloca a fórmula ao lado da medida e explica as diferenças.
 - **Saídas:** CSVs, gráficos e o relatório técnico com as recomendações finais ("para tal carga, use tal configuração").
-- **Ambiguidade do enunciado a perguntar ao professor:** o que é "índice secundário clustering" (geral §5.3).
+- **Ambiguidade do enunciado:** o que é "índice secundário clustering" (geral §5.3). Sem canal com o professor, decidido na D-P6-09.
 
 ---
 

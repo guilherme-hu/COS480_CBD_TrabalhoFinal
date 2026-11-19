@@ -240,3 +240,14 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    segue provisória, à espera do professor. Corrigido o "Em palavras simples" da D-P6-10
    (prefetch 8 traz 9 páginas e poupa 8 voltas, não 7). Índice gerado: 22 cartões, 1
    provisório. Suíte: 142 passaram, 2 pulados.
+
+5. Pedidos do usuário: "pode abrir o PR e mesclar apos revisao", "pode corrigir o plural no
+   gerador também" e "nao existe como falar coom o professor. pode decidir e documentar a
+   decisao". Ferramenta: Claude Code (Claude Opus 5.5).
+
+   Resultado: PR #86 mesclado depois de um revisor independente (5 achados aceitos, ver
+   `ai/P6/review.md`); plural do índice corrigido com teste. D-P6-09 decidida: A (ponteiros
+   agrupados) com a explicação C, delegada ao agente porque não há canal com o professor. Para
+   cobrir o melhor argumento contra (leitura B, do E&N), o capítulo 2 diz qual linha mede o
+   *clustering index* do livro (B+ primária em `cr`). Nenhum cartão da P6 segue provisório.
+
