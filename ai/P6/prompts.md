@@ -216,3 +216,15 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    numa linha do guia P6 §4.4) e o registro do marcador. Comentário de revisão no
    PR #2, merge, `main` com 130 passaram e 2 pulados. Registro em `ai/P6/ESTADO.md`
    ("Camada 4 no `main`").
+
+3. Pedidos do usuário: "pode comentar na #16 e começar a #25", "A" (capítulo 2 por item do
+   enunciado §7.2.2.a) e "pode postar os comentários das lacunas".
+
+   Resultado: comentário na #16 (toss × MRU). Capítulo 2 reescrito por item do enunciado, com
+   escolha, preterida, motivo e cartão; índice gerado dos cartões (`decision_cards`,
+   `decisions_section`) com teste que exige citar todo cartão no capítulo. Versão bruta em
+   `ai/P6/raw/report_decisoes_v1.py`. Dois revisores independentes: código e testes (8 falhas
+   reproduzidas e corrigidas: cartão que sumia em silêncio, status fora do vocabulário, ID
+   duplicado, nota contando como justificativa) e fidelidade às fontes (16 achados aceitos,
+   incluindo erro no D-P6-07 sobre CPF válido). Registro em `ai/P6/review.md`. Comentários de
+   lacuna em #62, #63, #71 e #67.

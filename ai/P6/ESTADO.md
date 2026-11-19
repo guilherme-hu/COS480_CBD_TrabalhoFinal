@@ -28,7 +28,11 @@ ser apagados.
 - #8: enviar ao professor a pergunta pronta na D-P6-09 e registrar a resposta (o agente não envia).
 - #14 carga física real, #15 integração ponta a ponta: dependem de P2–P5 no `main`
   (a camada 4 do P1 já entrou em 19/11).
-- #25 (consolidar as decisões no relatório): desbloqueada em 19/11 com a #24 fechada.
+- #25 (consolidar as decisões no relatório): capítulo 2 escrito por item do enunciado §7.2.2.a
+  (organização escolhida pelo integrante em 19/11) e índice gerado `gerado/decisoes.md`.
+  Faltam os cartões de P2 (#62), P3 (#44/#63), P5 (#71) e o PR do P4 (#67); lacunas
+  comentadas nas issues em 19/11. Linhas "cartão pendente" trocam pelo id quando chegarem.
+  Lacuna própria: cartão do plano físico (campos de ordenação, #5).
 - #16, #17 experimentos de justificativa (#19 já tem a lista; falta medir com a pilha real); #18 revisores independentes;
   #20–#23 rodada final e análise; #24–#27 relatório e fechamento.
 
@@ -57,6 +61,7 @@ ser apagados.
 | §6.1.3 / §7.2.2.b estimado × medido com motivo | `bench/compare_cost.py` | `test_each_reason_rule`, `test_unexplained_listed_separately_and_rules_do_not_overreach` |
 | §7.2.2.b gráficos com medido ao lado do estimado | `bench/plots.py` | `test_one_command_writes_every_figure`, `test_join_series_takes_the_13_configs_and_marks_na` |
 | §6 um fator por vez (bloco, toss, prefetch, WORK) | `bench/matrix.py` (`factor_experiments`) | `test_each_factor_row_changes_only_its_factor`, `test_factor_rows_reuse_main_matrix_queries` |
+| §7.2.2.a opções de projeto justificadas com as preteridas | `docs/relatorio/02_opcoes_de_projeto.md`, `bench/report.py` (`decision_cards`, `decisions_section`) | `test_every_decision_card_is_justified_in_the_design_chapter`, `test_malformed_cards_raise_instead_of_vanishing` |
 | §6.1.1 ocupação antes/depois da manutenção | — (#17) | — |
 
 ## Desvios ou dúvidas sobre o contrato
