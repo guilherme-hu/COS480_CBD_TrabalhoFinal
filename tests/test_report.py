@@ -87,9 +87,12 @@ def test_decision_cards_read_status_and_reject_malformed(tmp_path):
                                       ('D-P9-02', 'Segunda | com barra', 'provisória'),
                                       ('D-P9-03', 'Terceira', 'decidida (revista)')]
     text = decisions_section(folder, chapter)
-    assert '3 cartões, 1 provisórios' in text
+    assert '3 cartões, 1 provisório.' in text                # concordância no singular
     assert '| D-P9-01 | Primeira | decidida | Blocos; Hash |' in text
     assert '| D-P9-02 | Segunda \\| com barra | provisória | — |' in text   # barra escapada, não citado
+    (folder / 'P9.md').write_text('### D-P9-01 — Só\n- **Status:** decidida\n')
+    chapter.write_text('## Blocos\nD-P9-01\n')
+    assert '1 cartão, 0 provisórios.' in decisions_section(folder, chapter)
     # Cartão sem a linha de status logo abaixo: erro, em vez de sumir do índice.
     (folder / 'P8.md').write_text('### D-P8-01 — Sem status\n\nTexto solto.\n')
     with pytest.raises(ValueError, match='P8.md'):

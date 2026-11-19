@@ -214,7 +214,8 @@ def decisions_section(folder=DECISIONS_DIR, chapter=REPORT_DIR / DESIGN_CHAPTER)
     pending = sum(status.startswith('provisória') for _, _, status in cards)
     return '\n'.join([
         '## Índice dos cartões de decisão\n',
-        f'Gerado de `docs/decisoes/`: {len(cards)} cartões, {pending} provisórios. '
+        f'Gerado de `docs/decisoes/`: {len(cards)} {"cartão" if len(cards) == 1 else "cartões"}, '
+        f'{pending} {"provisório" if pending == 1 else "provisórios"}. '
         'A última coluna diz em que item da seção anterior o cartão é justificado.\n',
         _table(['Cartão', 'Decisão', 'Status', 'Item'], rows)]) + '\n'
 

@@ -305,3 +305,36 @@ Revisor de fidelidade às fontes, com contexto limpo, sobre `docs/relatorio/02_o
 - Sort-merge sem a escolha concreta (divisão de M, pipeline); hash join sem construtor e `prepartitioned`.
 - Linhas sem preterida onde o enunciado já nomeia uma (free list §3.2.1, grupo de campos §3.4.1, hash estático exigido §3.5.1, repartição por operação §2.2.2).
 - Detalhes: desempate do INL e teto do BNL (D-P4-01/02), pilha de livres persistida no `close()`, contadores por arquivo, "b_r − 1 leituras", "~2 450 buckets vazios", "várias páginas por bloco" fora do D-P1-06, e "nenhum operador usa mais de M" forte demais.
+
+## Revisão independente da revisão das provisórias (PR #86, 19/11)
+
+Um revisor de fidelidade e consistência (contexto limpo, só leitura) leu o diff
+`origin/main...p6/revisao-provisorias`. Os 5 achados foram conferidos e aceitos.
+
+### Capítulo 2 ainda marcava 7 cartões como provisórios (alto)
+- `docs/relatorio/02_opcoes_de_projeto.md` linhas 39–42, 69, 90 e 100, e a nota da linha 16.
+  O índice gerado já dizia "1 provisório", enquanto a seção anterior mostrava 8 marcações.
+- **Causa:** a revisão atualizou os cartões e o índice gerado, mas não procurou o status
+  repetido à mão no capítulo. **Correção:** marcação removida (fica só a D-P6-09) e nota reescrita.
+
+### Status "revista com o integrante" exagerava (médio)
+- D-P6-03, 04, 06, 07 e 08 foram delegadas em bloco, sem debate. O status passou a ser
+  "escolha delegada ao agente sem debate". D-P6-05 e 10 (debatidas, depois delegadas):
+  "escolha delegada ao agente após o debate".
+
+### D-P6-01: argumento contra citava só `build_s` (baixo)
+- `bench/matrix.py` força `build_r`, `build_s`, `outer_r` e `outer_s`, todos só no par
+  `small_large` da configuração a. A regra `auto` do P5 vem do guia; `cbd/exec/` ainda
+  não está no `main`. A conclusão não muda. Texto corrigido.
+
+### Plural "1 provisórios" no índice gerado (baixo)
+- `bench/report.py`. O teste afirmava o texto errado. Corrigido no `b1a24e0`, com o teste
+  conferindo singular e plural.
+
+### Estudo dizia "8 blocos de uma vez" (baixo)
+- `docs/estudo/P6.md`: com prefetch 8, um miss traz 9 blocos. Conta igual, texto corrigido.
+
+Conferido pelo revisor, sem problema: formato dos 8 cartões, escolha igual à recomendação
+e ao código, "9 páginas, 8 voltas" pelo `_prefetch`, e scans intercalados reproduzidos
+(80 leituras; seeks 80 → 6–16). Ele notou que ~1 962/9 é aproximação, não piso.
+

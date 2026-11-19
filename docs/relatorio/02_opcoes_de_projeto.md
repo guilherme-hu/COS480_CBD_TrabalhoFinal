@@ -13,8 +13,8 @@ lista todos os cartões com o seu status.
 > **Situação em 19/11.** Os cartões de P1 e P6 estão no `main`. Os do P4 estão na
 > branch `p4/67-fechamento`. P2, P3 e P5 ainda não registraram cartões. Nas linhas
 > marcadas **cartão pendente**, o texto descreve o projeto atual do guia da parte
-> e ainda não tem a comparação registrada pelo dono. As decisões *provisórias*
-> foram adotadas pelo agente e ainda serão revistas pelo dono.
+> e ainda não tem a comparação registrada pelo dono. A única decisão *provisória*
+> (D-P6-09) aguarda a resposta do professor.
 
 ## Tamanhos de bloco
 
@@ -36,10 +36,10 @@ lista todos os cartões com o seu status.
 | Escolha | Preterida(s) | Por quê | Cartão |
 | :------------ | :-------- | :----------------- | :----- |
 | Base universitária de 6 tabelas (arquitetura §8.3) com os volumes padrão. Só `curso`, `disciplina`, `aluno` e `inscricao` entram nos experimentos | aumentar a base (~67 mil alunos); subconjuntos das tabelas | Os três joins mestre-detalhe do escopo cobrem as três combinações de tamanho com as tabelas reais, sem subconjuntos (arquitetura §0, issue #5). Com a memória constante em bytes, a base atual é adequada nos três tamanhos de bloco (D-P6-02). Campos, chaves (UNIQUE, chave composta de `inscricao`) e chaves estrangeiras estão descritos no capítulo 3. | D-P6-02 |
-| Uma seed por tabela, `aluno.curso` com Zipf ($s = 0{,}7$) e `cr` normal truncada | uma seed global; tudo uniforme; skew forte | Mudar o volume de uma tabela não altera as outras. O skew moderado faz a estimativa "uniforme" dos livros errar em casos que o relatório explica, sem dominar a matriz. | D-P6-03 *(provisória)* |
-| Ordem física embaralhada por permutação Feistel | emitir em ordem de chave; `shuffle` de lista; sorteio com rejeição | Em ordem de chave, um índice secundário pareceria *clustering* por acaso. A permutação embaralha em memória constante, mesmo no domínio de $5 \times 10^8$ pares de `inscricao`. | D-P6-04 *(provisória)* |
-| CPF sintético = DRE com zeros à esquerda | CPF válido com dígitos verificadores; aleatório com conferência | É único por construção e sequencial a partir de `00000000001`, sem vir de pessoa nenhuma. Cerca de 1% dos valores (499 de 50 mil) passa por acaso no teste dos dígitos verificadores, o que não afeta nada: nenhum experimento usa `cpf`. | D-P6-07 *(provisória)* |
-| Referência SQLite com chaves `INT` (não `INTEGER PRIMARY KEY`), LIST em JSON e DATE em ISO | `INTEGER PRIMARY KEY`; tabela filha; separador; `pickle` | `INTEGER PRIMARY KEY` reordenaria a tabela pela chave e desfaria o embaralhamento. JSON e ISO voltam exatamente ao valor original e podem ser lidos. | D-P6-06, D-P6-08 *(provisórias)* |
+| Uma seed por tabela, `aluno.curso` com Zipf ($s = 0{,}7$) e `cr` normal truncada | uma seed global; tudo uniforme; skew forte | Mudar o volume de uma tabela não altera as outras. O skew moderado faz a estimativa "uniforme" dos livros errar em casos que o relatório explica, sem dominar a matriz. | D-P6-03 |
+| Ordem física embaralhada por permutação Feistel | emitir em ordem de chave; `shuffle` de lista; sorteio com rejeição | Em ordem de chave, um índice secundário pareceria *clustering* por acaso. A permutação embaralha em memória constante, mesmo no domínio de $5 \times 10^8$ pares de `inscricao`. | D-P6-04 |
+| CPF sintético = DRE com zeros à esquerda | CPF válido com dígitos verificadores; aleatório com conferência | É único por construção e sequencial a partir de `00000000001`, sem vir de pessoa nenhuma. Cerca de 1% dos valores (499 de 50 mil) passa por acaso no teste dos dígitos verificadores, o que não afeta nada: nenhum experimento usa `cpf`. | D-P6-07 |
+| Referência SQLite com chaves `INT` (não `INTEGER PRIMARY KEY`), LIST em JSON e DATE em ISO | `INTEGER PRIMARY KEY`; tabela filha; separador; `pickle` | `INTEGER PRIMARY KEY` reordenaria a tabela pela chave e desfaria o embaralhamento. JSON e ISO voltam exatamente ao valor original e podem ser lidos. | D-P6-06, D-P6-08 |
 | Formato do registro: parte fixa primeiro, diretório dos campos variáveis, *null bitmap*, LIST com contagem e até 16 itens, campo derivado não armazenado | a registrar pelo P2 | Projeto atual do guia P2 §2.1. | **cartão pendente (P2, #62)** |
 
 ## Estruturas dos arquivos e dos cabeçalhos
@@ -66,7 +66,7 @@ lista todos os cartões com o seu status.
 | :------------ | :-------- | :----------------- | :----- |
 | `hash_value`: FNV-1a de 64 bits com a seed misturada e finalizador splitmix64 | `hash()` do Python; `k mod N` | O `hash()` de `str` muda a cada processo (`PYTHONHASHSEED`). O que vai para disco ou define partição precisa dar o mesmo valor em toda execução (arquitetura §2). O enunciado §3.5.3 pede a função de melhor dispersão. Como todas as chaves de hash são inteiras, `k mod N` é uma alternativa real; a comparação pelo qui-quadrado de `test_dispersion` (guia P2 §4) ainda falta. | **cartão pendente (P2, #62)** |
 | Hash primário estático, $N = \lceil n / (bfr \cdot 0{,}8) \rceil$, limitado a $V(A)$ em NOT UNIQUE | hashing dinâmico; $N$ fixo | Projeto atual do guia P2 §6.1. O limite por $V(A)$ evita ~2 450 buckets vazios em `aluno` organizado por `curso` (50 valores). | **cartão pendente (P2, #62)** |
-| Pares do bucket-join com o mesmo $N$ (o menor $N$ padrão do par, limitado por $V(A)$) e a mesma seed | o maior $N$ padrão; $N = V(A)$ | O custo do bucket-join é $b_r + b_s$, então buckets vazios entram direto na medição. O maior $N$ enche de blocos vazios o lado que deveria ser barato. | D-P6-01 *(provisória)* |
+| Pares do bucket-join com o mesmo $N$ (o menor $N$ padrão do par, limitado por $V(A)$) e a mesma seed | o maior $N$ padrão; $N = V(A)$ | O custo do bucket-join é $b_r + b_s$, então buckets vazios entram direto na medição. O maior $N$ enche de blocos vazios o lado que deveria ser barato. | D-P6-01 |
 | Hash join: construtor = lado de menos blocos; $n_h = \lceil 1{,}2 \cdot b_{build} / (M - 2) \rceil \le M - 1$ partições, recursão até 3 níveis com nova seed e, no skew, nested-loop em blocos; com um lado em hash primário, só o outro é particionado (`prepartitioned`) | a registrar pelo P5 | Projeto atual do guia P5 §4. | **cartão pendente (P5, #71)** |
 
 ## Ordem das árvores
@@ -87,7 +87,7 @@ lista todos os cartões com o seu status.
 | `pin_count` por frame, `dirty` acumulado e `reserve_work(n)` para a memória dos operadores | marca booleana de fixação; memória fora do buffer | Vários cursores podem fixar a mesma página, nenhuma escrita se perde e dá para verificar que nenhum operador reserva mais de $M$ páginas. O limite das estruturas Python de cada operador continua sendo responsabilidade dele (arquitetura §3.4). | D-P1-10 |
 | Gravação forçada com `force(page)` | só gravar na expulsão | Permite gravar já uma página crítica (o catálogo) sem desafixá-la. | D-P1-11 |
 | Prefetch de $k$ blocos em `pin(seq=True)`, que protege páginas ainda não usadas e só age em arquivo declarado com `allow_prefetch` | sem prefetch; prefetch sem proteção entre cursores | Reduz *seeks* quando os acessos se intercalam, sem expulsar o que outro cursor acabou de trazer. | D-P1-12 |
-| O fator prefetch mede os scans de faixa como controle e o INL maior $\bowtie$ maior com o externo em heap | só os scans; BNL; fusão de runs | Num scan de um arquivo só, o prefetch não muda leituras nem *seeks*. O efeito aparece quando o scan do externo é intercalado com buscas no índice. | D-P6-10 *(provisória)* |
+| O fator prefetch mede os scans de faixa como controle e o INL maior $\bowtie$ maior com o externo em heap | só os scans; BNL; fusão de runs | Num scan de um arquivo só, o prefetch não muda leituras nem *seeks*. O efeito aparece quando o scan do externo é intercalado com buscas no índice. | D-P6-10 |
 
 ## Demais escolhas
 
@@ -97,7 +97,7 @@ lista todos os cartões com o seu status.
 | Lote externo do BNL de $M - 2$ páginas, medido pelos bytes codificados, com teto em registros | lote pelo `bfr` médio ou pelo tamanho máximo do esquema | Respeita o limite de memória com registros variáveis e não desperdiça espaço quando as tuplas são curtas. | D-P4-02 |
 | Ordenação externa: runs formadas por bytes com $M - 1$ páginas, fusões intermediárias com $M - 1$ entradas e a final com até $M$ | dimensionar pela média; limitar a fusão final a $M - 1$ | O orçamento de memória fica explícito, e há uma fusão a menos quando sobram exatamente $M$ runs. | D-P4-03 |
 | Sort-merge join: $M$ dividido igualmente entre os lados que precisam ser ordenados, e a fusão do join feita em *pipeline* com a última passada de cada sort | $M$ inteiro para cada sort; materializar a saída ordenada (fórmula do livro, $b_r + b_s$ + sorts) | Projeto atual do guia P5 §3: as duas fusões finais correm ao mesmo tempo e dividem $M$, o que pode exigir mais passadas. O *pipeline* economiza uma gravação e uma leitura de cada lado. | **cartão pendente (P5, #71)** |
-| Validação de cada resultado por (contagem, soma de `hash_value` da chave lógica) contra o SQLite | comparar as saídas inteiras; XOR; hash da tupla inteira | Valida em memória constante, independe da ordem da saída e detecta falta, sobra, duplicata e par trocado. Limitação: uma coluna errada fora da chave não é detectada. | D-P6-05 *(provisória)* |
+| Validação de cada resultado por (contagem, soma de `hash_value` da chave lógica) contra o SQLite | comparar as saídas inteiras; XOR; hash da tupla inteira | Valida em memória constante, independe da ordem da saída e detecta falta, sobra, duplicata e par trocado. Limitação: uma coluna errada fora da chave não é detectada. | D-P6-05 |
 | "Índice secundário clustering" (§4.2) lido como B+ NOT UNIQUE com os ponteiros de cada chave agrupados | *clustering index* de livro; secundário sobre tabela agrupada; ponteiros ordenados | É a estrutura que o enunciado descreve. As outras leituras já têm linhas na matriz, então a resposta do professor só muda os rótulos. | D-P6-09 *(provisória, aguarda o professor)* |
 
 > Os cartões do P4 (D-P4-01 a D-P4-03) estão na branch `p4/67-fechamento` e entram no
