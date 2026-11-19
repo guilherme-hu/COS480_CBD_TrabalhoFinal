@@ -19,3 +19,6 @@ include = ["bench*", "cbd*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "stress: testes de estresse da camada 4 (guia P1 §6); rodar com -m stress",
+]

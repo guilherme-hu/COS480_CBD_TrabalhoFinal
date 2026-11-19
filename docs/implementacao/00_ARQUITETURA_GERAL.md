@@ -83,7 +83,7 @@ Consequências práticas:
 ┌──────────────▼──────────────────────────────────────────────────────┐
 │ Camada 4 — Gerente de Arquivos + Gerente de Buffer Pool (P1)        │
 │ disco simulado em blocos · contadores seq/aleatório · áreas do      │  cbd/storage/
-│ buffer · LRU, Clock, MRU · pin/dirty · forced output · prefetch     │
+│ buffer · LRU, MRU (D-P1-08) · pin/dirty · forced output · prefetch  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -183,7 +183,8 @@ class BufferPool:
     def flush_file(self, fid: int) -> None       # grava os sujos do arquivo
     def flush_all(self) -> None
     def drop_file(self, fid: int) -> None        # descarta os frames do arquivo SEM gravar (temporário que será apagado)
-    def clear(self) -> None                      # flush_all + esvazia todos os frames (cache frio)
+    def close_file(self, fid: int) -> None       # flush_file(fid) + drop_file(fid) + fm.close(fid)
+    def clear(self) -> None                      # flush_all + esvazia todos os frames não reservados (cache frio)
 
     def capacity(self, ptype: PageType) -> int   # nº de frames da área
     def pinned(self, ptype: PageType | None = None) -> int
@@ -200,9 +201,10 @@ Semântica que todos precisam saber:
 - **Contagem.** Cada `pin` é 1 *request*. Se a página está no buffer é *hit*; se não está é *miss*, que gera 1 leitura física. `new_page` não conta request nem leitura.
 - **Dirty.** Quem altera `page.data` **tem que** chamar `page.mark_dirty()` ou `unpin(page, dirty=True)`. Página suja expulsa é gravada (`dirty_evictions`).
 - **Pin.** Todo `pin` precisa do `unpin` correspondente. Prefira `with bp.page(...) as p:`. Se não houver frame livre nem frame não fixado na área, `pin` levanta `BufferFullError`.
-- **`seq=True`** indica leitura sequencial (scan). Com `cfg.prefetch = k > 0`, um *miss* com `seq=True` lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`).
+- **`seq=True`** indica leitura sequencial (scan). Com `cfg.prefetch = k > 0`, um *miss* com `seq=True` lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`), **desde que** o arquivo tenha sido declarado monotipado via `bp.allow_prefetch(fid, ptype)` (D-P1-12). **Contrato estrito:** como o `FileManager` não grava `PageType` no disco, P3 não deve chamar `allow_prefetch` em arquivos mistos (`INDEX` + `DATA`, como Árvore B+).
 - **`toss=True`** no `unpin`: se `cfg.toss_immediate` estiver ligado, o frame vira a próxima vítima (toss-immediate). Scans devem passar `toss=True`; a configuração decide se tem efeito.
 - **Áreas fixas por tipo de página.** Cada `PageType` tem frames próprios e sua própria instância da política. Uma página de `INDEX` nunca expulsa uma de `DATA`. Isso dá retenção preferencial de índice e catálogo sem precisar de prioridade dinâmica.
+- **Fechamento e remoção de arquivos.** Como o `FileManager` fica abaixo do `BufferPool`, ao fechar um arquivo permanente chame `bp.close_file(fid)` (ou `bp.flush_file(fid)` + `bp.drop_file(fid)` + `fm.close(fid)`), e ao remover um arquivo temporário chame `bp.drop_file(fid)` antes de `fm.delete(fid)`. Internamente na Camada 4, `BufferPool` também registra callbacks via `fm.register_hooks(...)` para manter o cache coerente caso `fm.close/free/delete` sejam chamados diretamente.
 
 ### 3.3 Que `PageType` usar
 
@@ -775,13 +777,18 @@ class Engine:
 
 Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) sem ser gerada de novo. Já mudar o `block_size` exige gerar a base de novo, num `root_dir` separado por tamanho de bloco (ex.: `data/db_4k`).
 
+**Protocolo de medição (`flush` × `snapshot()` e `LRU` × `MRU`):**
+- **Operações de leitura (`SELECT` / `JOIN`):** chamar `eng.cold()` antes; usar `bp.drop_file(fid)` para `TempFile`s; chamar `eng.snapshot()` diretamente ao fim da consulta (sem `flush_all()`).
+- **Operações de escrita/manutenção (`INSERT`, `DELETE`, `bulk_load`):** se a medição contabiliza o custo total persistido em disco, chamar `bp.flush_all()` **antes** de `eng.snapshot()`; caso contrário, `snapshot()` medirá apenas `dirty_evictions` + `forced_writes` ocorridos durante a operação.
+- **Comparação `LRU × MRU`:** executar com `BufferConfig(toss_immediate=False)`, pois a fila `area.tossed` tem prioridade sobre a política e igualaria `LRU` e `MRU` em varreduras que passam `toss=True`.
+
 ### 8.2 Parâmetros que a bancada pode variar (o que "pode mudar" em cada módulo)
 
 | Dono | Onde | Parâmetro | Valores |
 | :--- | :--- | :--- | :--- |
 | P1 | `StorageConfig.block_size` | tamanho do bloco | 2048, **4096**, 8192 |
 | P1 | `BufferConfig.areas` | frames por área | ex.: `CATALOG 8, INDEX 64, DATA 128, WORK 64` |
-| P1 | `BufferConfig.policy` | política de substituição | LRU, MRU, CLOCK, FIFO. **Escolhida por tipo de operação** num experimento curto (P6 §4.4), não variada em toda a matriz |
+| P1 | `BufferConfig.policy` | política de substituição | `LRU`, `MRU` (`D-P1-08`: `CLOCK` e `FIFO` preteridas). **Escolhida por tipo de operação** num experimento curto (P6 §4.4), não variada em toda a matriz |
 | P1 | `BufferConfig.toss_immediate` | toss-immediate | `False`/`True` |
 | P1 | `BufferConfig.prefetch` | leitura antecipada | 0, 4, 8 |
 | P2 | `OrgSpec.params["buckets"]` (HASH) | nº de buckets | padrão: `ceil(n_r / (bfr · 0.8))`; em NOT UNIQUE, no máximo `V(A)` (P2 §6.1) |
