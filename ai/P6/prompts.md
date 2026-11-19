@@ -228,3 +228,15 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    duplicado, nota contando como justificativa) e fidelidade às fontes (16 achados aceitos,
    incluindo erro no D-P6-07 sobre CPF válido). Registro em `ai/P6/review.md`. Comentários de
    lacuna em #62, #63, #71 e #67.
+
+4. Pedidos do usuário: "pode abrir o PR, mesclar e começar os provisórios", "pode ir de B"
+   (D-P6-01), "pode escolher a que achar melhor" (D-P6-10) e "pode escolher as que achar
+   melhor em todas" (D-P6-03 a D-P6-08). Ferramenta: Claude Code (Claude Opus 5.5).
+
+   Resultado: PR #85 (#25) mesclado. D-P6-01 debatida e confirmada pelo integrante (B), com
+   comentário em `bench/build.py`. D-P6-10 debatida (opções A–D, evidência da camada 4 no
+   `main`) e D-P6-05 apresentada; o integrante delegou as escolhas ao agente, que manteve a
+   recomendação de cada cartão (D-P6-03 A, 04 D, 05 C, 06 B, 07 A, 08 A, 10 C). Só a D-P6-09
+   segue provisória, à espera do professor. Corrigido o "Em palavras simples" da D-P6-10
+   (prefetch 8 traz 9 páginas e poupa 8 voltas, não 7). Índice gerado: 22 cartões, 1
+   provisório. Suíte: 142 passaram, 2 pulados.

@@ -59,7 +59,7 @@ def physical_plan(stats):
                 _hash_params(table, col, stats[table], seed=seed, load=.8))
     add('aluno', 'aluno__bt_dre_inc', Org.BTREE, 'dre', {'fill': .9}, bulk=False)
     for combo, r, rc, s, sc in JOINS:
-        # D-P6-01 (provisória): N comum = menor N padrão do par, limitado por V(A)
+        # D-P6-01: N comum = menor N padrão do par, limitado por V(A)
         # do lado NOT UNIQUE. O lado pequeno não ganha buckets vazios; o grande
         # ganha cadeias de overflow com blocos cheios (ver docs/decisoes/P6.md).
         buckets = min(_default_buckets(stats[r]), _default_buckets(stats[s]))

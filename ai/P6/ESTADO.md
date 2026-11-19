@@ -108,7 +108,7 @@ ser apagados.
   prefetch não muda `io.reads` nem `io.seeks` (medido: 20 leituras e 1 seek com
   prefetch 0 ou 8); só troca misses por hits (17 de 20 viram hits, o que infla
   `bp.hit_rate`). O efeito em seeks só aparece com acessos intercalados (ex.: BNL).
-  Resolvido provisoriamente pela D-P6-10 (17/11): scans como controle + INL.
+  Resolvido pela D-P6-10 (17/11, decidida em 19/11): scans como controle + INL.
 - O prefetch só liga se o dono do arquivo chamar `bp.allow_prefetch(fid, DATA)`;
   o guia do P2 não cita essa chamada. Sem ela o fator prefetch mede zero efeito.
 
@@ -133,16 +133,14 @@ achados da revisão do P2 de 12/11 (script na sessão, não versionado):
   dizia registrar mas não estava no diff.
 
 ## Decisões provisórias a rever
-- D-P6-03 a D-P6-08 (#3, 12/11): seeds/distribuições, Feistel, soma de hashes,
-  `INT` no SQLite, CPF sintético, JSON/ISO. Retroativas, adotadas sem debate.
 - D-P6-09 (#8, 12/11): "secundário clustering" = ponteiros agrupados por chave
   (arquitetura §5.3), à espera da resposta do professor. Nenhuma leitura muda a matriz.
-- D-P6-10 (#19, 17/11): fator prefetch = scans de faixa (controle) + INL maior ⋈ maior
-  com externo em heap. Depende de o P2 chamar `allow_prefetch` (#83). A camada 4
-  mesclada confirma que o prefetch reduz seeks com acessos intercalados.
-- D-P6-01 — N comum dos pares bucket-join (menor N padrão, limitado por V(A)).
-  O P2 pediu (PR #29) para ele e o P5 participarem da revisão.
 
 ## Decisões tomadas nesta parte
+- Revisão das provisórias em 19/11 (branch `p6/revisao-provisorias`): D-P6-01
+  confirmada pelo integrante (B); D-P6-10 (C) e D-P6-03 a D-P6-08 delegadas pelo
+  integrante ao agente, que manteve a recomendação de cada cartão. A D-P6-01 tinha
+  pedido do P2 (PR #29) para ele e o P5 participarem da revisão: avisar no PR.
+  D-P6-10 continua dependendo de o P2 chamar `allow_prefetch` (#83).
 - D-P6-02 — memória do buffer constante em bytes no experimento de bloco
   (`areas_for_block`); base com volumes padrão, sem `--rows turma=100000` (#6).
