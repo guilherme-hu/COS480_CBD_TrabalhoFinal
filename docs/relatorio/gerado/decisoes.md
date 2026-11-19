@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 22 cartões, 1 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 22 cartões, 1 provisório. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
