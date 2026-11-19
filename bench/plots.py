@@ -10,8 +10,10 @@ os pares); algoritmo -> cor fixa, nunca pela posição. O aqua fica abaixo de 3:
 contraste: a legenda e a tabela de bench.compare_cost são a vista em texto.
 
 Uso: `python -m bench.plots [--summary results/summary.csv] [--output results/figs]`.
-LIMITAÇÃO: as figuras de política (#16), fatores (#19) e manutenção (#17) entram
-quando esses experimentos tiverem os exp_id definidos.
+Fatores (#19): uma figura por fator (bloco, toss, prefetch, WORK), com uma série
+por nível. No prefetch o eixo é `io.seeks`, onde o efeito aparece (P6 §4.4).
+LIMITAÇÃO: as figuras de política (#16) e manutenção/bulk (#17) entram quando esses
+experimentos tiverem os exp_id definidos.
 """
 import argparse
 import csv
@@ -197,12 +199,66 @@ def plot_selections(rows, output):
     return path
 
 
+FACTOR_TITLE = {'block': ('tamanho de bloco (memória constante em bytes, D-P6-02)', 'B = {} B'),
+                'toss': ('toss-immediate', 'toss {}'),
+                'prefetch': ('prefetch (leitura antecipada)', 'prefetch = {}'),
+                'work': ('memória WORK (páginas de 4 KiB)', 'WORK = {}')}
+
+
+def factor_series(rows, factor):
+    """{linha de origem: {nível: (medido, estimado) | rótulo}} de um fator (exp_id
+    `factor.<fator>_<nível>.<exp_id de origem>`). No prefetch, o medido é io.seeks."""
+    out = {}
+    for row in rows:
+        parts = row['exp_id'].split('.', 2)
+        if parts[0] != 'factor' or len(parts) < 3:
+            continue
+        name, level = parts[1].rsplit('_', 1)
+        if name != factor:
+            continue
+        origin = parts[2].removeprefix('join.').removeprefix('select.')
+        label = status_label(row)
+        if label:
+            cell = label
+        elif factor == 'prefetch':
+            cell = (_num(row, 'io.seeks'), None)
+        else:
+            cell = (blocks(row), blocks(row, 'est'))
+        out.setdefault(origin, {})[level] = cell
+    return out
+
+
+def plot_factor(rows, factor, output):
+    series = factor_series(rows, factor)
+    if not series:
+        return None
+    origins = list(series)
+    levels = sorted({lv for v in series.values() for lv in v}, key=lambda lv: (not lv[0].isdigit(), lv.zfill(8)))
+    title, level_name = FACTOR_TITLE[factor]
+    fig, ax = plt.subplots(figsize=(max(6, len(origins) * .6), 4))
+    width = .8 / len(levels)
+    for i, level in enumerate(levels):
+        x = [k + (i - (len(levels) - 1) / 2) * width for k in range(len(origins))]
+        _bars(ax, x, width, [series[o].get(level) for o in origins], SERIES[i % len(SERIES)],
+              level_name.format(level))
+    ax.set_xticks(range(len(origins)), origins, rotation=60, ha='right', fontsize=7)
+    _style(ax, 'seeks (io.seeks)' if factor == 'prefetch' else 'blocos transferidos (leituras + gravações)')
+    ax.set_title(title, color=TEXT, loc='left', pad=28, fontsize=11)
+    _legend(ax, ax)
+    fig.tight_layout()
+    path = Path(output) / f'fator_{factor}.png'
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return path
+
+
 def plot_all(summary, output):
     with Path(summary).open(newline='') as handle:
         rows = list(csv.DictReader(handle))
     Path(output).mkdir(parents=True, exist_ok=True)
     made = [plot_joins(rows, combo, output) for combo in COMBO_TITLE]
     made.append(plot_selections(rows, output))
+    made += [plot_factor(rows, factor, output) for factor in FACTOR_TITLE]
     return [p for p in made if p is not None]
 
 

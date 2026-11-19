@@ -10,21 +10,23 @@ import pytest
 
 pytest.importorskip('matplotlib')
 
-from bench.matrix import join_experiments, select_experiments  # noqa: E402
-from bench.plots import join_series, plot_all, select_series  # noqa: E402
+from bench.matrix import factor_experiments, join_experiments, select_experiments  # noqa: E402
+from bench.plots import factor_series, join_series, plot_all, select_series  # noqa: E402
 from bench.report import _schematic_workload  # noqa: E402
 
 
 def synthetic_rows(seed=480):
     rng = random.Random(seed)
     rows = []
-    for e in join_experiments() + select_experiments(_schematic_workload()):
+    workload = _schematic_workload()
+    for e in join_experiments() + select_experiments(workload) + factor_experiments(workload):
         na = e.exp_id.endswith('c_hash_eq.sort_merge_join')   # finge um N/A
         measured, est = rng.randint(10, 5000), rng.randint(10, 5000)
         # io.writes ≠ est.writes: uma troca de prefixo em `blocks` não passa despercebida.
         rows.append({'exp_id': e.exp_id, 'status': 'N/A' if na else 'ok', 'sel_type': e.sel_type,
                      'valid': '' if na else 'True',
                      'io.reads': '' if na else measured, 'io.writes': '' if na else 5,
+                     'io.seeks': '' if na else measured // 3,
                      'est.reads': '' if na else est, 'est.writes': '' if na else 7})
     return rows
 
@@ -61,8 +63,10 @@ def test_select_series_averages_the_20_dres():
 def test_one_command_writes_every_figure(tmp_path):
     write_summary(tmp_path / 'summary.csv', synthetic_rows())
     made = plot_all(tmp_path / 'summary.csv', tmp_path / 'figs')
-    assert sorted(p.name for p in made) == ['joins_large_large.png', 'joins_small_large.png',
-                                            'joins_small_small.png', 'selecoes.png']
+    assert sorted(p.name for p in made) == ['fator_block.png', 'fator_prefetch.png', 'fator_toss.png',
+                                            'fator_work.png', 'joins_large_large.png',
+                                            'joins_small_large.png', 'joins_small_small.png',
+                                            'selecoes.png']
     assert all(p.read_bytes().startswith(b'\x89PNG') for p in made)
 
 
@@ -101,3 +105,15 @@ def test_figure_draws_measured_bar_and_estimated_mark(tmp_path, monkeypatch):
     assert [h for _, h in drawn['bar']] == [m for m, _ in good]
     assert drawn['hlines'] == [e for _, e in good]
     assert 'N/A' in drawn['text']
+
+
+def test_factor_series_by_level():
+    rows = [{k: str(v) for k, v in r.items()} for r in synthetic_rows()]
+    block = factor_series(rows, 'block')
+    assert len(block) == 18 and all(set(v) == {'2048', '4096', '8192'} for v in block.values())
+    row = next(r for r in rows if r['exp_id'] == 'factor.work_16.join.large_large.a.hash_join')
+    assert factor_series(rows, 'work')['large_large.a.hash_join']['16'] == \
+        (float(row['io.reads']) + 5, float(row['est.reads']) + 7)
+    seeks = factor_series(rows, 'prefetch')
+    row = next(r for r in rows if r['exp_id'] == 'factor.prefetch_8.select.range_cr_0.5.a_scan')
+    assert seeks['range_cr_0.5.a_scan']['8'] == (float(row['io.seeks']), None)
