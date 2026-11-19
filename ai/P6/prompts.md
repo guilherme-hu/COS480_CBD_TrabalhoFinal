@@ -187,3 +187,32 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    controle; pilha #80–#82 rebaseada localmente (o force-push foi bloqueado pelo
    modo automático e ficou para o integrante autorizar). Comentário no PR #2 com
    os achados de consumidor e issue nova para o P2 (`allow_prefetch`).
+
+---
+
+# Sessão de 19/11/2026 — merge da pilha P6 e da camada 4
+
+Ferramenta: Claude Code, modelo Claude Opus 5.5.
+
+1. Pedido do usuário: "queria que voce resolvessse meus PRs abertos, desse pull na main,
+   mergeasse meus prs e visse se tem mais issue atribuida a mim para fazer".
+
+   Resultado: a pilha local #80–#82 (D-P6-10 e o rebase de 17/11) não estava no GitHub;
+   suíte verde nas três branches (87–89 passaram, 2 pulados), envio com
+   `--force-with-lease`. Pilha #76–#82 mesclada em ordem com merge commit, cada PR
+   reapontado para o `main` antes do merge. Fechadas #24, #22, #23, #6, #19, #3; a #8
+   fica aberta (espera o professor). Issue desbloqueada: #25.
+
+2. Pedido do usuário: "revise e mergeia" (o único PR aberto era o #2, do P1) e depois
+   "resolve, mescla e documenta".
+
+   Resultado: revisão do `f64e3e3` mesclado com o `main`, reproduzindo os itens da
+   revisão do P2 de 12/11. Prefetch entre cursores e prefetch com MRU corrigidos
+   (80 e 600 leituras, como esperado); `lost_free` e página suja perdida no
+   `fm.close` corrigidos; área errada no prefetch e toss × MRU ficaram como contrato
+   documentado (D-P1-12, D-P1-09). Faltava o marcador `stress`, que o `fb54146`
+   dizia registrar. O primeiro envio para a branch do P1 foi bloqueado pelo modo
+   automático; com o ok do integrante, foram enviados o merge do `main` (conflito
+   numa linha do guia P6 §4.4) e o registro do marcador. Comentário de revisão no
+   PR #2, merge, `main` com 130 passaram e 2 pulados. Registro em `ai/P6/ESTADO.md`
+   ("Camada 4 no `main`").
