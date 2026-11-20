@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 22 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 23 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
@@ -26,3 +26,4 @@ Gerado de `docs/decisoes/`: 22 cartões, 0 provisórios. A última coluna diz em
 | D-P6-08 | LIST como JSON e DATE como texto ISO na referência SQLite | decidida | Descrição da base, dos campos e das chaves |
 | D-P6-09 | Interpretação de "índice secundário clustering" (enunciado §4.2) | decidida | Demais escolhas |
 | D-P6-10 | Quais linhas o fator prefetch repete | decidida | Configurações da gerência do buffer pool |
+| D-P6-11 | Campos de ordenação: uma variante por organização e coluna de acesso | decidida | Campos de ordenação |

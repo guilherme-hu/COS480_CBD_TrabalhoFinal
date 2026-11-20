@@ -338,3 +338,39 @@ Conferido pelo revisor, sem problema: formato dos 8 cartões, escolha igual à r
 e ao código, "9 páginas, 8 voltas" pelo `_prefetch`, e scans intercalados reproduzidos
 (80 leituras; seeks 80 → 6–16). Ele notou que ~1 962/9 é aproximação, não piso.
 
+## Revisão independente do cartão D-P6-11 (PR do plano físico, 19–20/11)
+
+Um revisor de fidelidade (contexto limpo, só leitura) leu o diff `origin/main...p6/5-cartao-plano-fisico`.
+Os 6 achados foram conferidos no código e no enunciado e aceitos.
+
+### Faixa em hash descrita como "scan completo com número" (alto)
+- Cartão (opção D, "Por que A") e estudo diziam que a linha `select.*.b_hash` em `cr` mostra com
+  número que a faixa vira scan. Errado: o contrato do HASH levanta `NotApplicable` e `bench/run.py`
+  grava `status='N/A'`, sem contagem (docstring de `select_experiments` já dizia isso).
+- **Como aconteceu:** o agente escreveu de memória da teoria (SKS 14.5) sem conferir o contrato.
+  O erro também foi dito ao integrante no debate. **Correção:** a linha é a resposta explícita,
+  com motivo, à configuração §5.2 1.b "chave do hashing"; o argumento de D foi reescrito.
+
+### Opção C com 19 variantes (médio)
+- Sem `cr` somem só `aluno__bt_cr` e `aluno__hs_cr`: 23 − 2 = 21. Corrigido.
+
+### "As configurações b–e exigem o detalhe pela FK" exagerava (médio)
+- Pelo §5.1, b e d se cumprem com o mestre pela PK. O que a opção B perde: a e e (exigem heap) e c
+  em `curso ⋈ disciplina` e `curso ⋈ aluno` (detalhe pela FK). `aluno ⋈ inscricao` teria c, porque a
+  PK de `inscricao` começa por `dre`. Cartão e estudo reescritos.
+
+### Opção C citava o §4.2 (médio)
+- O que se perde sem `cr` é o §5.2 1.b e 1.c (faixa em `cr` por organização primária e por
+  secundário). Referência passou a citar §5.2.
+
+### Hash primário "evita o particionamento" (baixo)
+- Guia P5 §4.3: um lado hash dispensa o particionamento só desse lado (`prepartitioned`); só o par
+  `HASH_EQ` dispensa os dois. Corrigido.
+
+### Teste citado sem nome; direção "toda variante é usada" sem teste (baixo)
+- Nome: `test_plan_and_catalog_adapter`. A direção plano → matriz foi conferida só por inspeção;
+  o cartão diz isso.
+
+Não verificável: as citações de livros (`refs/` não está no repositório). E&N 16.7 trocado por
+16.6 (arquivos ordenados) e 16.8 (hashing), a mesma numeração da D-P6-01.
+

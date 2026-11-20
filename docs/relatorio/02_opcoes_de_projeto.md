@@ -57,7 +57,7 @@ lista todos os cartões com o seu status.
 
 | Escolha | Preterida(s) | Por quê | Cartão |
 | :------------ | :-------- | :----------------- | :----- |
-| Heap sem ordenação. B+ e hash primários em cada coluna de acesso: `curso.codigo`, `disciplina.curso`, `aluno.dre`, `aluno.curso`, `aluno.cr` e `inscricao.dre` (UNIQUE ou NOT UNIQUE conforme a coluna) | uma organização fixa por tabela | São as colunas de junção e de seleção do escopo. Com cada organização disponível na coluna que o algoritmo usa, as configurações a–e do enunciado §5.1 podem todas ser medidas. | **cartão pendente (P6)**: plano físico, issue #5 e arquitetura §5.3 |
+| Heap sem ordenação. B+ e hash primários em cada coluna de acesso: `curso.codigo`, `disciplina.curso`, `aluno.dre`, `aluno.curso`, `aluno.cr` e `inscricao.dre` (UNIQUE ou NOT UNIQUE conforme a coluna) | uma organização fixa por tabela | São as colunas de junção e de seleção do escopo. Com cada organização disponível na coluna que o algoritmo usa, as configurações a–e do enunciado §5.1 podem todas ser medidas. Cada variante representa um banco organizado de um jeito; o custo das cópias é só de carga, fora da medição. | D-P6-11 |
 | Em NOT UNIQUE, a B+ ordena por (chave, seq), com `seq` oculto e crescente | duplicatas soltas na folha | Projeto atual do guia P3 §2: toda entrada fica única e o ponteiro lógico, estável. | **cartão pendente (P3, #44)** |
 
 ## Funções de hash
