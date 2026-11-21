@@ -22,6 +22,8 @@ ser apagados.
   `summary.csv` (#11, #12, #13): `tests/test_run.py`.
 
 ## Em andamento
+- #27 (fechamento): resumo das decisões (AGENTS §9.1) gravado no topo de
+  `docs/decisoes/P6.md` em 20/11. Faltam o post-mortem e o ESTADO final, depois da rodada.
 - Nada pela metade.
 
 ## Falta
