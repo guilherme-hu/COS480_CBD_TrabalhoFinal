@@ -260,3 +260,11 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    que toda variante é usada pela matriz, menos `aluno__bt_dre_inc`, que é da #17. O integrante
    delegou; o agente manteve A. Capítulo 2 cita o cartão no lugar de "cartão pendente (P6)".
 
+7. Pedidos do usuário: "tem algo que seja atribuido a mim que ainda precise ser feito?" e
+   "vai la" (resumo das decisões). Ferramenta: Claude Code (Claude Opus 5.5).
+
+   Resultado: levantamento das 11 issues abertas da P6; todas bloqueadas pelas camadas 3 e 2
+   (P2, P3, P4, P5), exceto a parte já feita da #25. Resumo das decisões da P6 (AGENTS §9.1,
+   parte da #27) no topo de `docs/decisoes/P6.md`: tabela dos 11 cartões, como as decisões se
+   combinam, perguntas prováveis do professor e quais cartões foram delegados sem debate.
+
