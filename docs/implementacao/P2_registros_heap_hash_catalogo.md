@@ -49,7 +49,7 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 | Campos fixos × variáveis | **parte fixa primeiro** (na ordem do esquema), depois os campos variáveis em ordem do esquema, **cada um precedido do seu tamanho** (`u16`). D-P2-01 (E&N §16.4.2); o diretório (offset, tamanho) do SKS Fig. 13.5 foi preterido |
 | Nulos | **sentinela por tipo, sem null bitmap** (D-P2-02, E&N §16.4.2). O NULL ocupa o espaço do campo; o bitmap do SKS Fig. 13.5 foi preterido |
 | Comuns e opcionais | comum = obrigatório, gravado direto; opcional = `nullable=True`, NULL vira a sentinela do tipo. `None` em campo obrigatório levanta `ValueError` |
-| Multivalorado (repeating field) | `FType.LIST`: `u16 count` + itens `(u16 len, bytes)`; máximo de **16 itens** (`MAX_LIST`) |
+| Multivalorado (repeating field) | `FType.LIST` dentro do registro: depois do tamanho total (`u16`), itens `(u8 len, bytes)` até o fim do campo, **sem contagem**; máximo de **16 itens** (`MAX_LIST`). D-P2-03 |
 | Estruturado (ex.: endereço) | `VARCHAR` com subcampos separados por `\|` (`"rua\|num\|bairro\|cidade\|uf"`); o gerador monta, o codec não interpreta |
 | Derivado (ex.: idade) | **não armazenado**; calculado de `nascimento` quando necessário |
 | Blocagem | **não estendida (unspanned)**. `encode` levanta `RecordTooLarge` se `len > SlottedPage.max_record(B)` |
@@ -65,14 +65,14 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 [campos variáveis, em ordem do esquema: u16 len, depois len bytes]   (D-P2-01)
     NULL    -> u16 len = 0xFFFF e nenhum byte depois
     VARCHAR -> utf-8 (len <= size)
-    LIST    -> u16 count, depois count × (u16 len, utf-8)
+    LIST    -> itens (u8 len, utf-8) até gastar o len do campo; sem contagem (D-P2-03)
 ```
 
 - Pré-compile um `struct.Struct` para a parte fixa no `__init__` (um `pack`/`unpack` por registro). É o caminho quente do sistema inteiro. As sentinelas cabem no mesmo `struct`.
 - `encode` **recusa** os valores reservados como dado (`-2**63` em INT, NaN em FLOAT) e `None` em campo obrigatório, com `ValueError`. `decode` testa o NaN com `math.isnan` (em Python, `nan == nan` é falso). LIST vazia (count 0) e VARCHAR vazio (len 0) não são NULL.
-- `decode` **valida**: posição + len ≤ len(b) em cada prefixo, nenhum byte sobrando no fim, count ≤ `MAX_LIST`, len de cada item dentro da faixa. Violação levanta `ValueError("registro corrompido")`. É o item "acesso fora da faixa" do §7.1 do enunciado.
+- `decode` **valida**: posição + len ≤ len(b) em cada prefixo, nenhum byte sobrando no fim, na LIST, cada item cabe no que resta do campo e há no máximo `MAX_LIST` itens. Violação levanta `ValueError("registro corrompido")`. É o item "acesso fora da faixa" do §7.1 do enunciado.
 - `decode` devolve `tuple`; LIST vira `tuple[str, ...]`; CHAR remove os `\x00` finais.
-- `max_size`: soma com todos os variáveis no máximo (LIST com 16 itens de `size`).
+- `max_size`: soma com todos os variáveis no máximo (LIST com 16 itens de `size`: `2 + 16 × (1 + size)`).
 
 ### 2.3 Chaves de tamanho fixo (para índices e B+)
 
