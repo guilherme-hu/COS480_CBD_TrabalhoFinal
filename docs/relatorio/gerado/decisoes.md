@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 24 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 25 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
@@ -17,6 +17,7 @@ Gerado de `docs/decisoes/`: 24 cartões, 0 provisórios. A última coluna diz em
 | D-P1-11 | Gravação forçada de páginas (*Forced Output*) | decidida | Configurações da gerência do buffer pool |
 | D-P1-12 | Leitura antecipada (*Prefetching*) sem vazamento de `pin`, proteção entre cursores/MRU e arquivos monotipados | decidida (revista) | Configurações da gerência do buffer pool |
 | D-P2-01 | Marcação dos campos variáveis no registro | decidida | Descrição da base, dos campos e das chaves |
+| D-P2-02 | Campos comuns, opcionais e null bitmap | decidida | Descrição da base, dos campos e das chaves |
 | D-P6-01 | Número de buckets comum nos pares hash do bucket-join | decidida | Funções de hash |
 | D-P6-02 | Memória do buffer constante em bytes no experimento de tamanho de bloco | decidida | Tamanhos de bloco; Descrição da base, dos campos e das chaves |
 | D-P6-03 | Seeds por tabela e distribuições dos dados | decidida | Descrição da base, dos campos e das chaves |
