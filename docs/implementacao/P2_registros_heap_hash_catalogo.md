@@ -46,7 +46,7 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 
 | Decisão | Escolha |
 | :--- | :--- |
-| Campos fixos × variáveis | **parte fixa primeiro** (na ordem do esquema), depois um **diretório de campos variáveis** (offset, tamanho) e então os dados variáveis |
+| Campos fixos × variáveis | **parte fixa primeiro** (na ordem do esquema), depois os campos variáveis em ordem do esquema, **cada um precedido do seu tamanho** (`u16`). D-P2-01 (E&N §16.4.2); o diretório (offset, tamanho) do SKS Fig. 13.5 foi preterido |
 | Nulos | **null bitmap** no início (`ceil(nf/8)` bytes). Campo fixo nulo ocupa o espaço zerado |
 | Opcionais | = `nullable=True` (bitmap) |
 | Multivalorado (repeating field) | `FType.LIST`: `u16 count` + itens `(u16 len, bytes)`; máximo de **16 itens** (`MAX_LIST`) |
@@ -63,14 +63,13 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
     FLOAT -> 8  bytes  '<d'
     DATE  -> 4  bytes  '<i'  (date.toordinal())
     CHAR  -> size bytes (utf-8, preenchido com b'\x00'; maior que size -> ValueError)
-[diretório variável: para cada VARCHAR/LIST em ordem do esquema: u16 offset, u16 len]   (offset relativo ao início do registro)
-[dados variáveis]
+[campos variáveis, em ordem do esquema: u16 len, depois len bytes]   (D-P2-01)
     VARCHAR -> utf-8 (len <= size)
     LIST    -> u16 count, depois count × (u16 len, utf-8)
 ```
 
 - Pré-compile um `struct.Struct` para a parte fixa no `__init__` (um `pack`/`unpack` por registro). É o caminho quente do sistema inteiro.
-- `decode` **valida**: offset + len ≤ len(b), count ≤ `MAX_LIST`, len de cada item dentro da faixa. Violação levanta `ValueError("registro corrompido")`. É o item "acesso fora da faixa" do §7.1 do enunciado.
+- `decode` **valida**: posição + len ≤ len(b) em cada prefixo, nenhum byte sobrando no fim, count ≤ `MAX_LIST`, len de cada item dentro da faixa. Violação levanta `ValueError("registro corrompido")`. É o item "acesso fora da faixa" do §7.1 do enunciado.
 - `decode` devolve `tuple`; LIST vira `tuple[str, ...]`; CHAR remove os `\x00` finais.
 - `max_size`: soma com todos os variáveis no máximo (LIST com 16 itens de `size`).
 
