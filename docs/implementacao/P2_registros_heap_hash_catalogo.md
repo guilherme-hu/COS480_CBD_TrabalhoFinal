@@ -50,8 +50,8 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 | Nulos | **sentinela por tipo, sem null bitmap** (D-P2-02, E&N §16.4.2). O NULL ocupa o espaço do campo; o bitmap do SKS Fig. 13.5 foi preterido |
 | Comuns e opcionais | comum = obrigatório, gravado direto; opcional = `nullable=True`, NULL vira a sentinela do tipo. `None` em campo obrigatório levanta `ValueError` |
 | Multivalorado (repeating field) | `FType.LIST` dentro do registro: depois do tamanho total (`u16`), itens `(u8 len, bytes)` até o fim do campo, **sem contagem**; máximo de **16 itens** (`MAX_LIST`). D-P2-03 |
-| Estruturado (ex.: endereço) | `VARCHAR` com subcampos separados por `\|` (`"rua\|num\|bairro\|cidade\|uf"`); o gerador monta, o codec não interpreta |
-| Derivado (ex.: idade) | **não armazenado**; calculado de `nascimento` quando necessário |
+| Estruturado (ex.: endereço) | `VARCHAR` com subcampos separados por `\|` (`"rua\|num\|bairro\|cidade\|uf"`); o gerador monta, o codec não interpreta. D-P2-04 |
+| Derivado (ex.: idade) | **não armazenado**; calculado de `nascimento` quando necessário. O `cr` é armazenado: não é derivável na base e é coluna de acesso. D-P2-04 |
 | Blocagem | **não estendida (unspanned)**. `encode` levanta `RecordTooLarge` se `len > SlottedPage.max_record(B)` |
 
 ### 2.2 Layout em bytes

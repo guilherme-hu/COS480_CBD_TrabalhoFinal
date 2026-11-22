@@ -2,7 +2,7 @@
 ## Pronto (com teste que prova)
 - nada ainda. `cbd/records/hashing.py` existe (escrito pelo P6 para a referência SQLite), sem teste próprio.
 ## Em andamento
-- #39 codec (branch `p2/39-codec`): D-P2-01 (campos variáveis com prefixo `u16`), D-P2-02 (NULL como sentinela, sem null bitmap) e D-P2-03 (LIST com itens `(u8 len, bytes)`, sem contagem) decididas; PR #91 aberto com as decisões. Próxima decisão: campos estruturados e derivados. Código ainda não escrito.
+- #39 codec (branch `p2/39-codec`): D-P2-01 (campos variáveis com prefixo `u16`), D-P2-02 (NULL como sentinela, sem null bitmap), D-P2-03 (LIST com itens `(u8 len, bytes)`, sem contagem) e D-P2-04 (endereço como string única, derivado calculado) decididas: o formato do registro está completo. PR #91 aberto com as decisões. Próximo passo: chaves que preservam a ordem (`encode_key`) e depois o código do codec, com testes primeiro. Código ainda não escrito.
 ## Falta
 - #39, #40, #41, #43, #83, #46, #48, #52, #55, #62, nesta ordem (tabela no `CLAUDE.local.md` §5).
 ## Requisitos do enunciado cobertos
