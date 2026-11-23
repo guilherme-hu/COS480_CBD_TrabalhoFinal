@@ -52,7 +52,7 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 | Multivalorado (repeating field) | `FType.LIST` dentro do registro: depois do tamanho total (`u16`), itens `(u8 len, bytes)` até o fim do campo, **sem contagem**; máximo de **16 itens** (`MAX_LIST`). D-P2-03 |
 | Estruturado (ex.: endereço) | `VARCHAR` com subcampos separados por `\|` (`"rua\|num\|bairro\|cidade\|uf"`); o gerador monta, o codec não interpreta. D-P2-04 |
 | Derivado (ex.: idade) | **não armazenado**; calculado de `nascimento` quando necessário. O `cr` é armazenado: não é derivável na base e é coluna de acesso. D-P2-04 |
-| Blocagem | **não estendida (unspanned)**. `encode` levanta `RecordTooLarge` se `len > SlottedPage.max_record(B)` |
+| Blocagem | **não estendida (unspanned)**. O codec não conhece o bloco: quem insere na página (heap, hash) levanta `RecordTooLarge` se `len(encode(r)) > SlottedPage.max_record(B)`, antes de tocar na página. D-P2-06 |
 
 ### 2.2 Layout em bytes
 
@@ -178,7 +178,7 @@ Guarde em meta a **lista de bnos de dados** como faixas `[(ini, fim), ...]`. Ass
 | Método | Implementação | Custo |
 | :--- | :--- | :--- |
 | `create(bp, name, schema, spec, ptype=DATA)` | `fm.create(name)`; meta | — |
-| `insert(rec)` | `codec.encode` → §5.1 → `SlottedPage.insert` → `mark_dirty`; atualiza FSM só quando a categoria muda | ~1 bloco (tail no buffer) |
+| `insert(rec)` | `codec.encode` → `RecordTooLarge` se `len > max_record(B)` (D-P2-06) → §5.1 → `SlottedPage.insert` → `mark_dirty`; atualiza FSM só quando a categoria muda | ~1 bloco (tail no buffer) |
 | `delete(rid)` | `SlottedPage.delete`, FSM, `n_deleted += 1` | 1 bloco |
 | `fetch(rid)` | pin, `get(slot)`, decode, unpin. Slot apagado → `KeyError` | 1 bloco |
 | `scan()` | percorre as faixas de dados em ordem, `pin(seq=True)`, devolve `(RID, rec)` dos slots vivos, `unpin(toss=True)` | `b_r` |
@@ -236,7 +236,7 @@ bno > N+1    : overflow
 | Método | Implementação |
 | :--- | :--- |
 | `search(key)` | pin no bucket, varre os slots e devolve os que batem; segue `next` **até o fim da cadeia** (se `unique`, para no 1º achado) |
-| `insert(rec)` | se `unique`: `search` antes (`DuplicateKey`); percorre a cadeia buscando espaço; se nenhum bloco servir, `new_page` de overflow ligado ao **último** da cadeia |
+| `insert(rec)` | `RecordTooLarge` se `len > max_record(B)` (D-P2-06); se `unique`: `search` antes (`DuplicateKey`); percorre a cadeia buscando espaço; se nenhum bloco servir, `new_page` de overflow ligado ao **último** da cadeia |
 | `delete(rid)` | slot apagado no bloco do RID (pode ser overflow). Não desfaz a cadeia |
 | `fetch(rid)` | 1 bloco |
 | `scan()` | bucket 0..N−1, cada um com sua cadeia (`seq=True` no primário) |
@@ -335,13 +335,14 @@ A ordenação em memória e os `set`s do `load_table`/`analyze` são **preparaç
 
 | Teste | Verifica |
 | :--- | :--- |
-| `test_codec_roundtrip` | todos os tipos, nulos, LIST vazia/cheia, VARCHAR no limite, `RecordTooLarge` |
+| `test_codec_roundtrip` | todos os tipos, nulos, LIST vazia/cheia, VARCHAR no limite (o `RecordTooLarge` é testado no heap, D-P2-06) |
 | `test_codec_corrupt` | bytes truncados ou offset fora → `ValueError` (não `IndexError` nem lixo) |
 | `test_key_order` | para INT/FLOAT/DATE/CHAR: `a < b ⇔ encode_key(a) < encode_key(b)` em 10 mil pares aleatórios |
 | `test_slotted_*` | insert até encher; delete + insert reusa o slot; `compact` mantém os slots; `insert_at`/`remove_at` mantêm a ordem; `free_space` exato |
 | `test_hash_stable` | `hash_value` igual em dois subprocessos |
 | `test_dispersion` | qui-quadrado (§4) |
 | `test_heap_scan_cost` | heap de b blocos, `eng.cold()`, scan completo: `io.reads == b` e `io.seeks == 1` |
+| `test_heap_record_too_large` | registro de `max_record(B)` bytes entra; com `max_record(B) + 1` levanta `RecordTooLarge` sem sujar página nenhuma (D-P2-06) |
 | `test_heap_delete_reuse` | apagar 30% e inserir de novo não cresce o arquivo (usa o FSM) |
 | `test_heap_reorganize` | após `reorganize`, `blocks` diminui e os índices continuam corretos |
 | `test_hash_unique` | `DuplicateKey`; `search` acha registro em overflow; `delete` em overflow |

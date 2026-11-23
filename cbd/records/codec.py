@@ -3,7 +3,8 @@
 Implementa: RecordCodec, key_size, encode_key, decode_key (arquitetura §5.1). Usa: só cbd.contracts.
 Decisões: D-P2-01 (variável com prefixo u16), D-P2-02 (NULL = sentinela, sem bitmap),
 D-P2-03 (LIST: itens (u8 len, bytes), sem contagem), D-P2-04 (estruturado = string),
-D-P2-05 (chave em bytes big-endian com sinal ajustado; INT e FLOAT em 8 B). Ver docs/decisoes/P2.md.
+D-P2-05 (chave em bytes big-endian com sinal ajustado; INT e FLOAT em 8 B), D-P2-06 (o codec não
+conhece o bloco: RecordTooLarge é levantado por quem insere na página). Ver docs/decisoes/P2.md.
 
 Layout do registro:
     [parte fixa: INT '<q' | FLOAT '<d' | DATE '<i' (ordinal) | CHAR size bytes, na ordem do esquema]
@@ -17,7 +18,7 @@ from datetime import date, datetime
 import math
 import struct
 
-from cbd.contracts import Field, FType, Record, RecordTooLarge, Schema
+from cbd.contracts import Field, FType, Record, Schema
 
 MAX_LIST = 16                 # D-P2-03: itens por LIST
 _NULL_LEN = 0xFFFF            # D-P2-02: tamanho de variável que marca NULL
@@ -28,9 +29,6 @@ _ONES = (1 << 64) - 1
 _U16 = struct.Struct("<H")
 _CODES = {FType.INT: "q", FType.FLOAT: "d", FType.DATE: "i"}
 _NULLS = {FType.INT: _INT_NULL, FType.FLOAT: math.nan, FType.DATE: 0, FType.CHAR: b"\xff"}
-# LIMITAÇÃO: cópia de SlottedPage.max_record(B) = B − HEADER(28) − slot(4); trocar pela chamada
-# quando a slotted page (#40) existir, para os dois não divergirem.
-_PAGE_OVERHEAD = 32
 
 
 def _corrupt(what):
@@ -81,11 +79,11 @@ def _number(v, f):
 class RecordCodec:
     """Converte Record (tuple) ↔ bytes no layout acima.
 
-    block_size: se dado, `encode` levanta RecordTooLarge quando o registro não cabe numa
-    slotted page de B bytes (registros não estendidos). Sem ele, só os limites do formato valem.
+    D-P2-06: não conhece o tamanho do bloco. Quem insere na página (heap, hash) compara
+    len(encode(r)) com SlottedPage.max_record(B) e levanta RecordTooLarge (registros não estendidos).
     """
 
-    def __init__(self, schema: Schema, block_size: int | None = None):
+    def __init__(self, schema: Schema):
         self.schema = schema
         self._n = len(schema.fields)
         self._fixed, self._var, fmt, var_max = [], [], "<", 0
@@ -114,15 +112,13 @@ class RecordCodec:
                 raise ValueError(f"{f.name}: tipo desconhecido {f.ftype}")
         self._struct = struct.Struct(fmt)
         self.max_size = self._struct.size + var_max
-        self._limit = None if block_size is None else block_size - _PAGE_OVERHEAD
 
     # ------------------------------------------------------------ encode
     def encode(self, rec: Record) -> bytes:
         """Record → bytes. Nenhum I/O.
 
         Levanta ValueError para aridade errada, None em campo obrigatório, sentinela como dado,
-        valor fora do tipo ou maior que size; RecordTooLarge se block_size foi dado e o registro
-        passa de max_record(B).
+        valor fora do tipo ou maior que size. Não checa o bloco (D-P2-06).
         """
         if len(rec) != self._n:
             raise ValueError(f"{self.schema.name}: {len(rec)} valores para {self._n} campos")
@@ -155,8 +151,6 @@ class RecordCodec:
                 data = b"".join(bytes((len(b),)) + b for b in (_text(x, f, char=False) for x in v))
             out += _U16.pack(len(data))
             out += data
-        if self._limit is not None and len(out) > self._limit:
-            raise RecordTooLarge(f"{self.schema.name}: {len(out)} bytes > {self._limit} (registro não estendido)")
         return bytes(out)
 
     # ------------------------------------------------------------ decode

@@ -12,7 +12,7 @@ import pytest
 
 from bench.generator import BASE_COUNTS, Dataset
 from bench.schema import SCHEMAS
-from cbd.contracts import Field, FType, RecordTooLarge, Schema
+from cbd.contracts import Field, FType, Schema
 from cbd.records.codec import MAX_LIST, RecordCodec, decode_key, encode_key, key_size
 
 ALL = Schema("t", (
@@ -79,13 +79,21 @@ def test_max_size_is_the_largest_possible_record():
     assert c.max_size == len(c.encode(biggest)) == 47 + 2 * 12 + 2 * 98
 
 
-def test_record_too_large_for_the_block():
-    s = Schema("s", (Field("v", FType.VARCHAR, 5000),))
-    assert len(RecordCodec(s).encode(("x" * 5000,))) == 5002      # sem limite de bloco: só o formato
-    c = RecordCodec(s, block_size=4096)
-    c.encode(("x" * (4096 - 32 - 2),))                              # exatamente max_record(4096) = 4064
-    with pytest.raises(RecordTooLarge):
-        c.encode(("x" * (4096 - 32 - 1),))
+def test_codec_has_no_block_limit():
+    # D-P2-06: o codec não conhece o bloco; quem levanta RecordTooLarge é o heap/hash ao inserir
+    # (testado na #43). Aqui, um registro maior que qualquer bloco é codificado sem erro.
+    s = Schema("s", (Field("v", FType.VARCHAR, 9000),))
+    assert len(RecordCodec(s).encode(("x" * 9000,))) == 9002
+    with pytest.raises(TypeError):                     # assinatura da arquitetura §5.1: só o esquema
+        RecordCodec(s, block_size=4096)
+
+
+@pytest.mark.parametrize("table", sorted(SCHEMAS))
+def test_every_schema_fits_the_smallest_block(table):
+    # D-P2-06: o maior registro possível de cada tabela (VARCHAR cheio, LIST com 16 itens cheios)
+    # cabe numa página de 2 048 B (max_record = 2048 − 28 − 4 = 2 016). Hoje o maior é
+    # detalhes com 989 B; então RecordTooLarge nunca dispara na bancada.
+    assert RecordCodec(SCHEMAS[table]).max_size <= 2048 - 32
 
 
 @pytest.mark.parametrize("bad", [
@@ -231,9 +239,8 @@ def test_random_records_roundtrip():
 # ------------------------------------------------------------------ base real (N3)
 @pytest.mark.parametrize("table", sorted(BASE_COUNTS))
 def test_generated_base_roundtrips(table):
-    # Todas as tabelas do gerador, escala 0,01: cada registro volta igual, cabe em max_size e
-    # cabe no menor bloco da matriz (2048 − 32 = 2016 bytes).
-    c = RecordCodec(SCHEMAS[table], block_size=2048)
+    # Todas as tabelas do gerador, escala 0,01: cada registro volta igual e cabe em max_size.
+    c = RecordCodec(SCHEMAS[table])
     for rec in Dataset(scale=0.01).records(table):
         b = c.encode(rec)
         assert len(b) <= c.max_size
