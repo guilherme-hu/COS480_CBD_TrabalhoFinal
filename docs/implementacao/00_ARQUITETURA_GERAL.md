@@ -112,7 +112,7 @@ Consequências práticas:
 | Registro em memória | `tuple` Python na ordem do esquema (§4). Nulo = `None`. Campo multivalorado = `tuple[str, ...]`. Data = `datetime.date`. |
 | Ponteiro para registro | **Opaco** (`Ptr`). Heap e Hash usam `RID(block, slot)`. Arquivo B+ usa `(chave, seq)`. Quem guarda ponteiro (índices) usa `DataFile.encode_ptr/decode_ptr`, com tamanho fixo `ptr_size`. |
 | Hashing | **Proibido usar `hash()` do Python** em qualquer coisa que vá para o disco ou que defina partição: o hash de `str` muda a cada execução. Use `cbd.records.hashing.hash_value(v, seed)` (§5.1). |
-| Blocagem | **Não estendida (unspanned).** Um registro maior que o espaço útil do bloco gera `RecordTooLarge`. |
+| Blocagem | **Não estendida (unspanned).** Um registro maior que o espaço útil do bloco gera `RecordTooLarge`, levantado por quem insere na página (`DataFile.insert`, `bulk_load`), não pelo codec (D-P2-06). |
 | Saída dos operadores | Iteradores Python (`yield`). O resultado **não** é gravado em disco, nem contado, como nos livros-texto. |
 | Memória dos operadores | Limitada à área `WORK` do buffer (M páginas). Estrutura Python (lista, dict) que guarde registros só pode crescer até o que cabe nas páginas reservadas (§3.4). |
 | Determinismo | Toda aleatoriedade usa `random.Random(seed)` com seed explícita. |
@@ -493,7 +493,7 @@ class Cost:
 class RecordCodec:
     def __init__(self, schema: Schema): ...
     max_size: int                                      # maior registro possível em bytes
-    def encode(self, rec: Record) -> bytes             # RecordTooLarge se não couber num bloco
+    def encode(self, rec: Record) -> bytes             # não conhece o bloco: RecordTooLarge vem do insert (D-P2-06)
     def decode(self, b: bytes | memoryview) -> Record
 
 def key_size(f: Field) -> int                          # tamanho FIXO da chave codificada
