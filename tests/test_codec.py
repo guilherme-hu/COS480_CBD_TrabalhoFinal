@@ -184,7 +184,8 @@ def test_null_in_required_variable_field(ftype):
 
 @pytest.mark.parametrize("ftype,v", [(FType.INT, 1.5), (FType.INT, "1"), (FType.FLOAT, "1.5"),
                                      (FType.CHAR, 5), (FType.VARCHAR, b"ab"),
-                                     (FType.INT, True), (FType.FLOAT, False)])    # bool é subclasse de int
+                                     (FType.INT, True), (FType.FLOAT, False),     # bool é subclasse de int
+                                     (FType.FLOAT, 2**53 + 1)])    # o double arredondaria para 2⁵³
 def test_wrong_python_type_is_value_error(ftype, v):
     with pytest.raises(ValueError):
         RecordCodec(Schema("s", (Field("x", ftype, 4),))).encode((v,))
@@ -371,6 +372,7 @@ def test_encode_key_rejects_null_sentinels_and_bad_values(ftype, v):
     (FType.INT, b"\x00" * 8),             # −2⁶³: a sentinela de NULL
     (FType.FLOAT, b"\xff" * 8),           # NaN (bit de sinal ligado na chave = positivo)
     (FType.FLOAT, b"\x00" * 8),           # NaN (todos os bits invertidos = negativo)
+    (FType.FLOAT, b"\x7f" + b"\xff" * 7), # −0,0 (o encode_key normaliza para 0,0)
     (FType.DATE, b"\x00" * 4),            # ordinal 0: a sentinela de NULL
     (FType.DATE, b"\xff" * 4),            # além de date.max
     (FType.CHAR, b"a\x00b"),              # \x00 no meio (o encode_key nunca grava)

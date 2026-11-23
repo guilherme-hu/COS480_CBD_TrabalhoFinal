@@ -10,3 +10,4 @@
 | 23/11 | Claude Code (Opus 5.5) | D-P2-05 (chaves): por que comparar bytes e não valores; conferir a intuição sobre a B+; criar a seção "Apoio" do site com uma página por organização primária (heap, B+, hash) e simuladores; CPF como INT furaria a chave de 4 bytes? |
 | 23/11 | Claude Code (Opus 5.5) | Commitar o codec e atualizar o PR #91 para `Closes #39`. Explicar o que foi implementado, de quem é, quem depende e se pode ser mergeado. Explicar o `block_size`. D-P2-06: escolha B (o codec não conhece o bloco; o heap/hash levanta `RecordTooLarge`). |
 | 23/11 | Claude Code (Opus 5.5) | Revisar o PR #91 com `/ponytail:ponytail-review` (bugs, otimizações, se implementa o que propõe). Depois: corrigir os cortes de over-engineering e os bugs B1–B3 achados. |
+| 23/11 | Claude Code (Opus 5.5) | 2ª revisão do PR #91 com `/ponytail:ponytail-review` (bugs, otimizações, aderência). Depois: corrigir os defeitos A (−0,0 aceito no `decode_key`) e B (int > 2⁵³ em FLOAT). |

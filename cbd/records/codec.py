@@ -84,8 +84,9 @@ def _number(v, f):
             x = float(v) if isinstance(v, (int, float)) else math.nan
         except OverflowError:                           # int maior que o maior double
             x = math.nan
-        if math.isnan(x):
-            raise ValueError(f"{f.name}: FLOAT inválido (NaN é a sentinela de NULL): {v!r}")
+        if math.isnan(x) or x != v:                     # x != v: int que o double arredonda (> 2⁵³)
+            raise ValueError(f"{f.name}: FLOAT inválido (NaN é a sentinela de NULL, ou int "
+                             f"que o double não representa exatamente): {v!r}")
         return x
     if not isinstance(v, date) or isinstance(v, datetime):    # datetime perderia a hora no ordinal
         raise ValueError(f"{f.name}: esperava date, veio {type(v).__name__}")
@@ -264,7 +265,7 @@ def encode_key(f: Field, v) -> bytes:
 
 def decode_key(f: Field, b: bytes | memoryview):
     """Inverso de encode_key. ValueError se len(b) != key_size(f); bytes que encode_key nunca
-    grava (sentinela de INT, NaN, ordinal fora de 1..date.max, \\x00 no meio do texto, utf-8
+    grava (sentinela de INT, NaN, −0,0, ordinal fora de 1..date.max, \\x00 no meio do texto, utf-8
     inválido) levantam ValueError("registro corrompido: ..."), como no decode do registro."""
     if len(b) != key_size(f):
         raise ValueError(f"{f.name}: chave com {len(b)} bytes, esperava {key_size(f)}")
@@ -275,6 +276,8 @@ def decode_key(f: Field, b: bytes | memoryview):
             raise _corrupt(f"{f.name}: chave com a sentinela de NULL")
         return u - _SIGN
     if t is FType.FLOAT:
+        if u == _ONES >> 1:                            # chave de −0,0: o encode_key grava 0,0
+            raise _corrupt(f"{f.name}: chave −0,0")
         u = u ^ _SIGN if u & _SIGN else u ^ _ONES
         x = struct.unpack(">d", u.to_bytes(8, "big"))[0]
         if math.isnan(x):
