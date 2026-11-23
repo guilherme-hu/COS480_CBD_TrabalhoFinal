@@ -7,3 +7,4 @@
 | 22/11 | Claude Code (Opus 5.5) | D-P2-02: debater nulos, campos comuns e opcionais e o null bitmap, com as opções medidas na base. Escolha: S (sentinela, sem bitmap). Criar o PR da parte inicial. |
 | 22/11 | Claude Code (Opus 5.5) | D-P2-03: debater o campo multivalorado (LIST), com as opções dos livros medidas na base. Escolha: C (itens com tamanho em 1 B, sem contagem). Dividir o site de estudo em uma página por decisão. |
 | 22/11 | Claude Code (Opus 5.5) | D-P2-04: debater campos estruturados e derivados com os livros e a base. Escolha: E1 + V1 (endereço como string única, derivado calculado). |
+| 23/11 | Claude Code (Opus 5.5) | D-P2-05 (chaves): por que comparar bytes e não valores; conferir a intuição sobre a B+; criar a seção "Apoio" do site com uma página por organização primária (heap, B+, hash) e simuladores; CPF como INT furaria a chave de 4 bytes? |

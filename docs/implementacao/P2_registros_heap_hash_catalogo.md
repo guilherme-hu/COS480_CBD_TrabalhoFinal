@@ -76,13 +76,18 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 
 ### 2.3 Chaves de tamanho fixo (para índices e B+)
 
+Decisão D-P2-05 (`docs/decisoes/P2.md`): bytes que preservam a ordem, INT e FLOAT em 8 bytes.
+
 | FType | `key_size` | Codificação |
 | :--- | :--- | :--- |
 | INT | 8 | `(v + 2**63).to_bytes(8, "big")`, que preserva a ordem em bytes |
-| FLOAT | 8 | `struct.pack('>d')` com ajuste de sinal (inverte todos os bits se negativo, senão inverte só o bit de sinal), também preservando a ordem |
+| FLOAT | 8 | `struct.pack('>d')` com ajuste de sinal (inverte todos os bits se negativo, senão inverte só o bit de sinal), também preservando a ordem. **−0,0 vira 0,0** antes de codificar (são iguais, mas os bytes diferem); **NaN levanta `ValueError`** (não tem ordem e é a sentinela de NULL) |
 | DATE | 4 | `(ordinal).to_bytes(4, "big")` |
 | CHAR/VARCHAR | `size` | utf-8 preenchido com `\x00` à direita |
 | LIST | — | não pode ser chave (`TypeError`) |
+
+- **Chave NULL é recusada:** `encode_key(f, None)` levanta `ValueError`, assim como as sentinelas de NULL da D-P2-02 (INT `−2**63`, FLOAT NaN, DATE ordinal 0). Nenhuma coluna-chave da bancada é nula (D-P2-05, opção N1).
+- `decode_key(encode_key(v)) == v` e `len(encode_key(f, v)) == key_size(f)`.
 
 **A preservação de ordem é obrigatória:** o P3 compara chaves como `bytes` dentro dos nós da B+ (`a < b ⇔ encode_key(a) < encode_key(b)`). O `test_key_order` garante isso.
 
