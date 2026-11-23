@@ -56,9 +56,25 @@ def _untext(raw, f):
         raise _corrupt(f"{f.name} não é utf-8") from None
 
 
+def _unchar(raw, f):
+    """Texto preenchido com \\x00 (CHAR e chave de texto) → str."""
+    s = bytes(raw).rstrip(b"\x00")
+    if b"\x00" in s:                                   # o encode nunca grava \x00 no meio
+        raise _corrupt(f"{f.name} com \\x00 no meio")
+    return _untext(s, f)
+
+
+def _undate(x, f):
+    if not 1 <= x <= _MAX_ORDINAL:                     # 0 é a sentinela de NULL
+        raise _corrupt(f"{f.name}: ordinal {x}")
+    return date.fromordinal(x)
+
+
 def _number(v, f):
     """Valida INT/FLOAT/DATE fora do caminho do struct, que daria struct.error genérico."""
     t = f.ftype
+    if isinstance(v, bool):                            # bool é subclasse de int: True viraria 1
+        raise ValueError(f"{f.name}: bool não é {t.value}: {v!r}")
     if t is FType.INT:
         if not isinstance(v, int) or not _INT_NULL < v < _SIGN:
             raise ValueError(f"{f.name}: INT fora de (−2⁶³, 2⁶³) ou não inteiro: {v!r}")
@@ -172,14 +188,9 @@ class RecordCodec:
                 if not f.nullable:
                     raise _corrupt(f"NULL em {f.name}, que é obrigatório")
             elif t is FType.CHAR:
-                s = x.rstrip(b"\x00")
-                if b"\x00" in s:                           # o encode nunca grava \x00 no meio
-                    raise _corrupt(f"{f.name} com \\x00 no meio")
-                rec[i] = _untext(s, f)
+                rec[i] = _unchar(x, f)
             elif t is FType.DATE:
-                if not 1 <= x <= _MAX_ORDINAL:
-                    raise _corrupt(f"{f.name}: ordinal {x}")
-                rec[i] = date.fromordinal(x)
+                rec[i] = _undate(x, f)
             else:
                 rec[i] = x
         pos = self._struct.size
@@ -221,6 +232,8 @@ def key_size(f: Field) -> int:
     if f.ftype is FType.DATE:
         return 4
     if f.ftype in (FType.CHAR, FType.VARCHAR):
+        if f.size < 1:                                 # chave de 0 bytes; o RecordCodec também recusa
+            raise ValueError(f"{f.name}: chave de texto precisa de size ≥ 1")
         return f.size
     raise TypeError(f"{f.name}: {f.ftype} não pode ser chave")
 
@@ -245,21 +258,28 @@ def encode_key(f: Field, v) -> bytes:
     if t is FType.DATE:
         return _number(v, f).to_bytes(4, "big")
     if t in (FType.CHAR, FType.VARCHAR):
-        return _text(v, f, char=True).ljust(f.size, b"\x00")              # \x00 proibido também no VARCHAR
+        return _text(v, f, char=True).ljust(key_size(f), b"\x00")         # \x00 proibido também no VARCHAR
     raise TypeError(f"{f.name}: {t} não pode ser chave")
 
 
 def decode_key(f: Field, b: bytes | memoryview):
-    """Inverso de encode_key. ValueError se len(b) != key_size(f)."""
+    """Inverso de encode_key. ValueError se len(b) != key_size(f); bytes que encode_key nunca
+    grava (sentinela de INT, NaN, ordinal fora de 1..date.max, \\x00 no meio do texto, utf-8
+    inválido) levantam ValueError("registro corrompido: ..."), como no decode do registro."""
     if len(b) != key_size(f):
         raise ValueError(f"{f.name}: chave com {len(b)} bytes, esperava {key_size(f)}")
     t = f.ftype
     u = int.from_bytes(b, "big")
     if t is FType.INT:
+        if u == 0:
+            raise _corrupt(f"{f.name}: chave com a sentinela de NULL")
         return u - _SIGN
     if t is FType.FLOAT:
         u = u ^ _SIGN if u & _SIGN else u ^ _ONES
-        return struct.unpack(">d", u.to_bytes(8, "big"))[0]
+        x = struct.unpack(">d", u.to_bytes(8, "big"))[0]
+        if math.isnan(x):
+            raise _corrupt(f"{f.name}: chave NaN")
+        return x
     if t is FType.DATE:
-        return date.fromordinal(u)
-    return _untext(bytes(b).rstrip(b"\x00"), f)
+        return _undate(u, f)
+    return _unchar(b, f)

@@ -1,9 +1,9 @@
 # Estado da parte P2 — atualizado em 23/11
 ## Pronto (com teste que prova)
-- **Codec (#39), `cbd/records/codec.py`:** `RecordCodec` (encode/decode, `max_size`), `key_size`, `encode_key`, `decode_key`, com D-P2-01 a D-P2-06. 71 testes em `tests/test_codec.py` (N1 roundtrip, layout, sentinelas, corrompidos, fuzz de 20 mil registros corrompidos, aleatórios; N3 todas as tabelas do gerador; N4 contagens de blocos das decisões; ordem das chaves em 10 mil pares por tipo). Versão bruta em `ai/P2/raw/codec_v1.py`; defeitos achados em `ai/P2/review.md`.
+- **Codec (#39), `cbd/records/codec.py`:** `RecordCodec` (encode/decode, `max_size`), `key_size`, `encode_key`, `decode_key`, com D-P2-01 a D-P2-06. 80 testes em `tests/test_codec.py` (N1 roundtrip, layout, sentinelas, corrompidos (registro e chave), fuzz de 20 mil registros corrompidos, aleatórios; N3 todas as tabelas do gerador; N4 contagens de blocos das decisões; ordem das chaves em 10 mil pares por tipo). Versão bruta em `ai/P2/raw/codec_v1.py`; defeitos achados em `ai/P2/review.md`.
 - `cbd/records/hashing.py` existe (escrito pelo P6 para a referência SQLite), sem teste próprio (#41).
 ## Em andamento
-- #39 na branch `p2/39-codec`, PR #91 (`Closes #39`). Codec commitado em `bb1416c`; a troca do D-P2-06 (tirar `block_size`) ainda não commitada. Falta: commit, PR separado no comentário da arquitetura §5.1, revisão de P3/P4 e merge.
+- #39 na branch `p2/39-codec`, PR #91 (`Closes #39`). Codec commitado em `bb1416c` e a troca do D-P2-06 (tirar `block_size`) em `73e063a`. Revisão do PR em 23/11 (ponytail-review + sonda de bordas): 3 bugs baixos corrigidos (`bool` aceito como INT/FLOAT, `decode_key` sem validação, chave de texto com `size` 0), ver `review.md`; ainda sem commit. Falta: commit, atualizar a descrição do PR (71 → 80 testes, 213 → 222 na suíte), PR separado no comentário da arquitetura §5.1, revisão de P3/P4 e merge.
 ## Falta
 - #40, #41, #43, #83, #46, #48, #52, #55, #62, nesta ordem (tabela no `CLAUDE.local.md` §5).
 ## Requisitos do enunciado cobertos

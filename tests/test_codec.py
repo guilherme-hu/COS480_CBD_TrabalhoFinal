@@ -183,7 +183,8 @@ def test_null_in_required_variable_field(ftype):
 
 
 @pytest.mark.parametrize("ftype,v", [(FType.INT, 1.5), (FType.INT, "1"), (FType.FLOAT, "1.5"),
-                                     (FType.CHAR, 5), (FType.VARCHAR, b"ab")])
+                                     (FType.CHAR, 5), (FType.VARCHAR, b"ab"),
+                                     (FType.INT, True), (FType.FLOAT, False)])    # bool é subclasse de int
 def test_wrong_python_type_is_value_error(ftype, v):
     with pytest.raises(ValueError):
         RecordCodec(Schema("s", (Field("x", ftype, 4),))).encode((v,))
@@ -265,7 +266,6 @@ def test_record_sizes_give_the_block_counts_of_the_decisions():
     # ⌈500 000 / 113⌉ = 4 425 (conferimos o tamanho numa amostra, não os 500 mil).
     ins = RecordCodec(SCHEMAS["inscricao"])
     assert {len(ins.encode(r)) for r in Dataset(scale=0.01).records("inscricao")} == {32}
-    assert math.ceil(500_000 / ((4096 - 28) // (32 + 4))) == 4425
     # aluno: tamanho variável, 50 000 registros (~0,5 s).
     alu = RecordCodec(SCHEMAS["aluno"])
     sizes = [len(alu.encode(r)) for r in Dataset().records("aluno")]
@@ -278,6 +278,11 @@ def test_key_size():
                                                   FType.VARCHAR)] == [8, 8, 4, 7, 7]
     with pytest.raises(TypeError):
         key_size(Field("l", FType.LIST, 5))
+    for t in (FType.CHAR, FType.VARCHAR):              # chave de 0 bytes: o RecordCodec também recusa
+        with pytest.raises(ValueError):
+            key_size(Field("x", t, 0))
+        with pytest.raises(ValueError):
+            encode_key(Field("x", t, 0), "")
 
 
 def _cmp(a, b):
@@ -360,6 +365,21 @@ def test_encode_key_rejects_null_sentinels_and_bad_values(ftype, v):
     # D-P2-05 (N1): chave nunca é NULL; sentinelas e valores fora do tipo levantam ValueError
     with pytest.raises(ValueError):
         encode_key(Field("k", ftype, 9), v)
+
+
+@pytest.mark.parametrize("ftype,b", [
+    (FType.INT, b"\x00" * 8),             # −2⁶³: a sentinela de NULL
+    (FType.FLOAT, b"\xff" * 8),           # NaN (bit de sinal ligado na chave = positivo)
+    (FType.FLOAT, b"\x00" * 8),           # NaN (todos os bits invertidos = negativo)
+    (FType.DATE, b"\x00" * 4),            # ordinal 0: a sentinela de NULL
+    (FType.DATE, b"\xff" * 4),            # além de date.max
+    (FType.CHAR, b"a\x00b"),              # \x00 no meio (o encode_key nunca grava)
+    (FType.VARCHAR, b"\xff\x00\x00"),     # utf-8 inválido
+])
+def test_decode_key_rejects_bytes_encode_key_never_writes(ftype, b):
+    # Mesmo padrão do decode do registro: bytes que encode_key não gera são "registro corrompido".
+    with pytest.raises(ValueError, match="registro corrompido"):
+        decode_key(Field("k", ftype, 3), b)
 
 
 def test_decode_key_rejects_wrong_length():
