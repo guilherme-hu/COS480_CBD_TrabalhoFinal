@@ -795,7 +795,6 @@ Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) s
 | P2 | `OrgSpec.params["expected_records"]` (HASH) | base para calcular N quando `buckets` não é dado | n_r da tabela |
 | P2 | `OrgSpec.params["distinct"]` (HASH NOT UNIQUE) | `V(A)` da chave, para limitar N | a bancada passa |
 | P2 | `OrgSpec.params["seed"]` (HASH) | seed da função de hash | 0; igual em duas tabelas para o *bucket-join* do P5 |
-| P2 | `OrgSpec.params["compact_at"]` (HEAP) | fração apagada que dispara reorganize | 0.2 |
 | P2 | `IndexSpec.params["buckets"]` (índice HASH) | nº de buckets | idem |
 | P3 | `OrgSpec.params["fill"]` / `IndexSpec.params["fill"]` | ocupação no bulk load | 0.7 a 1.0 (padrão 0.9) |
 | P3 | `Catalog.load_table(bulk=...)` | bulk load × inserção registro a registro | `True`/`False` |

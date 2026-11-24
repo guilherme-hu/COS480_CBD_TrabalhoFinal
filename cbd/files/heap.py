@@ -3,7 +3,8 @@
 Implementa: DataFile (HeapFile) e TempFile (TempHeap) de cbd/contracts.py.
 Usa: BufferPool (P1), SlottedPage e RecordCodec (P2).
 Decisões: D-P2-06 (RecordTooLarge no insert, antes de tocar em página), D-P2-07 e D-P2-08 (slotted page,
-compactação preguiçosa), D-P2-09 (mapa de espaço livre com 1 byte por bloco), D-P2-10 (RID de 6 B).
+compactação preguiçosa), D-P2-09 (mapa de espaço livre com 1 byte por bloco), D-P2-10 (RID de 6 B), D-P2-11
+(reorganize só por comando).
 Ver docs/decisoes/P2.md. A carga em massa enche os blocos na ordem de chegada (guia P2 §5.3).
 
 Layout do arquivo do heap:
@@ -320,7 +321,7 @@ class HeapFile:
         """Reescreve o heap só com os registros vivos (os RIDs mudam). Custo: b + 3·b' blocos.
 
         Copia os vivos para um temporário, recria o arquivo com o mesmo nome e recarrega com bulk_load.
-        Quando disparar é a D-P2-11, em aberto: por enquanto só manual.
+        D-P2-11: só por comando; quem chama decide olhando stats()['deleted'] (revisitar se o estresse precisar).
         LIMITAÇÃO: não é atômico (uma falha entre apagar e recarregar perde os dados); o FileManager não tem
         rename, e renomear o .dat por fora dele furaria a camada 4. O guia previa <nome>__new + rename (2·b).
         """

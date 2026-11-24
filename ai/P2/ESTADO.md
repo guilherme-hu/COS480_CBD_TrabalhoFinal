@@ -7,7 +7,7 @@
 ## Em andamento
 - #39: PR #91 (`p2/39-codec`) aberto, com o INT de 4 B, esperando revisão de P3/P4 e merge.
 - #40: PR #93 (`p2/40-slotted-page`, base `p2/39-codec`), esperando revisão do P3; depois do merge do #91, trocar a base para `main`.
-- #43: branch `p2/43-heap` (sobre a `p2/40-slotted-page`), heap implementado e revisado, commits locais ainda sem push e sem PR (precisam do ok do Guilherme). Falta o cartão da D-P2-11 (quando reorganizar: o heap só tem `reorganize()` manual; o gatilho é da `Table`, #46).
+- #43: branch `p2/43-heap` (sobre a `p2/40-slotted-page`), heap implementado e revisado, commits locais ainda sem push e sem PR (precisam do ok do Guilherme). Todos os critérios da #43 atendidos (D-P2-09, D-P2-10 e D-P2-11).
 - Para a #83 (prefetch): o `TempHeap` usa páginas WORK, então o `allow_prefetch` dele é com `PageType.WORK`, não DATA como diz o texto da issue; o `reorganize` cria um fid novo, e a declaração precisa ser refeita depois dele.
 ## Falta
 - #41, #83, #46, #48, #52, #55, #62, nesta ordem (tabela no `CLAUDE.local.md` §5).
@@ -40,5 +40,5 @@
 - Views de `get` valem só com a página fixada; `insert`/`insert_at`/`compact` podem mover registros. Avisar o P3 no PR.
 - LIMITAÇÃO: slots apagados no fim do diretório guardam seus 4 B até um `insert` reaproveitá-los.
 ## Decisões provisórias a rever
-- **D-P2-11 (quando reorganizar o heap) em aberto:** opções no site; o heap só tem `reorganize()` manual, e o gatilho fica para a `Table` (#46). O `reorganize` copia por um temporário (`b + 3·b'`, não atômico) porque o `FileManager` não tem rename; o guia previa rename (`2·b`).
+- **D-P2-11 decidida (24/11):** reorganizar só por comando, com `stats()["deleted"]` como critério; revisitar se o estresse (#55) precisar de outra forma. O `reorganize` copia por um temporário (`b + 3·b'`, não atômico) porque o `FileManager` não tem rename.
 - Escolhas herdadas do guia ainda sem justificativa, a debater nas issues: fator de carga 0,8 e buckets no bloco 2 + i (#48), `hash_value` (#41), catálogo em JSON reescrito e forçado a cada mudança (#46), gravação dos temporários só ao sair do buffer (`TempHeap`). Resolvidas em 24/11: mapa de espaço livre (D-P2-09) e RID de 6 B (D-P2-10).

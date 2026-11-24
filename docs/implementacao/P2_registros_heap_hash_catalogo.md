@@ -162,7 +162,7 @@ def hash_value(v, seed: int = 0) -> int:
 | Registros apagados | slot marcado como apagado na slotted page; RID estável |
 | Gerência de espaço livre | **mapa de espaço livre (FSM)** com 1 byte por bloco de dados (`livre·256 // B`, arredondado para baixo; 256 faixas de 16 B em 4 KB, menos que o menor registro), em páginas `DATA` do próprio arquivo gravadas depois dos dados, lidas pelo buffer (contam I/O). D-P2-09 |
 | Política de inserção | 1) tenta o **último bloco** (`tail`); 2) se não couber **e** houver apagados (`n_deleted > 0`), consulta o FSM; 3) senão `new_page` |
-| Compactação do espaço livre | **dentro do bloco**: automática no `insert` (§3). **Do arquivo**: `reorganize()` quando `n_deleted / (n_records + n_deleted) > compact_at` (padrão 0.2), disparada por `Table.delete` |
+| Compactação do espaço livre | **dentro do bloco**: automática no `insert` (§3, D-P2-08). **Do arquivo**: só por comando, `reorganize()`, com `stats()["deleted"]` (slots apagados) para quem chama decidir (D-P2-11; sem `compact_at` e sem disparo no `Table.delete`) |
 
 ### 5.2 Layout do arquivo
 
@@ -269,8 +269,7 @@ class Table:
         for col, idx in self.indexes.items():
             k = rec[self.schema.idx(col)]
             if k is not None: idx.delete(k, ptr)
-        self.data.delete(ptr)
-        if self._should_reorganize(): self.reorganize()
+        self.data.delete(ptr)              # D-P2-11: nada de reorganizar aqui
     def reorganize(self):
         self.data.reorganize()
         for col in list(self.indexes): self.catalog._rebuild_index(self.name, col)
