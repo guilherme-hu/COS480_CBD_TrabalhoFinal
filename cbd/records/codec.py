@@ -24,7 +24,7 @@ from cbd.contracts import Field, FType, Record, Schema
 MAX_LIST = 16                 # D-P2-03: itens por LIST
 _NULL_LEN = 0xFFFF            # D-P2-02: tamanho de variável que marca NULL
 _INT_NULL = -2**31            # D-P2-02: sentinela de INT (fica fora do domínio aceito)
-_INT_SIGN = 1 << 31           # INT de 4 B (E&N §16.4.1, p. 591: "an integer may require 4 bytes")
+_INT_SIGN = 1 << 31           # INT de 4 B (E&N §16.4.1, p. 560: "an integer may require 4 bytes")
 _MAX_ORDINAL = date.max.toordinal()
 _SIGN = 1 << 63               # FLOAT: bit de sinal do double
 _ONES = (1 << 64) - 1
