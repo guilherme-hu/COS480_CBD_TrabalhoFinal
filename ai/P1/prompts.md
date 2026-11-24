@@ -101,3 +101,13 @@
   - **Revisores:** 4 revisores independentes (corretude, contratos, contagem de I/O, qualidade dos testes) revisaram o prefetch com cursor. A IA principal reproduziu as 10 sondas que falharam e as mutações M19 e M16.
   - **Decisões:** Vivian escolheu S2 (um salto solta as pré-lidas restantes) e T0 (documentar a condição exata da garantia de memória).
   - **Correções:** cursor fechado, erros de E/S no lote e testes novos (8 unitários e 1 estresse com dois cursores). Registros em `review.md` 23 a 28 e no adendo do cartão D-P1-12.
+
+## Prompt 9 — Fechamento da parte P1 (#45) (23/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> vamos para o fechamento da #45
+
+- **Resultado:**
+  - **Revisor de confirmação:** rodou sobre o código final do prefetch (cerca de 92 mil falhas injetadas, sem defeito crítico, alto ou médio) e achou dois pontos baixos (achado 29): S2 soltava as pré-lidas num hit, e o limite "1 + k" não vale com aninhamento. Corrigido no PR #97 (`0dac349`) e na arquitetura, PR #96 (`df45ef8`), com o ok da integrante.
+  - **Documentos atualizados:** o resumo das decisões e "como se combinam" em `docs/decisoes/P1.md` (com D0 e C0 nas linhas de D-P1-03 e D-P1-05), `ai/P1/ESTADO.md` (com a tabela de requisitos), `ai/P1/stress.md`, `ai/P1/post_mortem.md` (18 defeitos e estimado × medido; as seções de opinião ficaram como rascunho para a integrante) e `docs/estudo/P1.md` §1.3 e §2.

@@ -1,34 +1,63 @@
 # Relatório de Testes de Estresse — P1 (Gerente de Arquivos e Buffer Pool)
 
-## 1. Metodologia do Teste de Estresse (`tests/stress/test_buffer_stress.py`)
+Atualizado em 23/11, depois da revisão da D-P1-12 (prefetch com cursor dono). A suíte de estresse (`python -m pytest -q -m stress`) tem 3 testes e roda em cerca de 45 s.
 
-Conforme especificado no guia de implementação (`docs/implementacao/P1_arquivos_buffer.md`, §6):
+## 1. Metodologia (`tests/stress/test_buffer_stress.py`)
 
-- **Cenário de pressão extrema:** Área `DATA` minúscula com apenas **3 frames** (`B = 2048` bytes) operando sobre um arquivo de **10.000 blocos** sob **1.000.000 operações aleatórias** determinísticas (`random.Random(480)`) para `LRU` e `MRU` (suíte completa executada em `21.37s`):
-  - `pin` (leituras repetidas e aleatórias forçando *evictions* constantes a cada ~3 acessos);
-  - modificações de conteúdo in-place com `mark_dirty()` seguidas de `unpin(page)` (sem passar `dirty=True` no `unpin`, exercitando a preservação do bit `dirty`);
-  - `force(page)` (gravações forçadas);
-  - `pin(..., seq=True)` com `prefetch=2`, `allow_prefetch(fid, PageType.DATA)` e `toss_immediate=True` no `unpin(..., toss=...)`.
-- **Oráculo de Referência e Invariantes de I/O:** Dicionário Python em memória (`oracle: dict[int, bytearray]`) que espelha exatamente o conteúdo esperado de cada bloco lógico. Ao final, verifica-se:
-  1. `bp.pinned() == 0`;
-  2. consistência interna: `requests == hits + misses` e `reads == seq_reads + rand_reads`;
-  3. **consistência física entre Buffer Pool e FileManager:** `fm.io.reads == pool.stats.misses + pool.stats.prefetched` e `fm.io.writes == pool.stats.dirty_evictions + pool.stats.forced_writes`;
-  4. após `bp.clear()` e reabertura do arquivo no `FileManager`, todos os 10.000 blocos em disco são comparados byte a byte contra o oráculo.
-- **Verificação de Contagem Exata sob Prefetch (`test_prefetch_nao_expulsa_o_que_acabou_de_ler`, `test_prefetch_com_mru_nao_expulsa_antes_do_uso` e `test_prefetch_entre_cursores_nao_expulsa_nao_referenciadas`):** Valida que varreduras sequenciais com `prefetch=4` sobre 20 blocos (`LRU` 3 frames e `MRU` 8 frames, com e sem `toss=True`) nunca expulsam blocos pré-lidos antes do uso, mantendo `fm.io.reads == 20`.
+### 1.1 `test_buffer_random_stress_with_oracle`
 
----
+- **Cenário:** área `DATA` com **3 frames** (`B = 2048`), arquivo de **10.000 blocos** e **1.000.000 de operações** determinísticas (`random.Random(480)`), para LRU e MRU, com `toss_immediate=True` e `prefetch=2`.
+- **Operações:**
+  - `pin` e `unpin` aleatórios (até 2 páginas fixadas), com `toss` em 30% dos `unpin`;
+  - alterações com `mark_dirty()` seguidas de `unpin(page)`, sem `dirty=True`, para exercitar a preservação do `dirty`;
+  - `force(page)`;
+  - em 20% dos passos, uma varredura curta (de 1 a 6 blocos) num cursor `bp.seq_scan`, com `toss` aleatório, alterações, e saída antecipada (`break`) aleatória. Depois de cada cursor, `pinned()` tem de voltar ao número de pins avulsos.
+- **Oráculo e invariantes:** um `dict[int, bytearray]` espelha cada bloco. Ao fim, o teste confere:
+  - `pinned() == 0`;
+  - `prefetched > 0`, ou seja, o caminho do prefetch foi de fato exercitado;
+  - `requests == hits + misses`;
+  - `io.reads == misses + prefetched`;
+  - `io.writes == dirty_evictions + forced_writes`;
+  - `reads = seq + rand` e `writes = seq + rand`.
 
-## 2. Comparação Experimental: Código Bruto (`buffer_pool_v1_ce1221b.py`) e Protótipo Ilustrativo (`buffer_pool_inicial.py`) vs. Código Refatorado (`cbd/storage/`)
+  Depois, `clear()`, fechamento e reabertura: os 10.000 blocos no disco são comparados byte a byte com o oráculo.
 
-Os testes em `tests/stress/test_buffer_stress.py::test_naive_vs_refactored_stress` e `tests/test_buffer_pool.py` comparam tanto o **código bruto real da 1ª versão gerada pela IA** (`ai/P1/raw/buffer_pool_v1_ce1221b.py`) quanto o **protótipo ingênuo reconstruído para fins didáticos** (`ai/P1/raw/buffer_pool_inicial.py`) contra a implementação refatorada final (`cbd/storage/`):
+### 1.2 `test_cursores_e_pins_avulsos_stress` (novo em 23/11)
 
-| Critério Avaliado | Versão Bruta Real (`ce1221b`) / Protótipo Ilustrativo | Versão Refatorada (`cbd/storage/`) | Causa da Diferença |
+- **Cenário:** `DATA = 10`, `k = 2`, arquivo de 2.000 blocos, **200.000 operações** para LRU e MRU.
+  - Até **2 cursores** ficam abertos ao mesmo tempo, abertos e fechados em qualquer ordem. Cada um anda em sequência, com saltos aleatórios.
+  - Os pins avulsos respeitam a condição de memória documentada (T0): `pins fora dos cursores ≤ capacidade − cursores·(1 + k)`.
+- **Invariantes a cada passo:**
+  - nenhum `BufferFullError`;
+  - soma dos `pin_count` = pins avulsos + pré-lidas seguradas pelos cursores;
+  - cada cursor segura no máximo `k` pré-lidas (regra S2);
+  - conteúdo igual ao oráculo.
+
+  Ao fim, as mesmas identidades de contagem e a persistência em disco.
+- **Prova por mutação:** sem a regra S2, este teste falha logo no início (`len(_held) > k`).
+
+### 1.3 `test_naive_vs_refactored_stress`
+
+Compara o código bruto real (`ai/P1/raw/buffer_pool_v1_ce1221b.py`) e o protótipo ingênuo (`ai/P1/raw/buffer_pool_inicial.py`) com `cbd/storage/` (ver §2).
+
+## 2. Ingênuo × refatorado
+
+| Critério | Versão bruta (`ce1221b`) ou protótipo ingênuo | Versão refatorada (`cbd/storage/`) | Causa da diferença |
 | :--- | :--- | :--- | :--- |
-| **Scan de 20 blocos com `prefetch=4` (`LRU` 3 frames / `MRU` 8 frames)** | **FALHA no código bruto `ce1221b`** (lê **85 blocos** no LRU e **64 blocos** no MRU, pois o prefetch expulsa os blocos que acabou de trazer) | **PASSA** (lê exatamente **20 blocos** em ambos; cada bloco sai do disco 1 única vez) | `_prefetch` refatorado usa `Frame.prefetched`, `for_prefetch=True` e `MRUPolicy` prefere frames `not prefetched`. |
-| **Prefetch entre 2 cursores e sob `MRU` sem `toss=True`** | **FALHA antes da 2ª revisão** (`exclude=batch_frames` só protegia a chamada atual e `MRU` expulsava prefetch antes do 1º `pin()`) | **PASSA** (Cursor A obtém 100% hit nos blocos pré-lidos; scan MRU sem `toss` lê exatos 20 blocos) | `Frame.prefetched` protege globalmente até o primeiro `pin()`. |
-| **Contagem de `misses` quando `pin()` levanta `BufferFullError`** | **FALHA no código bruto `ce1221b`** (`misses` é incrementado antes de `_victim`, ficando `misses > io.reads`) | **PASSA** (`misses == 0` se nenhuma leitura ocorreu por falta de frame livre) | Incremento de `misses` movido para depois de `_victim(area)` e `fm.read()`. |
-| **`bp.clear()` chamado dentro de `with bp.reserve_work(k)`** | **FALHA antes da revisão do PR #2** (duplicava `k` frames em `WORK.free`, permitindo que dois `pin` recebessem o mesmo `Frame`) | **PASSA** (`len(set(WORK.free)) == len(WORK.free) == 64`; frames em `area.reserved` não entram em `free` durante `clear()`) | `_Area.reserved` rastreia frames emprestados a `reserve_work`. |
-| **Integridade após `mark_dirty()` + `unpin()` + expulsão** | **FALHA no protótipo ilustrativo** (perde $100\%$ das escritas marcadas via `mark_dirty()`) | **PASSA** ($100\%$ dos 10.000 blocos idênticos ao oráculo em disco após 1M ops) | O `unpin` refatorado faz `if dirty: page.dirty = True`, nunca zerando `dirty` prévio. |
-| **Vazamento de `pin` com `prefetch > 0`** | **FALHA no protótipo ilustrativo** (`pinned() > 0` após varredura sequencial; esgota o buffer) | **PASSA** (`pinned() == 0`; páginas de prefetch entram com `pin_count = 0`) | `_prefetch` instala páginas sem fixá-las. |
-| **Reuso de bloco após `free_block(fid, bno)` e overflow > `_max_free`** | **FALHA no protótipo ilustrativo / `lost_free`** (retorna dados antigos ou deixa bloco perdido legível) | **PASSA** (descarta frame do buffer; blocos excedentes são encadeados sem perda) | `_discard_frame` + hooks no `FileManager` + extensão encadeada. |
-| **Contagem do 1º *seek* após `reset_stats()`** | **FALHA no protótipo ilustrativo** (conta `seq_reads` se coincidir com `_head` anterior) | **PASSA** (`rand_reads == 1` garantido após `reset_stats()`) | `reset_stats()` reinicia `self._head = None`. |
+| **Scan de 20 blocos, `prefetch=4`, LRU, `DATA=3`** | **85 leituras** (`ce1221b`: o prefetch expulsava o que acabara de trazer) | **20 leituras** (10 misses + 10 pré-lidas: o teto, com 1 cursor e 3 frames, faz lotes de 2) | Pré-lidas fixadas pelo cursor dono: nunca são vítimas antes do uso |
+| **Scan de 20 blocos, `prefetch=4`, MRU, `DATA=8`** | **64 leituras** (`ce1221b`) | **20 leituras** (4 misses + 16 pré-lidas, lotes de 5) | Idem: sob MRU, a pré-lida fixada não pode ser "a mais recente" a sair |
+| **Pré-lidas de um cursor que parou cedo (órfãs)** | **Revisão de 12/11:** protegidas para sempre (`DATA=4`, `k=3`, LRU alternando 5/6: 10 misses, 0 hits) | **2 misses, 8 hits**, igual ao LRU puro (`test_prefetch_orfas_soltas_quando_o_cursor_termina`: `DATA=5`, `k=3`; com 4 frames o teto cortaria o lote) | O fim do cursor solta os pins das pré-lidas não usadas |
+| **Cursor que salta (1 bloco a cada 10, `DATA=128`, `k=8`)** | **1ª versão do cursor (23/11):** até 126 de 128 frames fixados | No máximo `1 + k` = 9 por cursor (`d + k` com `cur.page` aninhado) | S2: um miss fora das pré-lidas solta as restantes |
+| **Prefetch com vítimas sujas (`DATA=5`, `k=3`)** | **Antes de 22/11:** 0 leituras sequenciais, 8 seeks | Leituras 1 rand + 3 seq, gravações 1 rand + 3 seq, **2 seeks** | Lote em duas fases (B2): grava todas as vítimas, depois lê |
+| **`misses` quando `pin()` levanta `BufferFullError`** | `ce1221b`: `misses = 3`, `io.reads = 2` | `misses = 2`, `io.reads = 2` | `misses += 1` só depois de `_victim` e `fm.read` |
+| **`clear()` dentro de `reserve_work(k)`** | Antes da revisão do PR #2: `k` frames duplicados em `WORK.free` | Sem duplicatas | `_Area.reserved` |
+| **`mark_dirty()` + `unpin()` + expulsão** | Protótipo ingênuo: perde 100% dessas escritas | 100% dos blocos iguais ao oráculo após 1M de operações | `unpin` faz `if dirty: page.dirty = True` (OU lógico) |
+| **Pins depois de varreduras com prefetch** | Protótipo ingênuo: pré-lidas fixadas sem dono, `pinned() > 0` | `pinned() == 0` depois de todo cursor, inclusive com `break` e exceção | O pin da pré-lida pertence ao cursor, que o solta |
+| **Cursor usado depois do `with`** | 1ª versão do cursor (23/11): 4 páginas fixadas para sempre | `RuntimeError`, 0 pins | Marca `_closed` |
+| **Reuso de bloco após `free_block` e mais de 1016 livres** | Protótipo ingênuo: dados antigos e `lost_free` | Frame descartado; excedentes encadeados | `_discard_frame`, hooks e extensão encadeada |
+| **1º seek depois de `reset_stats()`** | Protótipo ingênuo: contava como `seq_read` | `rand_reads == 1` | `reset_stats()` zera `_head` |
+
+## 3. O que o estresse não cobre
+
+- **Áreas pequenas fora da condição T0:** o `BufferFullError` nesse caso é esperado e documentado. `test_limite_do_teto_documentado` fixa o comportamento.
+- **Integração com as camadas 3 e 2** (heap, B+ e operadores): fica para a #70, depois das entregas de P2 a P5.
