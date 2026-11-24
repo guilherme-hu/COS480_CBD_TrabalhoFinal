@@ -53,8 +53,27 @@ def test_buffer_random_stress_with_oracle(tmp_path):
                 continue
 
             bno = rng.randint(1, n_blocks)
-            seq = rng.random() < 0.2
-            p = pool.pin(fid, bno, PageType.DATA, seq=seq)
+            if rng.random() < 0.2:
+                # D-P1-12 (revista em 23/11): varredura curta num cursor, com prefetch fixado pelo
+                # cursor e saída antecipada aleatória (break); ao sair, as pré-lidas não usadas
+                # são soltas. Abre com no máximo 1 pin avulso (o laço acima solta quando há 2);
+                # o caso de vários cursores e pins avulsos está em test_cursores_e_pins_avulsos_stress.
+                fim = min(n_blocks, bno + rng.randint(0, 5))
+                with pool.seq_scan(fid, PageType.DATA) as cur:
+                    for b in range(bno, fim + 1):
+                        with cur.page(b, toss=rng.random() < 0.5) as sp:
+                            assert sp.data == oracle[b], (
+                                f"Corrupção no passo {step} (pol={pol}): bloco {b} no cursor"
+                            )
+                            if rng.random() < 0.2:
+                                sp.data[0] = rng.randrange(1, 255)
+                                sp.mark_dirty()
+                                oracle[b][0] = sp.data[0]
+                        if rng.random() < 0.2:
+                            break
+                assert pool.pinned() == len(active_pins)  # nada vazou do cursor
+                continue
+            p = pool.pin(fid, bno, PageType.DATA)
             assert p.data == oracle[bno], (
                 f"Corrupção no passo {step} (pol={pol}): bloco {bno} diverge do oráculo!"
             )
@@ -76,6 +95,7 @@ def test_buffer_random_stress_with_oracle(tmp_path):
 
         assert pool.pinned() == 0
         assert pool.stats.requests == pool.stats.hits + pool.stats.misses
+        assert pool.stats.prefetched > 0  # o caminho do prefetch com dono foi exercitado
         assert fm.io.reads == pool.stats.misses + pool.stats.prefetched
         assert fm.io.writes == pool.stats.dirty_evictions + pool.stats.forced_writes
         assert fm.io.reads == fm.io.seq_reads + fm.io.rand_reads
@@ -124,8 +144,11 @@ def test_naive_vs_refactored_stress(tmp_path):
         BufferConfig(areas={PageType.DATA: 3, PageType.WORK: 2}, policy=Policy.LRU, prefetch=4),
     )
     bp_ref.allow_prefetch(fid_ref, PageType.DATA)
-    for b in range(1, 21):
-        bp_ref.unpin(bp_ref.pin(fid_ref, b, PageType.DATA, seq=True), toss=True)
+    # D-P1-12 (revista em 23/11): o prefetch só roda dentro de um cursor seq_scan
+    with bp_ref.seq_scan(fid_ref, PageType.DATA) as cur:
+        for b in range(1, 21):
+            with cur.page(b, toss=True):
+                pass
     ref_reads = fm_ref.io.reads
     fm_ref.close_all()
     assert ref_reads == 20, "BufferPool refatorado lê cada bloco exatamente 1 vez (85 -> 20 leituras)"
@@ -183,3 +206,102 @@ def test_naive_vs_refactored_stress(tmp_path):
     rbp.flush_all()
     rfm.close_all()
 
+
+
+@pytest.mark.stress
+def test_cursores_e_pins_avulsos_stress(tmp_path):
+    """Estresse do prefetch com dono (D-P1-12, revista em 23/11; ai/P1/review.md, achados 23, 24, 27).
+
+    Área DATA = 10, k = 2, até 2 cursores abertos ao mesmo tempo (abertos e fechados em qualquer
+    ordem), cada um andando em sequência com saltos aleatórios, e pins avulsos de outros blocos.
+    Os pins avulsos respeitam a condição documentada (T0):
+        pins fora dos cursores <= capacidade − cursores × (1 + k)
+    e, dentro dela, NENHUM BufferFullError pode acontecer. A cada passo confere:
+      - soma dos pin_count == pins avulsos + pré-lidas seguradas pelos cursores;
+      - cada cursor segura no máximo k pré-lidas (S2);
+      - conteúdo de cada página == oráculo; ao fim, as identidades de contagem e a persistência.
+    """
+    cap, k = 10, 2
+    for pol in (Policy.LRU, Policy.MRU):
+        scfg = StorageConfig(root_dir=str(tmp_path / f"cur_{pol.value}"), block_size=1024)
+        fm = FileManager(scfg)
+        pool = BufferPool(
+            fm,
+            BufferConfig(
+                areas={PageType.CATALOG: 1, PageType.INDEX: 1, PageType.DATA: cap, PageType.WORK: 1},
+                policy=pol,
+                toss_immediate=True,
+                prefetch=k,
+            ),
+        )
+        fid = fm.create("rel")
+        pool.allow_prefetch(fid, PageType.DATA)
+        rng = random.Random(4800 + (pol == Policy.MRU))
+        n_blocks = 2_000
+        oracle: dict[int, bytearray] = {}
+        for i in range(1, n_blocks + 1):
+            p = pool.new_page(fid, PageType.DATA)
+            p.data[0] = rng.randrange(256)
+            oracle[i] = bytearray(p.data)
+            pool.unpin(p)
+        pool.clear()
+
+        cursores: list[list] = []  # [gerenciador de contexto, cursor, próximo bno]
+        avulsos: list = []
+
+        def limite_avulsos(n_cursores: int) -> int:
+            return cap - n_cursores * (1 + k)
+
+        def confere(p, bno):
+            assert p.data == oracle[bno], f"bloco {bno} diverge do oráculo ({pol})"
+            if rng.random() < 0.2:
+                p.data[1] = rng.randrange(256)
+                p.mark_dirty()
+                oracle[bno][1] = p.data[1]
+
+        for step in range(200_000):
+            r = rng.random()
+            if r < 0.05 and len(cursores) < 2 and len(avulsos) <= limite_avulsos(len(cursores) + 1):
+                cm = pool.seq_scan(fid, PageType.DATA)
+                cursores.append([cm, cm.__enter__(), rng.randint(1, n_blocks)])
+            elif r < 0.09 and cursores:
+                cm, _, _ = cursores.pop(rng.randrange(len(cursores)))
+                cm.__exit__(None, None, None)
+            elif r < 0.65 and cursores:
+                c = rng.choice(cursores)
+                if rng.random() < 0.1:
+                    c[2] = rng.randint(1, n_blocks)  # salto
+                bno = c[2]
+                with c[1].page(bno, toss=rng.random() < 0.5) as p:
+                    confere(p, bno)
+                c[2] = bno % n_blocks + 1
+            elif r < 0.82 and len(avulsos) < limite_avulsos(len(cursores)):
+                bno = rng.randint(1, n_blocks)
+                p = pool.pin(fid, bno, PageType.DATA)
+                confere(p, bno)
+                avulsos.append(p)
+            elif avulsos:
+                pool.unpin(avulsos.pop(rng.randrange(len(avulsos))), toss=rng.random() < 0.3)
+
+            seguradas = sum(len(c[1]._held) for c in cursores)
+            assert all(len(c[1]._held) <= k for c in cursores)
+            # Soma dos pin_count (pinned() conta páginas: dois avulsos no mesmo bloco são 1 página).
+            pins = sum(f.pin_count for f in pool._areas[PageType.DATA].frames)
+            assert pins == len(avulsos) + seguradas, f"pin vazando no passo {step}"
+
+        for cm, _, _ in cursores:
+            cm.__exit__(None, None, None)
+        while avulsos:
+            pool.unpin(avulsos.pop())
+
+        assert pool.pinned() == 0
+        assert pool.stats.prefetched > 0
+        assert pool.stats.requests == pool.stats.hits + pool.stats.misses
+        assert fm.io.reads == pool.stats.misses + pool.stats.prefetched
+        pool.clear()
+        fm.close_all()
+        fm_check = FileManager(scfg)
+        fid_check = fm_check.open("rel")
+        for bno, expected in oracle.items():
+            assert fm_check.read(fid_check, bno) == expected, f"bloco {bno} errado no disco ({pol})"
+        fm_check.close_all()
