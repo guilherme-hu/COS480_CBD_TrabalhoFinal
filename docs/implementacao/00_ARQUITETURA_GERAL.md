@@ -318,7 +318,7 @@ class BufferCounters:
 
 # ------------------------------------------------------------------ esquema e registros
 class FType(str, Enum):
-    INT = "INT"          # int (64 bits com sinal)
+    INT = "INT"          # int (32 bits com sinal; E&N §16.4.1, revisão do D-P2-05)
     FLOAT = "FLOAT"      # float (64 bits)
     DATE = "DATE"        # datetime.date
     CHAR = "CHAR"        # str de tamanho fixo `size` bytes (utf-8, preenchido)

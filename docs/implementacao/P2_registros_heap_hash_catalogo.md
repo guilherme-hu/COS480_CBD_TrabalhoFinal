@@ -58,7 +58,7 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 
 ```
 [parte fixa, campos fixos em ordem do esquema]            (sem null bitmap: D-P2-02)
-    INT   -> 8  bytes  '<q'               NULL = -2**63
+    INT   -> 4  bytes  '<i'               NULL = -2**31   (E&N §16.4.1, p. 560: integer = 4 B)
     FLOAT -> 8  bytes  '<d'               NULL = NaN
     DATE  -> 4  bytes  '<i'  (date.toordinal())   NULL = 0
     CHAR  -> size bytes (utf-8, preenchido com b'\x00'; maior que size -> ValueError)   NULL = 0xFF no 1º byte
@@ -69,24 +69,24 @@ Até o P1 entregar (05/11), use a fixture `bp` de `tests/conftest.py`. Até o P3
 ```
 
 - Pré-compile um `struct.Struct` para a parte fixa no `__init__` (um `pack`/`unpack` por registro). É o caminho quente do sistema inteiro. As sentinelas cabem no mesmo `struct`.
-- `encode` **recusa** os valores reservados como dado (`-2**63` em INT, NaN em FLOAT) e `None` em campo obrigatório, com `ValueError`. `decode` testa o NaN com `math.isnan` (em Python, `nan == nan` é falso). LIST vazia (count 0) e VARCHAR vazio (len 0) não são NULL.
+- `encode` **recusa** os valores reservados como dado (`-2**31` em INT, NaN em FLOAT) e `None` em campo obrigatório, com `ValueError`. `decode` testa o NaN com `math.isnan` (em Python, `nan == nan` é falso). LIST vazia (count 0) e VARCHAR vazio (len 0) não são NULL.
 - `decode` **valida**: posição + len ≤ len(b) em cada prefixo, nenhum byte sobrando no fim, na LIST, cada item cabe no que resta do campo e há no máximo `MAX_LIST` itens. Violação levanta `ValueError("registro corrompido")`. É o item "acesso fora da faixa" do §7.1 do enunciado.
 - `decode` devolve `tuple`; LIST vira `tuple[str, ...]`; CHAR remove os `\x00` finais.
 - `max_size`: soma com todos os variáveis no máximo (LIST com 16 itens de `size`: `2 + 16 × (1 + size)`).
 
 ### 2.3 Chaves de tamanho fixo (para índices e B+)
 
-Decisão D-P2-05 (`docs/decisoes/P2.md`): bytes que preservam a ordem, INT e FLOAT em 8 bytes.
+Decisão D-P2-05 (`docs/decisoes/P2.md`, revista em 23/11): bytes que preservam a ordem, INT em 4 bytes e FLOAT em 8, o mesmo tamanho que têm no registro.
 
 | FType | `key_size` | Codificação |
 | :--- | :--- | :--- |
-| INT | 8 | `(v + 2**63).to_bytes(8, "big")`, que preserva a ordem em bytes |
+| INT | 4 | `(v + 2**31).to_bytes(4, "big")`, que preserva a ordem em bytes |
 | FLOAT | 8 | `struct.pack('>d')` com ajuste de sinal (inverte todos os bits se negativo, senão inverte só o bit de sinal), também preservando a ordem. **−0,0 vira 0,0** antes de codificar (são iguais, mas os bytes diferem); **NaN levanta `ValueError`** (não tem ordem e é a sentinela de NULL) |
 | DATE | 4 | `(ordinal).to_bytes(4, "big")` |
 | CHAR/VARCHAR | `size` | utf-8 preenchido com `\x00` à direita |
 | LIST | — | não pode ser chave (`TypeError`) |
 
-- **Chave NULL é recusada:** `encode_key(f, None)` levanta `ValueError`, assim como as sentinelas de NULL da D-P2-02 (INT `−2**63`, FLOAT NaN, DATE ordinal 0). Nenhuma coluna-chave da bancada é nula (D-P2-05, opção N1).
+- **Chave NULL é recusada:** `encode_key(f, None)` levanta `ValueError`, assim como as sentinelas de NULL da D-P2-02 (INT `−2**31`, FLOAT NaN, DATE ordinal 0). Nenhuma coluna-chave da bancada é nula (D-P2-05, opção N1).
 - `decode_key(encode_key(v)) == v` e `len(encode_key(f, v)) == key_size(f)`.
 
 **A preservação de ordem é obrigatória:** o P3 compara chaves como `bytes` dentro dos nós da B+ (`a < b ⇔ encode_key(a) < encode_key(b)`). O `test_key_order` garante isso.

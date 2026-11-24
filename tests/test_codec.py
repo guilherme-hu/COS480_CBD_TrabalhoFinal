@@ -27,12 +27,12 @@ ROW = (7, -1.5, date(2001, 2, 3), "ab", "olá", ("x", "yy"), 1, 2.0, date(1999, 
 
 # ------------------------------------------------------------------ layout (N1)
 def test_layout_fixed_part_first_then_length_prefixed_variables():
-    # D-P2-01/02/03: fixos em ordem (INT 8, FLOAT 8, DATE 4, CHAR size), sem bitmap; depois cada
+    # D-P2-01/02/03: fixos em ordem (INT 4, FLOAT 8, DATE 4, CHAR size), sem bitmap; depois cada
     # variável com u16 de tamanho; LIST = u16 total + itens (u8 len, bytes), sem contagem.
     s = Schema("s", (Field("a", FType.INT), Field("n", FType.VARCHAR, 9), Field("c", FType.CHAR, 3),
                      Field("l", FType.LIST, 4)))
     b = RecordCodec(s).encode((5, "ab", "x", ("p", "qq")))
-    expected = (struct.pack("<q", 5) + b"x\x00\x00"          # parte fixa: a, c
+    expected = (struct.pack("<i", 5) + b"x\x00\x00"          # parte fixa: a, c
                 + struct.pack("<H", 2) + b"ab"                # n
                 + struct.pack("<H", 5) + b"\x01p\x02qq")      # l: 1+1 + 1+2 = 5 bytes
     assert b == expected
@@ -45,12 +45,12 @@ def test_null_sentinels_take_the_field_space():
                      Field("v", FType.VARCHAR, 5, nullable=True)))
     c = RecordCodec(s)
     b = c.encode((None, None, None, None, None))
-    assert b[:8] == struct.pack("<q", -2**63)
-    assert math.isnan(struct.unpack("<d", b[8:16])[0])
-    assert b[16:20] == struct.pack("<i", 0)
-    assert b[20] == 0xFF
-    assert b[22:] == b"\xff\xff"                     # VARCHAR NULL: só o u16 0xFFFF
-    assert len(b) == len(c.encode((1, 1.0, date.today(), "a", ""))) == 24
+    assert b[:4] == struct.pack("<i", -2**31)          # INT de 4 B: sentinela −2³¹
+    assert math.isnan(struct.unpack("<d", b[4:12])[0])
+    assert b[12:16] == struct.pack("<i", 0)
+    assert b[16] == 0xFF
+    assert b[18:] == b"\xff\xff"                     # VARCHAR NULL: só o u16 0xFFFF
+    assert len(b) == len(c.encode((1, 1.0, date.today(), "a", ""))) == 20
 
 
 # ------------------------------------------------------------------ roundtrip (N1)
@@ -60,8 +60,8 @@ def test_codec_roundtrip():
     nulls = ROW[:6] + (None,) * 6
     assert c.decode(c.encode(nulls)) == nulls
     # LIST vazia e VARCHAR vazio não são NULL; LIST cheia (MAX_LIST itens de `size`); limites
-    edge = (2**63 - 1, float("inf"), date.max, "ãé", "x" * 10, ("abcde",) * MAX_LIST,
-            -2**63 + 1, -0.0, date.min, "", "1234567890", ())
+    edge = (2**31 - 1, float("inf"), date.max, "ãé", "x" * 10, ("abcde",) * MAX_LIST,
+            -2**31 + 1, -0.0, date.min, "", "1234567890", ())
     got = c.decode(c.encode(edge))
     assert got == edge and math.copysign(1, got[7]) == -1.0      # −0,0 preservado no registro
     assert len(c.encode(edge)) <= c.max_size
@@ -75,8 +75,8 @@ def test_max_size_is_the_largest_possible_record():
     c = RecordCodec(ALL)
     biggest = (1, 1.0, date.today(), "abcd", "x" * 10, ("y" * 5,) * MAX_LIST,
                1, 1.0, date.today(), "abc", "x" * 10, ("y" * 5,) * MAX_LIST)
-    # fixos: 8+8+4+4 + 8+8+4+3 = 47; VARCHAR 2+10 (×2); LIST 2 + 16·(1+5) = 98 (×2)
-    assert c.max_size == len(c.encode(biggest)) == 47 + 2 * 12 + 2 * 98
+    # fixos: 4+8+4+4 + 4+8+4+3 = 39; VARCHAR 2+10 (×2); LIST 2 + 16·(1+5) = 98 (×2)
+    assert c.max_size == len(c.encode(biggest)) == 39 + 2 * 12 + 2 * 98
 
 
 def test_codec_has_no_block_limit():
@@ -98,8 +98,9 @@ def test_every_schema_fits_the_smallest_block(table):
 
 @pytest.mark.parametrize("bad", [
     (None,) + ROW[1:],                                 # None em campo obrigatório
-    (-2**63,) + ROW[1:],                               # sentinela de INT como dado
-    (2**63,) + ROW[1:],                                # fora de 64 bits
+    (-2**31,) + ROW[1:],                               # sentinela de INT como dado
+    (2**31,) + ROW[1:],                                # fora de 32 bits
+    (-2**31 - 1,) + ROW[1:],                           # idem, abaixo
     ROW[:1] + (math.nan,) + ROW[2:],                   # NaN é a sentinela de FLOAT
     ROW[:1] + (10**400,) + ROW[2:],                    # int maior que o maior double
     ROW[:2] + (datetime(2001, 2, 3, 4),) + ROW[3:],    # datetime perderia a hora
@@ -134,17 +135,17 @@ def test_codec_corrupt():
     good = c.encode(ROW)
     cases = [good[:n] for n in range(len(good))]             # todo truncamento
     cases.append(good + b"\x00")                              # byte sobrando
-    fixed = 8 + 8 + 4 + 4 + 8 + 8 + 4 + 3                     # início do 1º variável (v)
+    fixed = 4 + 8 + 4 + 4 + 4 + 8 + 4 + 3                     # início do 1º variável (v)
     cases.append(good[:fixed] + struct.pack("<H", 11) + good[fixed + 2:])     # VARCHAR > size
     cases.append(good[:fixed] + struct.pack("<H", 900) + good[fixed + 2:])    # tamanho fora do registro
     lpos = fixed + 2 + len("olá".encode())                    # LIST l: u16 total, 1+1, 1+2
     cases.append(good[:lpos] + struct.pack("<H", 5) + b"\x09x\x02yy" + good[lpos + 7:])   # item maior que size
     cases.append(good[:lpos] + struct.pack("<H", 5) + b"\x01x\x06yy" + good[lpos + 7:])   # idem
     cases.append(good[:fixed] + b"\x02\x00\xff\xfe" + good[fixed + 4:])       # utf-8 inválido
-    cases.append(struct.pack("<q", -2**63) + good[8:])        # NULL em INT obrigatório
-    cases.append(good[:20] + b"\xff" + good[21:])             # NULL em CHAR obrigatório
-    cases.append(good[:20] + b"a\x00b\x00" + good[24:])       # CHAR com \x00 no meio
-    cases.append(good[:16] + struct.pack("<i", 2**31 - 1) + good[20:])    # DATE além de date.max
+    cases.append(struct.pack("<i", -2**31) + good[4:])        # NULL em INT obrigatório
+    cases.append(good[:16] + b"\xff" + good[17:])             # NULL em CHAR obrigatório
+    cases.append(good[:16] + b"a\x00b\x00" + good[20:])       # CHAR com \x00 no meio
+    cases.append(good[:12] + struct.pack("<i", 2**31 - 1) + good[16:])    # DATE além de date.max
     for bad in cases:
         with pytest.raises(ValueError, match="registro corrompido"):
             c.decode(bad)
@@ -224,7 +225,7 @@ def test_random_records_roundtrip():
         if f.nullable and rng.random() < 0.2:
             return None
         if f.ftype is FType.INT:
-            return rng.randint(-2**63 + 1, 2**63 - 1)
+            return rng.randint(-2**31 + 1, 2**31 - 1)
         if f.ftype is FType.FLOAT:
             return _rand_float(rng)
         if f.ftype is FType.DATE:
@@ -261,22 +262,23 @@ def _heap_blocks(sizes, block_size):
 
 
 def test_record_sizes_give_the_block_counts_of_the_decisions():
-    # N4: os cartões D-P2-01 a D-P2-04 (e o PR #91) estimaram, em escala 1 e B = 4096,
-    # aluno = 1 830 blocos e inscricao = 4 425. Aqui medimos com o codec real.
-    # inscricao: 4 campos fixos de 8 B, sem bitmap = 32 B; ⌊4 068 / 36⌋ = 113 por bloco;
-    # ⌈500 000 / 113⌉ = 4 425 (conferimos o tamanho numa amostra, não os 500 mil).
+    # N4: os cartões D-P2-01 a D-P2-04 estimaram, em escala 1 e B = 4096, com INT de 8 B,
+    # aluno = 1 830 blocos e inscricao = 4 425. Com INT de 4 B (revisão do D-P2-05), medimos
+    # de novo com o codec real.
+    # inscricao: dre e turma INT (4 + 4) + frequencia e media FLOAT (8 + 8) = 24 B, sem bitmap;
+    # ⌊4 068 / 28⌋ = 145 por bloco; ⌈500 000 / 145⌉ = 3 449 (tamanho conferido numa amostra).
     ins = RecordCodec(SCHEMAS["inscricao"])
-    assert {len(ins.encode(r)) for r in Dataset(scale=0.01).records("inscricao")} == {32}
+    assert {len(ins.encode(r)) for r in Dataset(scale=0.01).records("inscricao")} == {24}
     # aluno: tamanho variável, 50 000 registros (~0,5 s).
     alu = RecordCodec(SCHEMAS["aluno"])
     sizes = [len(alu.encode(r)) for r in Dataset().records("aluno")]
-    assert [_heap_blocks(sizes, b) for b in (2048, 4096, 8192)] == [3790, 1830, 901]
+    assert [_heap_blocks(sizes, b) for b in (2048, 4096, 8192)] == [3426, 1670, 826]   # com INT de 8 B: 3 790 / 1 830 / 901
 
 
 # ------------------------------------------------------------------ chaves (D-P2-05)
 def test_key_size():
     assert [key_size(Field("x", t, 7)) for t in (FType.INT, FType.FLOAT, FType.DATE, FType.CHAR,
-                                                  FType.VARCHAR)] == [8, 8, 4, 7, 7]
+                                                  FType.VARCHAR)] == [4, 8, 4, 7, 7]
     with pytest.raises(TypeError):
         key_size(Field("l", FType.LIST, 5))
     for t in (FType.CHAR, FType.VARCHAR):              # chave de 0 bytes: o RecordCodec também recusa
@@ -299,7 +301,7 @@ def _rand_float(rng):
 
 
 def _rand_int(rng):
-    return rng.choice([-2**63 + 1, 2**63 - 1, -1, 0, 1, 255, 256, rng.randint(-2**63 + 1, 2**63 - 1),
+    return rng.choice([-2**31 + 1, 2**31 - 1, -1, 0, 1, 255, 256, rng.randint(-2**31 + 1, 2**31 - 1),
                        rng.randint(-1000, 1000)])
 
 
@@ -342,7 +344,7 @@ def test_composite_key_with_seq_keeps_order():
 
 
 @pytest.mark.parametrize("ftype,values", [
-    (FType.INT, [-2**63 + 1, -1, 0, 50_000, 2**63 - 1]),
+    (FType.INT, [-2**31 + 1, -1, 0, 50_000, 2**31 - 1]),
     (FType.FLOAT, [-math.inf, -6.57, 5e-324, 0.0, 9.99, math.inf]),
     (FType.DATE, [date.min, date(2026, 11, 23), date.max]),
     (FType.CHAR, ["", "a", "ab€", "abcdefghi"]),
@@ -357,7 +359,7 @@ def test_decode_key_roundtrip(ftype, values):
 
 
 @pytest.mark.parametrize("ftype,v", [
-    (FType.INT, None), (FType.INT, -2**63), (FType.INT, 2**63), (FType.FLOAT, math.nan),
+    (FType.INT, None), (FType.INT, -2**31), (FType.INT, 2**31), (FType.FLOAT, math.nan),
     (FType.FLOAT, None), (FType.DATE, None), (FType.CHAR, None), (FType.CHAR, "a\x00"),
     (FType.CHAR, "x" * 10), (FType.VARCHAR, "a\x00"), (FType.FLOAT, 10**400),
     (FType.DATE, datetime(2026, 1, 1, 8)),
@@ -369,7 +371,7 @@ def test_encode_key_rejects_null_sentinels_and_bad_values(ftype, v):
 
 
 @pytest.mark.parametrize("ftype,b", [
-    (FType.INT, b"\x00" * 8),             # −2⁶³: a sentinela de NULL
+    (FType.INT, b"\x00" * 4),             # −2³¹: a sentinela de NULL
     (FType.FLOAT, b"\xff" * 8),           # NaN (bit de sinal ligado na chave = positivo)
     (FType.FLOAT, b"\x00" * 8),           # NaN (todos os bits invertidos = negativo)
     (FType.FLOAT, b"\x7f" + b"\xff" * 7), # −0,0 (o encode_key normaliza para 0,0)
