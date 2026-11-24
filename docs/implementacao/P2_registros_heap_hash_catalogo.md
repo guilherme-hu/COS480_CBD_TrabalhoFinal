@@ -167,11 +167,12 @@ def hash_value(v, seed: int = 0) -> int:
 ### 5.2 Layout do arquivo
 
 ```
-bno 1         : meta (n_records, n_deleted, tail, fsm_bnos[...]) — PageType.DATA
-bno 2..       : blocos de dados (slotted page) intercalados com páginas FSM conforme alocadas
+bno 1         : meta ('HEP1', n_records, n_deleted, tail, faixas de blocos de dados, blocos do mapa) — PageType.DATA
+bno 2         : 1ª página do mapa (criada com a meta, para os dados começarem contíguos)
+bno 3..       : blocos de dados (slotted page); novas páginas do mapa só quando o arquivo passa de B blocos
 ```
 
-Guarde em meta a **lista de bnos de dados** como faixas `[(ini, fim), ...]`. Assim o `scan` não lê páginas FSM. Como o heap só aloca com `new_page`, quase tudo é uma faixa só.
+O mapa tem 1 byte por bloco, indexado pelo número do bloco: a página k cobre os blocos k·B .. k·B + B − 1 (D-P2-09). A meta guarda as **faixas** de blocos de dados `[(ini, fim), ...]`, e o `scan` percorre só elas (não lê meta nem mapa). `n_deleted` = slots apagados que ainda existem. A meta é regravada a cada mudança (fica no buffer; só suja se os bytes mudam).
 
 ### 5.3 Operações
 
@@ -184,7 +185,7 @@ Guarde em meta a **lista de bnos de dados** como faixas `[(ini, fim), ...]`. Ass
 | `scan()` | percorre as faixas de dados em ordem, `pin(seq=True)`, devolve `(RID, rec)` dos slots vivos, `unpin(toss=True)` | `b_r` |
 | `search` / `range` | `NotApplicable` | — |
 | `bulk_load(recs)` | append direto, sem consultar o FSM; grava o FSM no fim | `b_r` gravações |
-| `reorganize()` | cria `<name>__new`, `bulk_load` com os registros vivos, apaga o antigo, renomeia (`os.replace` + atualizar o fid) | `2·b_r` |
+| `reorganize()` | copia os vivos para um `TempHeap`, recria o arquivo com o mesmo nome e recarrega com `bulk_load` (o `FileManager` não tem rename, e renomear o `.dat` por fora furaria a camada 4). Não é atômico. Quando disparar: D-P2-11, em aberto | `b_r + 3·b'` |
 | `encode_ptr`/`decode_ptr` | `struct.pack('<IH', block, slot)` (bloco u32, slot u16); `ptr_size = 6`. D-P2-10 | — |
 
 O `scan` é um **gerador** com `try/finally` garantindo o `unpin`. Ele lê os registros da página para uma lista local antes do `yield`? **Não**: decodifique slot a slot enquanto a página está fixada e faça o `yield` de cada registro. O `finally` faz o `unpin` se o consumidor abandonar o gerador.

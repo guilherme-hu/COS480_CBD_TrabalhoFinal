@@ -113,6 +113,10 @@ def test_record_too_large_touches_nothing(bp):
     with pytest.raises(RecordTooLarge):
         h.insert(("y" * (limit - 1),))
     assert (bp.fm.n_blocks(h.fid), h.stats()["records"]) == before
+    requests = bp.stats.requests
+    with pytest.raises(RecordTooLarge):
+        h.insert(("y" * (limit - 1),))
+    assert bp.stats.requests == requests                    # nem pinou a cauda
     h2 = HeapFile.create(bp, "h2", big, SPEC)
     with pytest.raises(RecordTooLarge):
         h2.bulk_load([("y" * (limit - 1),)])
@@ -228,13 +232,13 @@ def test_stale_map_entry_is_corrected(bp):
     # O mapa é só uma dica (D-P2-09): se a entrada prometer mais do que o bloco tem, o heap corrige e segue.
     h = HeapFile.create(bp, "h", S, SPEC)
     rids = [h.insert(rec(i, 300)) for i in range(100)]
-    h.delete(rids[0])
-    full = rids[50].block
-    h._set_free(full, 4000)                                 # entrada mentirosa para um bloco cheio
+    h.delete(rids[90])                                      # o buraco de verdade fica num bloco do fim
+    full = rids[10].block                                   # um bloco cheio antes dele, com entrada mentirosa
+    h._set_free(full, 4000)
     for i in range(30):
         h.insert(rec(1000 + i, 300))
     assert h.stats()["records"] == 129
-    assert sorted(x for _, x in h.scan()) == sorted([rec(i, 300) for i in range(1, 100)]
+    assert sorted(x for _, x in h.scan()) == sorted([rec(i, 300) for i in range(100) if i != 90]
                                                      + [rec(1000 + i, 300) for i in range(30)])
     assert h._get_free(full) < 300                          # a entrada foi corrigida ao pinar o bloco
 
@@ -359,3 +363,292 @@ def test_random_ops_match_dict_oracle(pool, seed):
     assert dict(h.scan()) == oracle
     assert h.stats()["records"] == len(oracle)
     h.close()
+
+
+# ---------- achados da revisão independente (ai/P2/review.md) ----------
+
+def test_open_without_close_sees_current_counters(bp):
+    # A meta acompanha cada mudança: abrir o mesmo arquivo sem close() vê os contadores atuais.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rids = [h.insert(rec(i, 10)) for i in range(10)]
+    for r in rids[:3]:
+        h.delete(r)
+    h2 = HeapFile.open(bp, "h", S, SPEC)
+    assert h2.stats()["records"] == 7 and h2.stats()["deleted"] == 3
+    h2.close()
+
+
+def test_deleted_counts_dead_slots_not_deletes_ever(bp):
+    # n_deleted = slots apagados que ainda existem: o insert que reaproveita um slot apagado desconta.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rids = [h.insert(rec(i, 10)) for i in range(10)]
+    h.delete(rids[3])
+    r = h.insert(rec(99, 10))
+    assert r == rids[3]                                     # o slot 3 da cauda foi reaproveitado
+    assert h.stats()["deleted"] == 0
+
+
+@pytest.mark.parametrize("bad", [0.0, "0", None, True])
+def test_bad_rid_types_raise_keyerror_without_leaking_pins(bp, bad):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    r = h.insert(rec(1))
+    for call in (h.delete, h.fetch):
+        with pytest.raises(KeyError):
+            call(RID(r.block, bad))
+        with pytest.raises(KeyError):
+            call(RID(bad, 0))
+    assert bp.pinned() == 0
+
+
+def test_failure_in_new_page_keeps_the_original_error(bp, monkeypatch):
+    # Se alocar a página falhar no meio da carga, o erro original sobe (nada de unpin duplo).
+    real, calls = bp.new_page, []
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 3:
+            raise OSError("disco cheio")
+        return real(*a, **k)
+    h = HeapFile.create(bp, "h", S, SPEC)
+    t = TempHeap(bp, "__tmp_f", S)
+    monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError):
+        h.bulk_load(rec(i, 2000) for i in range(10))
+    calls.clear()
+    with pytest.raises(OSError):
+        for i in range(10):
+            t.append(rec(i, 2000))
+    monkeypatch.setattr(bp, "new_page", real)
+    t.drop()
+    assert bp.pinned() == 0 and not bp.fm.exists("__tmp_f")
+
+
+def test_failure_after_new_block_keeps_counters_right(bp, monkeypatch):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    for i in range(3):
+        h.insert(rec(i, 1500))                              # 2 por bloco: o 3º abre bloco novo
+    monkeypatch.setattr(h, "_fsm_page", lambda k: (_ for _ in ()).throw(OSError("falha")))
+    with pytest.raises(OSError):
+        for i in range(3, 6):
+            h.insert(rec(i, 1500))
+    monkeypatch.undo()
+    assert h.stats()["records"] == sum(1 for _ in h.scan())
+
+
+def test_close_twice_is_harmless(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    h.insert(rec(1))
+    h.close()
+    h.close()
+
+
+def test_edge_cases_on_empty_heap(pool):
+    bp = pool(8192)
+    h = HeapFile.create(bp, "h", S, SPEC)
+    assert list(h.scan()) == []
+    h.reorganize()
+    h.bulk_load(iter(()))
+    assert h.insert(rec(1)).block >= 2
+    it = h.scan()
+    next(it)
+    it.close()                                              # scan abandonado solta o pin
+    assert bp.pinned() == 0
+    h.close()
+
+
+
+# ---------- testes da revisão de qualidade (mutantes que sobreviviam) ----------
+
+def check_map(h):
+    # D-P2-09: fora da cauda, a entrada arredonda o livre real para baixo e esconde menos de B/256 bytes.
+    step = h._b // 256
+    for a, z in h._ranges:
+        for bno in range(a, z + 1):
+            if bno == h._tail:
+                continue
+            with h.bp.page(h.fid, bno, h.ptype) as p:
+                real = SlottedPage(p.data).free_space()
+            got = h._get_free(bno)
+            assert got <= real < got + step, (bno, got, real)
+
+
+def test_map_entries_round_down(bp):
+    r = random.Random(7)
+    h = HeapFile.create(bp, "h", S, SPEC)
+    h.bulk_load([rec(i, r.randint(300, 1500)) for i in range(300)])
+    check_map(h)
+    rids = [h.insert(rec(1000 + i, r.randint(300, 1500))) for i in range(300)]
+    check_map(h)
+    for rid in r.sample(rids, 100):
+        h.delete(rid)
+    check_map(h)
+    for i in range(100):
+        h.insert(rec(5000 + i, r.randint(50, 1500)))
+    check_map(h)
+
+
+def test_map_survives_eviction(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rids = [h.insert(rec(i, 300)) for i in range(400)]
+    cold(bp)
+    for rid in rids[:200:2]:
+        h.delete(rid)
+    cold(bp)
+    check_map(h)
+
+
+def test_candidates_only_blocks_that_fit(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rids = [h.insert(rec(i, 300)) for i in range(200)]
+    for rid in rids[:150:3]:
+        h.delete(rid)
+    for n in range(1, 2000, 7):
+        for bno in h._candidates(n):
+            assert h._get_free(bno) >= n, (n, bno)
+
+
+def test_map_not_consulted_without_deletes(bp, monkeypatch):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    monkeypatch.setattr(h, "_candidates", lambda n: pytest.fail("mapa consultado sem remoções"))
+    for i in range(300):
+        h.insert(rec(i, 200))
+
+
+def test_insert_into_tail_costs_two_pins(bp):
+    # Cauda e meta, as duas no buffer: 2 requisições, nenhuma leitura.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    h.insert(rec(0))
+    bp.reset_stats()
+    bp.fm.reset_stats()
+    h.insert(rec(1))
+    assert bp.stats.requests == 2 and bp.fm.io.reads == 0
+
+
+def test_reuse_after_reopen(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rids = [h.insert(rec(i, 200)) for i in range(1000)]
+    for rid in rids[::3]:
+        h.delete(rid)
+    h.close()
+    h = HeapFile.open(bp, "h", S, SPEC)
+    blocks = h.stats()["blocks"]
+    for i in range(330):
+        h.insert(rec(5000 + i, 200))
+    assert h.stats()["blocks"] == blocks
+    h.close()
+
+
+def test_meta_has_structure_without_close(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    for i in range(500):
+        h.insert(rec(i, 200))
+    bp.flush_all()
+    bp.drop_file(h.fid)
+    bp.fm.close(h.fid)                                      # "queda" sem close()
+    h = HeapFile.open(bp, "h", S, SPEC)
+    assert sum(1 for _ in h.scan()) == 500
+    h.close()
+
+
+def test_insert_after_bulk_load_uses_last_block(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    h.bulk_load([rec(i) for i in range(10)])
+    blocks = h.stats()["blocks"]
+    h.insert(rec(99))
+    assert h.stats()["blocks"] == blocks
+
+
+def test_scans_use_seq_and_toss(bp, monkeypatch):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    h.bulk_load([rec(i, 200) for i in range(200)])
+    t = TempHeap(bp, "__tmp_spy", S)
+    for i in range(200):
+        t.append(rec(i, 200))
+    t.finish()
+    calls, pin, unpin = [], bp.pin, bp.unpin
+
+    def spin(fid, bno, ptype=PageType.DATA, **kw):
+        calls.append(kw.get("seq", False))
+        return pin(fid, bno, ptype, **kw)
+
+    def sunpin(page, dirty=False, toss=False):
+        calls.append(toss)
+        return unpin(page, dirty=dirty, toss=toss)
+    monkeypatch.setattr(bp, "pin", spin)
+    monkeypatch.setattr(bp, "unpin", sunpin)
+    list(h.scan())
+    list(t.scan())
+    assert calls and all(calls)
+    monkeypatch.undo()
+    t.drop()
+
+
+def test_temp_larger_than_work_area(bp):
+    t = TempHeap(bp, "__tmp_big", S)
+    recs = [rec(i, 1000) for i in range(1000)]               # ≈ 250 blocos, contra 64 frames de WORK
+    for r in recs:
+        t.append(r)
+    t.finish()
+    assert t.n_blocks() > bp.capacity(PageType.WORK)
+    assert list(t.scan()) == recs
+    t.drop()
+
+
+def test_delete_is_written_to_disk(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rids = [h.insert(rec(i)) for i in range(50)]
+    cold(bp)
+    h.delete(rids[7])
+    cold(bp)
+    with pytest.raises(KeyError):
+        h.fetch(rids[7])
+
+
+def test_scan_of_heap_loaded_by_insert_has_one_seek(bp):
+    # A 1ª página do mapa nasce com a meta (bloco 2), então inserts um a um deixam os dados contíguos.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    for i in range(3000):
+        h.insert(rec(i, 200))
+    b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+    cold(bp)
+    assert sum(1 for _ in h.scan()) == 3000
+    assert bp.fm.io.reads == b and bp.fm.io.seeks == 1
+
+
+def test_read_only_session_writes_nothing(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    h.bulk_load([rec(i) for i in range(100)])
+    h.close()
+    h = HeapFile.open(bp, "h", S, SPEC)
+    bp.fm.reset_stats()
+    list(h.scan())
+    h.close()
+    assert bp.fm.io.writes == 0                             # a meta igual não vira gravação
+
+
+def test_open_of_non_heap_closes_the_file(bp):
+    fid = bp.fm.create("nada2")
+    bp.unpin(bp.new_page(fid), dirty=True)
+    bp.close_file(fid)
+    before = {f for f in range(1, 100) if bp.fm.is_open(f)}
+    with pytest.raises(ValueError):
+        HeapFile.open(bp, "nada2", S, SPEC)
+    assert {f for f in range(1, 100) if bp.fm.is_open(f)} == before
+
+
+def test_reorganize_failure_cleans_up(bp, monkeypatch):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    for i in range(300):
+        h.insert(rec(i, 300))
+    real, calls = bp.new_page, []
+
+    def flaky(fid, ptype=PageType.DATA):
+        calls.append(1)
+        if ptype is PageType.DATA and len(calls) > 30:
+            raise OSError("disco cheio")
+        return real(fid, ptype)
+    monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError):
+        h.reorganize()
+    monkeypatch.undo()
+    assert bp.pinned() == 0 and not bp.fm.exists("h__reorg")

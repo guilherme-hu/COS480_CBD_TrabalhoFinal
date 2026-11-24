@@ -584,7 +584,7 @@ class Catalog:
     def tables(self) -> list[str]
     def drop_table(self, name: str) -> None
     def analyze(self, name: str) -> TableStats        # scan completo; grava no catálogo (forced output)
-    def temp(self, schema: Schema) -> TempFile        # HeapFile em páginas WORK, nome único, fora do catálogo
+    def temp(self, schema: Schema) -> TempFile        # TempHeap (cbd/files/heap.py) em páginas WORK, nome único, fora do catálogo
     def close(self) -> None
 ```
 

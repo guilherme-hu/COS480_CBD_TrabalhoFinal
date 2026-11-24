@@ -9,16 +9,18 @@ Ver docs/decisoes/P2.md. A carga em massa enche os blocos na ordem de chegada (g
 Layout do arquivo do heap:
     bno 1      meta: 'HEP1' | n_records u32 | n_deleted u32 | tail u32 | n_faixas u16 | n_mapa u16
                      | faixas de blocos de dados (u32 início, u32 fim)* | blocos do mapa u32*
-    dados      slotted pages; o scan percorre só as faixas de dados
+    bno 2      1ª página do mapa (criada junto com a meta, para os dados ficarem contíguos)
+    dados      slotted pages a partir do bloco 3; o scan percorre só as faixas de dados
     mapa       1 byte por bloco: a página k do mapa guarda os blocos k·P .. k·P + P − 1 (P = bytes do
-               bloco); o byte vale livre·256 // B, arredondado para baixo (D-P2-09)
+               bloco); o byte vale livre·256 // B, arredondado para baixo (D-P2-09). Páginas além da 1ª
+               são criadas quando o arquivo passa de P blocos
 
 Invariantes: no máximo 1 página fixada por iterador; a entrada do mapa da cauda não é mantida (a cauda é
 tentada primeiro); o mapa é uma dica: uma entrada errada é corrigida quando o bloco é pinado.
-Custo esperado: scan = b leituras de dados (pula meta e mapa); insert ≈ 1 bloco (a cauda costuma estar no
-buffer); fetch = 1 bloco; delete = 1 bloco + a página do mapa (em geral no buffer).
-LIMITAÇÃO: os contadores (n_records, n_deleted) só vão para a meta em mudanças de estrutura e no close();
-sem close, o arquivo no disco fica com os contadores velhos. Não há recuperação de falhas no projeto.
+n_deleted = slots apagados que ainda existem (o insert que reaproveita um deles desconta). A meta é
+regravada a cada mudança: ela fica no buffer, então custa 1 pin e nenhum I/O até sair dele.
+Custo esperado: scan = b leituras de dados e 1 seek (pula meta e mapa); fetch = 1 bloco; insert na cauda =
+2 pins (cauda e meta, em geral no buffer); delete = 3 pins (o bloco, o mapa e a meta).
 """
 import struct
 
@@ -82,18 +84,23 @@ class HeapFile:
         """Abre um heap existente. Custo: 1 leitura (a meta). ValueError se não for um heap."""
         h = cls(bp, name, schema, spec, ptype, bp.fm.open(name))
         with bp.page(h.fid, 1, ptype) as p:
-            magic, h._n, h._deleted, h._tail, nr, nf = _META.unpack_from(p.data, 0)
-            if magic != _MAGIC:
-                raise ValueError(f"{name}: o bloco 1 não é a meta de um heap")
-            pos = _META.size + _RANGE.size * nr
-            h._ranges = [list(r) for r in _RANGE.iter_unpack(p.data[_META.size:pos])]
-            h._fsm = [b for (b,) in _U32.iter_unpack(p.data[pos:pos + 4 * nf])]
+            meta = bytes(p.data)
+        magic, h._n, h._deleted, h._tail, nr, nf = _META.unpack_from(meta, 0)
+        if magic != _MAGIC:
+            bp.close_file(h.fid)
+            raise ValueError(f"{name}: o bloco 1 não é a meta de um heap")
+        pos = _META.size + _RANGE.size * nr
+        h._ranges = [list(r) for r in _RANGE.iter_unpack(meta[_META.size:pos])]
+        h._fsm = [b for (b,) in _U32.iter_unpack(meta[pos:pos + 4 * nf])]
         return h
 
     def close(self):
-        """Grava a meta e fecha o arquivo (grava as páginas sujas dele)."""
+        """Grava a meta e fecha o arquivo (grava as páginas sujas dele). Idempotente."""
+        if self.fid is None:
+            return
         self._write_meta()
         self.bp.close_file(self.fid)
+        self.fid = None
 
     def _new_meta(self):
         page = self.bp.new_page(self.fid, self.ptype)
@@ -101,6 +108,7 @@ class HeapFile:
             self.bp.unpin(page)
             raise RuntimeError(f"{self.name}: a meta precisa ser o bloco 1, veio {page.bno}")
         self.bp.unpin(page, dirty=True)
+        self._fsm_page(0)                                # bloco 2: os dados começam contíguos no 3
         self._write_meta()
 
     def _write_meta(self):
@@ -110,8 +118,9 @@ class HeapFile:
         if len(body) > self._b:
             raise RuntimeError(f"{self.name}: a meta não cabe num bloco ({len(body)} B)")
         page = self.bp.pin(self.fid, 1, self.ptype)
+        changed = page.data[:len(body)] != body
         page.data[:len(body)] = body
-        self.bp.unpin(page, dirty=True)
+        self.bp.unpin(page, dirty=changed)              # meta igual não vira gravação
 
     # ------------------------------------------------------------ mapa de espaço livre (D-P2-09)
     def _fsm_page(self, k):
@@ -167,15 +176,18 @@ class HeapFile:
         """Tenta pôr data no bloco; devolve (slot ou None, bytes livres depois)."""
         page = self.bp.pin(self.fid, bno, self.ptype)
         sp = SlottedPage(page.data)
+        n_before = sp.n_slots()
         slot = sp.insert(data)
         free = sp.free_space()
         self.bp.unpin(page, dirty=slot is not None)
+        if slot is not None and sp.n_slots() == n_before:
+            self._deleted -= 1                           # reaproveitou um slot apagado
         return slot, free
 
     def _locate(self, ptr):
         """Valida o RID e devolve (bno, slot). KeyError se não apontar para um slot de dados."""
         bno, slot = ptr
-        if not self._is_data(bno):
+        if type(bno) is not int or type(slot) is not int or not self._is_data(bno):
             raise KeyError(f"{self.name}: {ptr} não é um bloco de dados")
         return bno, slot
 
@@ -190,40 +202,46 @@ class HeapFile:
         if old_tail:
             slot, tail_free = self._try_insert(old_tail, data)
             if slot is not None:
-                self._n += 1
-                return RID(old_tail, slot)
+                return self._inserted(old_tail, slot)
             if self._deleted:
                 for bno in self._candidates(len(data)):
                     slot, free = self._try_insert(bno, data)
                     self._set_free(bno, free)            # acerta a entrada, servindo ou não (é só uma dica)
                     if slot is not None:
-                        self._n += 1
-                        return RID(bno, slot)
+                        return self._inserted(bno, slot)
         page, _ = _fresh_page(self.bp, self.fid, self.ptype, data)
-        bno = page.bno
         self.bp.unpin(page, dirty=True)
-        self._add_data_block(bno)
+        self._add_data_block(page.bno)
+        self._tail = page.bno
+        self._n += 1
         if old_tail:
             self._set_free(old_tail, tail_free)          # a cauda antiga passa a ser achada pelo mapa
-        self._tail, self._n = bno, self._n + 1
         self._write_meta()
-        return RID(bno, 0)
+        return RID(page.bno, 0)
+
+    def _inserted(self, bno, slot):
+        self._n += 1
+        self._write_meta()
+        return RID(bno, slot)
 
     def delete(self, ptr):
-        """Apaga o registro (o slot fica reservado, D-P2-08). KeyError se não existir. Custo: 1 bloco."""
+        """Apaga o registro (o slot fica reservado, D-P2-08). KeyError se não existir.
+
+        Custo: 1 bloco (mais a página do mapa e a meta, em geral no buffer).
+        """
         bno, slot = self._locate(ptr)
-        page = self.bp.pin(self.fid, bno, self.ptype)
-        sp = SlottedPage(page.data)
-        if not 0 <= slot < sp.n_slots() or sp.get(slot) is None:
-            self.bp.unpin(page)
-            raise KeyError(f"{self.name}: {ptr} não existe")
-        sp.delete(slot)
-        free = sp.free_space()
-        self.bp.unpin(page, dirty=True)
+        with self.bp.page(self.fid, bno, self.ptype) as page:
+            sp = SlottedPage(page.data)
+            if not 0 <= slot < sp.n_slots() or sp.get(slot) is None:
+                raise KeyError(f"{self.name}: {ptr} não existe")
+            sp.delete(slot)
+            free = sp.free_space()
+            page.mark_dirty()
         self._n -= 1
         self._deleted += 1
         if bno != self._tail:
             self._set_free(bno, free)
+        self._write_meta()
 
     def fetch(self, ptr):
         """Registro do RID. KeyError se o slot não existir ou estiver apagado. Custo: 1 bloco."""
@@ -258,7 +276,8 @@ class HeapFile:
     def bulk_load(self, recs):
         """Carga num heap vazio: enche cada bloco até o próximo não caber, na ordem de chegada (guia P2 §5.3).
 
-        Grava os dados contíguos e o mapa depois deles. Custo: b gravações (quando as páginas saem do buffer).
+        Os dados ficam contíguos depois da meta e da 1ª página do mapa. Custo: b gravações (quando as páginas
+        saem do buffer). Se um registro levantar RecordTooLarge no meio, os anteriores já estão gravados.
         """
         if self._n or self._ranges:
             raise ValueError(f"{self.name}: bulk_load exige um heap vazio")
@@ -271,6 +290,7 @@ class HeapFile:
                     if page is not None:
                         closed.append((page.bno, sp.free_space()))
                         self.bp.unpin(page, dirty=True)
+                        page = sp = None                 # já solta: o finally não pode soltá-la de novo
                     page, sp = _fresh_page(self.bp, self.fid, self.ptype, data)
                     self._add_data_block(page.bno)
                 self._n += 1
@@ -286,7 +306,9 @@ class HeapFile:
         """Reescreve o heap só com os registros vivos (os RIDs mudam). Custo: b + 3·b' blocos.
 
         Copia os vivos para um temporário, recria o arquivo com o mesmo nome e recarrega com bulk_load.
-        LIMITAÇÃO: não é atômico; o FileManager não tem rename (ver D-P2-11, em aberto).
+        Quando disparar é a D-P2-11, em aberto: por enquanto só manual.
+        LIMITAÇÃO: não é atômico (uma falha entre apagar e recarregar perde os dados); o FileManager não tem
+        rename, e renomear o .dat por fora dele furaria a camada 4. O guia previa <nome>__new + rename (2·b).
         """
         tmp = TempHeap(self.bp, f"{self.name}__reorg", self.schema)
         try:
@@ -298,7 +320,11 @@ class HeapFile:
             self.fid = self.bp.fm.create(self.name)
             self._reset()
             self._new_meta()
-            self.bulk_load(tmp.scan())
+            rows = tmp.scan()
+            try:
+                self.bulk_load(rows)
+            finally:
+                rows.close()                             # solta a página WORK se o bulk_load falhar
         finally:
             tmp.drop()
 
@@ -339,6 +365,7 @@ class TempHeap:
         if self._sp is None or self._sp.insert(data) is None:
             if self._out is not None:
                 self.bp.unpin(self._out, dirty=True)
+                self._out = self._sp = None              # já solta: drop/finish não podem soltá-la de novo
             self._out, self._sp = _fresh_page(self.bp, self.fid, PageType.WORK, data)
             self._bnos.append(self._out.bno)
         self._n += 1
