@@ -3,13 +3,14 @@
 Implementa: RecordCodec, key_size, encode_key, decode_key (arquitetura §5.1). Usa: só cbd.contracts.
 Decisões: D-P2-01 (variável com prefixo u16), D-P2-02 (NULL = sentinela, sem bitmap),
 D-P2-03 (LIST: itens (u8 len, bytes), sem contagem), D-P2-04 (estruturado = string),
-D-P2-05 (chave em bytes big-endian com sinal ajustado; INT e FLOAT em 8 B), D-P2-06 (o codec não
+D-P2-05 (chave em bytes big-endian com sinal ajustado; INT em 4 B e FLOAT em 8 B, como no registro),
+D-P2-06 (o codec não
 conhece o bloco: RecordTooLarge é levantado por quem insere na página). Ver docs/decisoes/P2.md.
 
 Layout do registro:
-    [parte fixa: INT '<q' | FLOAT '<d' | DATE '<i' (ordinal) | CHAR size bytes, na ordem do esquema]
+    [parte fixa: INT '<i' | FLOAT '<d' | DATE '<i' (ordinal) | CHAR size bytes, na ordem do esquema]
     [variáveis, na ordem do esquema: u16 len + bytes; len = 0xFFFF é NULL]
-Sentinelas de NULL: INT −2⁶³, FLOAT NaN, DATE 0, CHAR 0xFF no 1º byte (utf-8 nunca começa com 0xFF).
+Sentinelas de NULL: INT −2³¹, FLOAT NaN, DATE 0, CHAR 0xFF no 1º byte (utf-8 nunca começa com 0xFF).
 Invariantes: decode(encode(r)) == r (LIST dada como list volta como tuple); decode nunca lê fora
 de `b` (levanta ValueError("registro corrompido: ...")).
 Custo: nenhum I/O. Um pack/unpack de struct pré-compilado por registro na parte fixa.
@@ -22,12 +23,13 @@ from cbd.contracts import Field, FType, Record, Schema
 
 MAX_LIST = 16                 # D-P2-03: itens por LIST
 _NULL_LEN = 0xFFFF            # D-P2-02: tamanho de variável que marca NULL
-_INT_NULL = -2**63            # D-P2-02: sentinela de INT (fica fora do domínio aceito)
+_INT_NULL = -2**31            # D-P2-02: sentinela de INT (fica fora do domínio aceito)
+_INT_SIGN = 1 << 31           # INT de 4 B (E&N §16.4.1, p. 591: "an integer may require 4 bytes")
 _MAX_ORDINAL = date.max.toordinal()
-_SIGN = 1 << 63
+_SIGN = 1 << 63               # FLOAT: bit de sinal do double
 _ONES = (1 << 64) - 1
 _U16 = struct.Struct("<H")
-_CODES = {FType.INT: "q", FType.FLOAT: "d", FType.DATE: "i"}
+_CODES = {FType.INT: "i", FType.FLOAT: "d", FType.DATE: "i"}
 _NULLS = {FType.INT: _INT_NULL, FType.FLOAT: math.nan, FType.DATE: 0, FType.CHAR: b"\xff"}
 
 
@@ -76,8 +78,8 @@ def _number(v, f):
     if isinstance(v, bool):                            # bool é subclasse de int: True viraria 1
         raise ValueError(f"{f.name}: bool não é {t.value}: {v!r}")
     if t is FType.INT:
-        if not isinstance(v, int) or not _INT_NULL < v < _SIGN:
-            raise ValueError(f"{f.name}: INT fora de (−2⁶³, 2⁶³) ou não inteiro: {v!r}")
+        if not isinstance(v, int) or not _INT_NULL < v < _INT_SIGN:
+            raise ValueError(f"{f.name}: INT fora de (−2³¹, 2³¹) ou não inteiro: {v!r}")
         return v
     if t is FType.FLOAT:
         try:
@@ -227,10 +229,10 @@ class RecordCodec:
 
 # ------------------------------------------------------------------ chaves (D-P2-05)
 def key_size(f: Field) -> int:
-    """Bytes da chave codificada: INT/FLOAT 8, DATE 4, CHAR/VARCHAR size. LIST: TypeError."""
-    if f.ftype in (FType.INT, FType.FLOAT):
+    """Bytes da chave codificada: INT 4, FLOAT 8, DATE 4, CHAR/VARCHAR size. LIST: TypeError."""
+    if f.ftype is FType.FLOAT:
         return 8
-    if f.ftype is FType.DATE:
+    if f.ftype in (FType.INT, FType.DATE):
         return 4
     if f.ftype in (FType.CHAR, FType.VARCHAR):
         if f.size < 1:                                 # chave de 0 bytes; o RecordCodec também recusa
@@ -242,7 +244,7 @@ def key_size(f: Field) -> int:
 def encode_key(f: Field, v) -> bytes:
     """Valor → key_size(f) bytes com a mesma ordem do valor (comparação byte a byte).
 
-    INT: v + 2⁶³ em big-endian (inverte o bit de sinal). FLOAT: IEEE big-endian; positivo inverte
+    INT: v + 2³¹ em 4 B big-endian (inverte o bit de sinal). FLOAT: IEEE big-endian; positivo inverte
     o bit de sinal, negativo inverte todos; −0,0 vira 0,0. DATE: ordinal em 4 B big-endian.
     CHAR/VARCHAR: utf-8 preenchido com \\x00 (a ordem é a dos code points); por isso o valor não
     pode conter \\x00, nem num VARCHAR que o registro aceitaria.
@@ -252,7 +254,7 @@ def encode_key(f: Field, v) -> bytes:
         raise ValueError(f"{f.name}: chave não pode ser NULL (D-P2-05)")
     t = f.ftype
     if t is FType.INT:
-        return (_number(v, f) + _SIGN).to_bytes(8, "big")
+        return (_number(v, f) + _INT_SIGN).to_bytes(4, "big")
     if t is FType.FLOAT:
         u = int.from_bytes(struct.pack(">d", _number(v, f) + 0.0), "big")    # −0,0 + 0,0 = 0,0
         return (u ^ _ONES if u & _SIGN else u | _SIGN).to_bytes(8, "big")
@@ -274,7 +276,7 @@ def decode_key(f: Field, b: bytes | memoryview):
     if t is FType.INT:
         if u == 0:
             raise _corrupt(f"{f.name}: chave com a sentinela de NULL")
-        return u - _SIGN
+        return u - _INT_SIGN
     if t is FType.FLOAT:
         if u == _ONES >> 1:                            # chave de −0,0: o encode_key grava 0,0
             raise _corrupt(f"{f.name}: chave −0,0")
