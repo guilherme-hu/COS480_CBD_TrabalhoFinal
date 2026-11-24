@@ -19,7 +19,9 @@ Invariantes: no máximo 1 página fixada por iterador; a entrada do mapa da caud
 tentada primeiro); o mapa é uma dica: uma entrada errada é corrigida quando o bloco é pinado.
 n_deleted = slots apagados que ainda existem (o insert que reaproveita um deles desconta). A meta é
 regravada a cada mudança: ela fica no buffer, então custa 1 pin e nenhum I/O até sair dele.
-Custo esperado: scan = b leituras de dados e 1 seek (pula meta e mapa); fetch = 1 bloco; insert na cauda =
+Custo esperado: scan = b leituras de dados (pula meta e mapa) e 1 seek depois do bulk_load ou de inserts até
+B blocos; acima disso, um heap enchido por inserts ganha 1 seek por página nova do mapa, que nasce entre os
+dados (a bancada carrega com bulk_load, que põe o mapa depois). fetch = 1 bloco; insert na cauda =
 2 pins (cauda e meta, em geral no buffer); delete = 3 pins (o bloco, o mapa e a meta).
 """
 import struct
@@ -36,8 +38,13 @@ _PTR = struct.Struct("<IH")          # D-P2-10: bloco u32 + slot u16
 
 
 def _encode(codec, rec, limit):
-    """Bytes do registro; RecordTooLarge se não couber num bloco vazio (D-P2-06), antes de tocar em página."""
+    """Bytes do registro; RecordTooLarge se não couber num bloco vazio (D-P2-06), antes de tocar em página.
+
+    ValueError para registro de 0 B (esquema sem campos), que a slotted page recusa.
+    """
     data = codec.encode(rec)
+    if not data:
+        raise ValueError("registro de 0 B (esquema sem campos)")
     if len(data) > limit:
         raise RecordTooLarge(f"registro de {len(data)} B não cabe num bloco vazio (máximo {limit} B; D-P2-06)")
     return data
@@ -83,12 +90,16 @@ class HeapFile:
     def open(cls, bp, name, schema, spec, ptype=PageType.DATA):
         """Abre um heap existente. Custo: 1 leitura (a meta). ValueError se não for um heap."""
         h = cls(bp, name, schema, spec, ptype, bp.fm.open(name))
-        with bp.page(h.fid, 1, ptype) as p:
-            meta = bytes(p.data)
-        magic, h._n, h._deleted, h._tail, nr, nf = _META.unpack_from(meta, 0)
+        try:
+            with bp.page(h.fid, 1, ptype) as p:
+                meta = bytes(p.data)
+            magic = meta[:4]
+        except ValueError:                               # arquivo sem nenhum bloco
+            magic = None
         if magic != _MAGIC:
             bp.close_file(h.fid)
             raise ValueError(f"{name}: o bloco 1 não é a meta de um heap")
+        _, h._n, h._deleted, h._tail, nr, nf = _META.unpack_from(meta, 0)
         pos = _META.size + _RANGE.size * nr
         h._ranges = [list(r) for r in _RANGE.iter_unpack(meta[_META.size:pos])]
         h._fsm = [b for (b,) in _U32.iter_unpack(meta[pos:pos + 4 * nf])]
@@ -210,14 +221,15 @@ class HeapFile:
                     if slot is not None:
                         return self._inserted(bno, slot)
         page, _ = _fresh_page(self.bp, self.fid, self.ptype, data)
+        bno = page.bno                                   # antes do unpin: depois o frame pode ir para outro bloco
         self.bp.unpin(page, dirty=True)
-        self._add_data_block(page.bno)
-        self._tail = page.bno
+        self._add_data_block(bno)
+        self._tail = bno
         self._n += 1
         if old_tail:
             self._set_free(old_tail, tail_free)          # a cauda antiga passa a ser achada pelo mapa
         self._write_meta()
-        return RID(page.bno, 0)
+        return RID(bno, 0)
 
     def _inserted(self, bno, slot):
         self._n += 1
@@ -298,6 +310,8 @@ class HeapFile:
             if page is not None:
                 self._tail = page.bno
                 self.bp.unpin(page, dirty=True)
+            elif self._ranges:                           # interrompido entre blocos: a cauda é o último
+                self._tail = self._ranges[-1][1]
             for bno, free in closed:
                 self._set_free(bno, free)
             self._write_meta()

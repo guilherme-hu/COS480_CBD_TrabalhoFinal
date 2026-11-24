@@ -652,3 +652,63 @@ def test_reorganize_failure_cleans_up(bp, monkeypatch):
         h.reorganize()
     monkeypatch.undo()
     assert bp.pinned() == 0 and not bp.fm.exists("h__reorg")
+
+
+# ---------- 2ª revisão independente ----------
+
+def test_insert_returns_the_right_rid_when_the_frame_is_recycled(tmp_path):
+    # Com MRU, o frame do bloco novo, recém-solto, é a próxima vítima: o RID não pode ser lido dele depois.
+    from cbd.contracts import Policy
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path)))
+    bp = BufferPool(fm, BufferConfig(policy=Policy.MRU))
+    g = HeapFile.create(bp, "g", S, SPEC)
+    g.bulk_load(rec(i, 200) for i in range(3000))           # ≈ 150 blocos > 128 frames
+    h = HeapFile.create(bp, "h", S, SPEC)
+    h.insert(rec(0, 1500))
+    h.insert(rec(1, 1500))                                  # 2 por bloco: o 3º abre bloco novo
+    cold(bp)
+    sum(1 for _ in g.scan())                                # área DATA cheia de páginas de g
+    r = h.insert(rec(2, 1500))
+    assert r.block == h._tail
+    assert h.fetch(r) == rec(2, 1500)
+    assert bp.pinned() == 0
+    bp.flush_all()
+    fm.close_all()
+
+
+def test_empty_record_is_rejected_before_any_page(bp):
+    h = HeapFile.create(bp, "z", Schema("z", ()), SPEC)
+    blocks = bp.fm.n_blocks(h.fid)
+    with pytest.raises(ValueError):
+        h.insert(())
+    t = TempHeap(bp, "__tmp_z", Schema("z", ()))
+    with pytest.raises(ValueError):
+        t.append(())
+    t.drop()
+    assert bp.pinned() == 0 and bp.fm.n_blocks(h.fid) == blocks
+
+
+def test_open_of_empty_file_closes_it(bp):
+    bp.fm.close(bp.fm.create("vazio"))
+    before = {f for f in range(1, 100) if bp.fm.is_open(f)}
+    with pytest.raises(ValueError):
+        HeapFile.open(bp, "vazio", S, SPEC)
+    assert {f for f in range(1, 100) if bp.fm.is_open(f)} == before
+
+
+def test_interrupted_bulk_load_keeps_a_tail(bp, monkeypatch):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    real, calls = bp.new_page, []
+
+    def flaky(*a, **k):
+        calls.append(1)
+        if len(calls) == 3:
+            raise OSError("disco cheio")
+        return real(*a, **k)
+    monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError):
+        h.bulk_load(rec(i, 1500) for i in range(10))
+    monkeypatch.undo()
+    blocks = h.stats()["blocks"]
+    h.insert(rec(99, 10))                                   # cabe na sobra do último bloco
+    assert h.stats()["blocks"] == blocks

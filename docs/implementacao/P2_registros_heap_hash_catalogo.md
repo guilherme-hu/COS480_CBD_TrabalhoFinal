@@ -179,8 +179,8 @@ O mapa tem 1 byte por bloco, indexado pelo número do bloco: a página k cobre o
 | Método | Implementação | Custo |
 | :--- | :--- | :--- |
 | `create(bp, name, schema, spec, ptype=DATA)` | `fm.create(name)`; meta | — |
-| `insert(rec)` | `codec.encode` → `RecordTooLarge` se `len > max_record(B)` (D-P2-06) → §5.1 → `SlottedPage.insert` → `mark_dirty`; atualiza FSM só quando a categoria muda | ~1 bloco (tail no buffer) |
-| `delete(rid)` | `SlottedPage.delete`, FSM, `n_deleted += 1` | 1 bloco |
+| `insert(rec)` | `codec.encode` → `RecordTooLarge` se `len > max_record(B)` (D-P2-06) → §5.1 → `SlottedPage.insert` → `mark_dirty`; atualiza o mapa quando a cauda muda ou um bloco antigo recebe o registro; regrava a meta | 1 bloco de dados; 2 pins na cauda (cauda e meta, em geral no buffer) |
+| `delete(rid)` | `SlottedPage.delete`, mapa, `n_deleted += 1`, meta | 1 bloco de dados; 3 pins (bloco, mapa e meta) |
 | `fetch(rid)` | pin, `get(slot)`, decode, unpin. Slot apagado → `KeyError` | 1 bloco |
 | `scan()` | percorre as faixas de dados em ordem, `pin(seq=True)`, devolve `(RID, rec)` dos slots vivos, `unpin(toss=True)` | `b_r` |
 | `search` / `range` | `NotApplicable` | — |
