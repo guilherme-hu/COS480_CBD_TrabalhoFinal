@@ -113,7 +113,7 @@ offset  tam  campo
 | Método | Regra |
 | :--- | :--- |
 | `insert(data)` | reusa o menor slot apagado se houver (D-P2-08); senão cria um slot novo (+4 bytes). Se o espaço contíguo não bastar mas `free_space()` sim, chama `compact()` e tenta de novo. Senão devolve `None` |
-| `insert_at(pos, data)` | sempre cria um slot novo na posição `pos` (desloca o diretório). Para folhas ordenadas do B+ |
+| `insert_at(pos, data)` | sempre cria um slot novo na posição `pos` (desloca o diretório). Para folhas ordenadas do B+; recusa (`AssertionError`) página com slot apagado, onde `free_space()` não desconta o slot novo |
 | `delete(slot)` | `offset = 0xFFFF`, `holes += len`. O slot continua existindo (RID estável) |
 | `remove_at(pos)` | tira a entrada do diretório (desloca); `holes += len`. Muda os slots seguintes; só para B+ |
 | `free_space()` | maior registro que `insert` aceita agora: `free_end − (HEADER + 4·n_slots) + holes − 4`, sem o `− 4` quando há slot apagado para reaproveitar; mínimo 0 (D-P2-08) |

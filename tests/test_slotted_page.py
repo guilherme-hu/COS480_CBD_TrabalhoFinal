@@ -306,25 +306,28 @@ def test_user_header_and_next_survive_inserts_and_compaction():
 
 
 def test_init_clears_previous_content():
-    buf = bytearray(b"\xff" * B)
-    sp = SlottedPage(buf)
+    # Cabeçalho inteiro zerado (n_slots, holes, flags, next, USER), só free_end = B.
+    sp = SlottedPage(bytearray(b"\xff" * B))
     sp.init()
-    assert sp.n_slots() == 0 and sp.next == 0 and bytes(sp.user_header()) == bytes(16)
+    assert bytes(sp.buf[:28]) == bytes(2) + B.to_bytes(2, "little") + bytes(24)
     assert sp.free_space() == SlottedPage.max_record(B)
 
 
 # ---------- página corrompida ----------
 
-def test_corrupt_directory_is_detected():
+@pytest.mark.parametrize("pos, value, call", [
+    (28, B - 1, lambda sp: sp.get(0)),          # offset + len passa do fim do bloco
+    (28, 10, lambda sp: sp.get(0)),             # offset dentro do cabeçalho
+    (0, 2000, lambda sp: sp.free_space()),      # n_slots invade a área de registros
+    (0, 2000, lambda sp: sp.insert(b"a")),      # idem, pelo insert (antes dava struct.error)
+    (4, 100, lambda sp: sp.free_space()),       # holes maior que a área de registros
+], ids=["offset-fim", "offset-cabecalho", "n_slots", "n_slots-insert", "holes"])
+def test_corrupt_header_is_detected(pos, value, call):
     sp = page()
     sp.insert(b"abc")
-    sp.buf[28:30] = (B - 1).to_bytes(2, "little")     # offset + len passa do fim do bloco
+    sp.buf[pos:pos + 2] = value.to_bytes(2, "little")
     with pytest.raises(AssertionError):
-        sp.get(0)
-    sp2 = page()
-    sp2.buf[0:2] = (2000).to_bytes(2, "little")        # n_slots invade a área de registros
-    with pytest.raises(AssertionError):
-        sp2.free_space()
+        call(sp)
 
 
 # ---------- estresse pequeno contra um dict ----------
@@ -377,7 +380,7 @@ def test_page_survives_the_disk(bp):
     assert sp.next == 7
     sp.insert(rec(9, 10))
     assert p.dirty is False                           # a SlottedPage não marca dirty: é de quem chama
-    bp.unpin(p)
+    bp.unpin(p, dirty=True)                           # e quem chama marca (AGENTS regra 5)
     assert bp.fm.io.reads == 1 and bp.fm.io.writes == 0
 
 
@@ -489,26 +492,17 @@ def test_negative_positions_are_rejected():
     assert bytes(sp.buf) == before
 
 
-def test_offset_inside_header_is_detected():
+def test_insert_at_refuses_page_with_deleted_slot():
+    # Com slot apagado, free_space() não desconta o slot novo (vale para o insert), mas o insert_at
+    # sempre cria um: a regra "não misture delete com insert_at" é checada, não só documentada.
     sp = page()
-    sp.insert(b"abc")
-    sp.buf[28:30] = (10).to_bytes(2, "little")
+    sp.insert(b"x" * 2000)
+    sp.insert(b"y" * 1000)
+    sp.delete(1)
+    before = bytes(sp.buf)
     with pytest.raises(AssertionError):
-        sp.get(0)
-
-
-def test_corrupt_holes_is_detected():
-    sp = page()
-    sp.insert(b"abc")
-    sp.buf[4:6] = (100).to_bytes(2, "little")
-    with pytest.raises(AssertionError):
-        sp.free_space()
-
-
-def test_init_formats_whole_header():
-    buf = bytearray(b"\xff" * B)
-    SlottedPage(buf).init()
-    assert bytes(buf[:28]) == bytes(2) + B.to_bytes(2, "little") + bytes(24)
+        sp.insert_at(0, b"z")
+    assert bytes(sp.buf) == before
 
 
 def test_get_returns_a_view_into_the_page():

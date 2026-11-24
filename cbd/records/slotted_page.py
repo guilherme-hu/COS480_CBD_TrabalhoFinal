@@ -42,7 +42,7 @@ class SlottedPage:
     def __init__(self, buf: bytearray):
         self.buf = buf
         self._b = len(buf)
-        _require(self._b <= 8192, f"bloco de {self._b} B não cabe nos offsets u16")
+        _require(self._b <= 8192, f"bloco de {self._b} B acima do teto de 8192 B (guia P2 §3)")
 
     # ----- cabeçalho -----
 
@@ -97,10 +97,9 @@ class SlottedPage:
         _SLOT.pack_into(self.buf, self.HEADER + _SLOT_SIZE * i, off, ln)
 
     def _first_dead(self, n: int) -> int | None:
-        for i in range(n):
-            if self._slot(i)[0] == _DEAD:
-                return i
-        return None
+        # Um unpack do diretório inteiro: a busca roda em C (2 vezes por insert do heap).
+        offs = struct.unpack_from(f"<{2 * n}H", self.buf, self.HEADER)[::2]
+        return offs.index(_DEAD) if _DEAD in offs else None
 
     def get(self, slot: int) -> memoryview | None:
         """View dos bytes do registro, ou None se o slot foi apagado.
@@ -124,8 +123,8 @@ class SlottedPage:
         """Maior registro (bytes) que insert aceita agora, contando os buracos (compacta se preciso).
 
         D-P2-08: desconta os 4 B de um slot novo só quando não há slot apagado para reaproveitar.
-        Numa folha da B+ (sem slots apagados) é também o que insert_at aceita; não misture delete
-        com insert_at na mesma página. 0 = não cabe nada (registros de 0 B são recusados).
+        Numa folha da B+ (sem slots apagados) é também o que insert_at aceita; insert_at recusa
+        página com slot apagado. 0 = não cabe nada (registros de 0 B são recusados).
         """
         n, fe, h = self._state()
         new_slot = 0 if self._first_dead(n) is not None else _SLOT_SIZE
@@ -134,12 +133,11 @@ class SlottedPage:
     def compact(self) -> None:
         """Reempacota os registros vivos no fim do bloco, mantendo os números de slot; holes = 0."""
         n, _, _ = self._state()
-        live = [(self._slot(i)[0], i) for i in range(n) if self._slot(i)[0] != _DEAD]
+        live = [(off, ln, i) for i in range(n) for off, ln in [self._slot(i)] if off != _DEAD]
         end = self._b
         # Do registro mais perto do fim para o mais perto do diretório: cada um só anda para a
         # direita, sobre buracos ou sobre o próprio lugar, então nenhum vivo é sobrescrito.
-        for off, i in sorted(live, reverse=True):
-            ln = self._slot(i)[1]
+        for off, ln, i in sorted(live, reverse=True):
             end -= ln
             if end != off:
                 self.buf[end:end + ln] = self.buf[off:off + ln]
@@ -164,7 +162,7 @@ class SlottedPage:
     def insert(self, data: bytes) -> int | None:
         """Guarda data e devolve o slot (o menor apagado, se houver; D-P2-08), ou None se não couber."""
         data = bytes(data)    # data pode ser uma view desta página, e o compact move registros
-        n = self.n_slots()
+        n, _, _ = self._state()   # valida o cabeçalho antes de ler o diretório
         slot = self._first_dead(n)
         off = self._make_room(len(data), 0 if slot is not None else _SLOT_SIZE)
         if off is None:
@@ -180,11 +178,13 @@ class SlottedPage:
     def insert_at(self, pos: int, data: bytes) -> bool:
         """Cria um slot novo na posição pos, deslocando os seguintes (ordem lógica das folhas da B+).
 
-        Devolve False, sem mexer na página, se não couber.
+        Devolve False, sem mexer na página, se não couber. Recusa página com slot apagado: lá
+        free_space() não desconta o slot novo que insert_at sempre cria (só as folhas da B+ usam).
         """
         data = bytes(data)    # data pode ser uma view desta página, e o compact move registros
-        n = self.n_slots()
+        n, _, _ = self._state()
         _require(0 <= pos <= n, f"posição {pos} fora de 0..{n}")
+        _require(self._first_dead(n) is None, "insert_at em página com slot apagado")
         off = self._make_room(len(data), _SLOT_SIZE)
         if off is None:
             return False
