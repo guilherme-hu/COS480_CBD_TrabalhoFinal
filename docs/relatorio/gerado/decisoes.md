@@ -20,7 +20,7 @@ Gerado de `docs/decisoes/`: 31 cartões, 0 provisórios. A última coluna diz em
 | D-P2-02 | Campos comuns, opcionais e null bitmap | decidida | Descrição da base, dos campos e das chaves |
 | D-P2-03 | Campos multivalorados (LIST) | decidida | Descrição da base, dos campos e das chaves |
 | D-P2-04 | Campos estruturados e derivados | decidida | Descrição da base, dos campos e das chaves |
-| D-P2-05 | Chaves de tamanho fixo que preservam a ordem | decidida (revista) | Descrição da base, dos campos e das chaves |
+| D-P2-05 | Chaves de tamanho fixo que preservam a ordem | revista | Descrição da base, dos campos e das chaves |
 | D-P2-06 | Onde se checa o registro maior que o bloco | decidida | Descrição da base, dos campos e das chaves |
 | D-P2-07 | Organização dos registros dentro do bloco | decidida (revista) | Blocagem |
 | D-P2-08 | Registro apagado e compactação dentro do bloco | decidida | Blocagem |
