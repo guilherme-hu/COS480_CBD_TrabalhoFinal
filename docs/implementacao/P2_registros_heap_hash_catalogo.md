@@ -112,17 +112,19 @@ offset  tam  campo
 
 | Método | Regra |
 | :--- | :--- |
-| `insert(data)` | reusa um slot apagado se houver; senão cria um slot novo (+4 bytes). Se o espaço contíguo não bastar mas `free_space()` sim, chama `compact()` e tenta de novo. Senão devolve `None` |
+| `insert(data)` | reusa o menor slot apagado se houver (D-P2-08); senão cria um slot novo (+4 bytes). Se o espaço contíguo não bastar mas `free_space()` sim, chama `compact()` e tenta de novo. Senão devolve `None` |
 | `insert_at(pos, data)` | sempre cria um slot novo na posição `pos` (desloca o diretório). Para folhas ordenadas do B+ |
 | `delete(slot)` | `offset = 0xFFFF`, `holes += len`. O slot continua existindo (RID estável) |
 | `remove_at(pos)` | tira a entrada do diretório (desloca); `holes += len`. Muda os slots seguintes; só para B+ |
-| `free_space()` | bytes de dados que ainda cabem num **novo** slot: `free_end − (HEADER + 4·n_slots) + holes − 4`, mínimo 0 |
+| `free_space()` | maior registro que `insert` aceita agora: `free_end − (HEADER + 4·n_slots) + holes − 4`, sem o `− 4` quando há slot apagado para reaproveitar; mínimo 0 (D-P2-08) |
 | `compact()` | reempacota os registros vivos no fim do bloco, mantendo os números de slot; `holes = 0` |
 | `max_record(B)` (staticmethod) | `B − HEADER − 4` |
 
 Valide tudo: `slot < n_slots`, `offset + len ≤ B`, `free_end ≥ HEADER + 4·n_slots`. Violação levanta `AssertionError` com mensagem. `B ≤ 8192` cabe em u16.
 
 `SlottedPage` **não** faz pin/unpin nem marca dirty. Quem chamou faz `page.mark_dirty()`.
+
+Registro de 0 B é recusado (`AssertionError`), para `free_space() == 0` querer dizer "não cabe nada". `get` e `user_header` devolvem views da página: valem só enquanto ela estiver fixada, e `insert`/`insert_at`/`compact` podem mover registros (`delete` e `remove_at` não, D-P2-08). `insert` e `insert_at` copiam `data` antes de compactar, então aceitam uma view da própria página.
 
 ---
 
