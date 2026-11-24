@@ -35,4 +35,4 @@
 - Views de `get` valem só com a página fixada; `insert`/`insert_at`/`compact` podem mover registros. Avisar o P3 no PR.
 - LIMITAÇÃO: slots apagados no fim do diretório guardam seus 4 B até um `insert` reaproveitá-los.
 ## Decisões provisórias a rever
-- Nenhuma. Mas há escolhas herdadas do guia sem justificativa, a debater nas issues: RID de 8 B, fator de carga 0,8 e buckets no bloco 2 + i (#48), `compact_at` 0,2 e `bulk_load` a 100% (#43), `hash_value` (#41), catálogo em JSON reescrito e forçado a cada mudança (#46).
+- Nenhuma. Escolhas herdadas do guia ainda sem justificativa, a debater nas issues: fator de carga 0,8 e buckets no bloco 2 + i (#48), `compact_at` 0,2 (#43), `hash_value` (#41), catálogo em JSON reescrito e forçado a cada mudança (#46), gravação dos temporários (#43). Resolvidas em 24/11: mapa de espaço livre (D-P2-09) e RID de 6 B (D-P2-10).

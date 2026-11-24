@@ -604,8 +604,8 @@ Pela tabela, todo índice B+ secundário é NOT UNIQUE e todo índice secundári
 
 | Organização | `Ptr` | `ptr_size` | Custo de `fetch(ptr)` |
 | :--- | :--- | :--- | :--- |
-| HEAP | `RID(block, slot)` | 8 | 1 bloco |
-| HASH | `RID(block, slot)` (o bloco pode ser de overflow) | 8 | 1 bloco |
+| HEAP | `RID(block, slot)` | 6 (bloco u32 + slot u16, D-P2-10) | 1 bloco |
+| HASH | `RID(block, slot)` (o bloco pode ser de overflow) | 6 | 1 bloco |
 | BTREE | `(chave, seq)`, em que `seq` é um inteiro oculto e crescente por arquivo, que torna a chave única | `key_size + 8` | `height` blocos (desce a árvore) |
 
 O ponteiro lógico do B+ existe porque registros mudam de folha nos splits. Um RID quebraria os índices secundários.

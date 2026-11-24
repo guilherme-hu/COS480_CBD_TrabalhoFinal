@@ -160,7 +160,7 @@ def hash_value(v, seed: int = 0) -> int:
 | Decisão | Escolha |
 | :--- | :--- |
 | Registros apagados | slot marcado como apagado na slotted page; RID estável |
-| Gerência de espaço livre | **mapa de espaço livre (FSM)** com 1 byte por bloco de dados (`livre·255 // B`), em páginas `DATA` do próprio arquivo, lidas pelo buffer (contam I/O) |
+| Gerência de espaço livre | **mapa de espaço livre (FSM)** com 1 byte por bloco de dados (`livre·256 // B`, arredondado para baixo; 256 faixas de 16 B em 4 KB, menos que o menor registro), em páginas `DATA` do próprio arquivo gravadas depois dos dados, lidas pelo buffer (contam I/O). D-P2-09 |
 | Política de inserção | 1) tenta o **último bloco** (`tail`); 2) se não couber **e** houver apagados (`n_deleted > 0`), consulta o FSM; 3) senão `new_page` |
 | Compactação do espaço livre | **dentro do bloco**: automática no `insert` (§3). **Do arquivo**: `reorganize()` quando `n_deleted / (n_records + n_deleted) > compact_at` (padrão 0.2), disparada por `Table.delete` |
 
@@ -185,7 +185,7 @@ Guarde em meta a **lista de bnos de dados** como faixas `[(ini, fim), ...]`. Ass
 | `search` / `range` | `NotApplicable` | — |
 | `bulk_load(recs)` | append direto, sem consultar o FSM; grava o FSM no fim | `b_r` gravações |
 | `reorganize()` | cria `<name>__new`, `bulk_load` com os registros vivos, apaga o antigo, renomeia (`os.replace` + atualizar o fid) | `2·b_r` |
-| `encode_ptr`/`decode_ptr` | `struct.pack('<II', block, slot)`; `ptr_size = 8` | — |
+| `encode_ptr`/`decode_ptr` | `struct.pack('<IH', block, slot)` (bloco u32, slot u16); `ptr_size = 6`. D-P2-10 | — |
 
 O `scan` é um **gerador** com `try/finally` garantindo o `unpin`. Ele lê os registros da página para uma lista local antes do `yield`? **Não**: decodifique slot a slot enquanto a página está fixada e faça o `yield` de cada registro. O `finally` faz o `unpin` se o consumidor abandonar o gerador.
 
