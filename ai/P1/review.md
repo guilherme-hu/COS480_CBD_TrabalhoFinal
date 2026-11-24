@@ -181,3 +181,162 @@ Este documento registra os defeitos identificados no código gerado por IA e as 
 - **Defeito:** Ao adicionar o quarto inteiro `ext_bno` (`I`, 4 bytes) ao cabeçalho original `<4sIII16x` (32 bytes), a área reservada foi reduzida para `8x` em vez de `12x` (`<4sIIII8x` = 28 bytes). Isso fazia `HEADER_STRUCT.size == 28`, deixando `_max_free = 1017` em 4 KB (em vez de `1016`) e `_max_free = 9` em 64 B (em vez de `8`), além de deslocar o offset inicial da pilha de livres no Bloco 0.
 - **Detecção:** Revisão de código pós-Frente 2.
 - **Correção Aplicada:** Alterado `HEADER_STRUCT` para `struct.Struct("<4sIIII12x")` (32 bytes exatos) e adicionada asserção explícita de `HEADER_STRUCT.size == 32` e `_max_free == 8` em `test_lost_free_overflow`.
+
+---
+
+## 17. Páginas pré-lidas órfãs ficam protegidas para sempre e estrangulam a área — Médio
+
+- **Arquivo / Local:** `cbd/storage/policies.py` (`LRUPolicy.victim`, `MRUPolicy.victim`), introduzido pela revisão de 12/11 da `D-P1-12` (achado 14 acima).
+- **Categoria:** Política de substituição × prefetch (contagem de hits/misses).
+- **Defeito:** as duas políticas preferem **sempre** um frame `prefetched=False`. Um frame pré-lido só é escolhido se não sobrar nenhum outro. A marca `prefetched` só sai quando alguém dá `pin` na página. Se o cursor para antes de usar o que foi pré-lido (seleção que acha a chave, faixa que termina cedo), essas páginas viram órfãs protegidas sem prazo. Com isso, (a) a área útil encolhe para `capacidade − órfãs` nos `pin` comuns e (b) o próprio `_prefetch` deixa de funcionar, porque ele para quando a próxima vítima é `prefetched`.
+- **Cenário:** DATA = 4, `prefetch = 3`. `pin(1, seq=True)` pré-lê 2, 3 e 4, e o cursor para. Em seguida, 10 pins alternando os blocos 5 e 6. **LRU:** 10 misses e 0 hits, contra 2 misses e 8 hits do LRU puro. **MRU:** os misses empatam com o MRU puro (10), porque o MRU também nunca expulsa páginas antigas. A diferença aparece num scan seguinte com `seq=True`, que não consegue pré-ler nada.
+- **Detecção:** revisor independente de contagem de I/O (AGENTS §8.2), em 22/11/2026, com teste de sondagem. Ao verificar, a IA principal notou que a expectativa do revisor para o **MRU** estava errada (ele esperava 2 misses, mas o MRU puro também dá 10) e trocou o cenário do MRU por um que mede a perda de prefetch. O revisor também erra.
+- **Alcance nas medições:** na matriz atual, nenhum. O prefetch só é ligado em scans completos (`factor_experiments`, D-P6-10), que não deixam órfãs, e `Engine.cold()` limpa o buffer entre as medições. O sistema continua errado em qualquer carga com cursor que para cedo.
+- **Correção aplicada:** segunda chance para a marca de pré-leitura (`D-P1-12`, revista em 22/11). Um `pin` comum que passa por cima de uma página `prefetched` sem pin tira a marca dela. Na passada seguinte, ela concorre como qualquer outra. O caminho do `_prefetch` (`for_prefetch=True`) não tira marcas, para manter a proteção entre cursores e no MRU.
+- **Teste que impede a volta:** `tests/test_buffer_pool.py::test_prefetch_orfas_perdem_protecao_lru` e `::test_prefetch_orfas_nao_desligam_prefetch_seguinte`.
+- **Nota de 23/11:** a correção por segunda chance foi **substituída** pelo prefetch fixado pelo cursor dono (achado 21). As órfãs continuam impossíveis, agora porque o cursor solta as pré-lidas ao terminar. Os testes foram renomeados ou reescritos: `test_prefetch_orfas_soltas_quando_o_cursor_termina` (LRU puro: 2 misses, 8 hits) e `test_prefetch_orfas_nao_desligam_prefetch_seguinte` (1 miss, 3 pré-lidas nas duas políticas).
+
+---
+
+## 18. Prefetch com vítimas sujas: cada leitura antecipada vira aleatória — Médio
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py` (`_prefetch` e o caminho de miss de `pin`).
+- **Categoria:** Contagem de I/O (seq × rand) / violação de contrato.
+- **Defeito:** o `_prefetch` escolhia a vítima **dentro do laço de leitura**, um bloco de cada vez. Quando a vítima estava suja, `_evict_frame` gravava a página antes da leitura seguinte. A gravação levava a cabeça global para outro arquivo, e cada leitura antecipada era contada como `rand_read`. Isso contradiz a arquitetura §3.2 ("lê os próximos k blocos, contados como leituras sequenciais") e a justificativa da `D-P1-12` ("reduz seeks em até k×").
+- **Cenário:** área WORK com 4 frames, todos sujos com os blocos 1..4 de outro arquivo `b`, `prefetch = 3`, `pin(a, 1, WORK, seq=True)`. Ordem real: grava b1, lê a1, grava b2, lê a2, grava b3, lê a3, grava b4, lê a4. Resultado: `seq_reads = 0`, `rand_reads = 4`, 8 seeks. O esperado pelo contrato é `seq_reads = 3`.
+- **Detecção:** revisor independente de aderência a contratos (AGENTS §8.2), em 22/11/2026, com teste de sondagem reproduzido pela IA principal.
+- **Alcance nas medições:** na matriz atual, nenhum. O prefetch só é ligado em scans de leitura na área DATA, onde as vítimas estão limpas, e as linhas de sort/hash (área WORK suja) rodam com `prefetch = 0`.
+- **Correção aplicada (`D-P1-12`, revista em 22/11, opção B2):** no miss com `seq=True`, o `pin` escolhe e expulsa **todas** as vítimas (a do bloco pedido e as do lote) antes de qualquer leitura, gravando as sujas nessa fase. Só depois lê o bloco pedido e o lote em sequência. As regras de parada do prefetch passam a ser avaliadas antes de expulsar.
+- **Teste que impede a volta:** `tests/test_buffer_pool.py::test_prefetch_com_vitimas_sujas_le_lote_sequencial`.
+
+---
+
+## 19. Gravações de `flush` sem contador no buffer — Baixo (decidido documentar)
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py` (`flush_file`, `flush_all`, e por consequência `close_file` e `clear`).
+- **Categoria:** Contagem de I/O / instrumentação.
+- **Achado:** `io.reads` se reconcilia com o buffer (`misses + prefetched`), mas `io.writes` não: as gravações de flush não incrementam nenhum campo de `BufferCounters`. Com 3 páginas sujas e `close_file`, `io.writes = 3` e `dirty_evictions + forced_writes = 0`.
+- **Detecção:** revisor independente de contagem de I/O (AGENTS §8.2), em 22/11/2026.
+- **Resolução (`D-P1-05`, revista em 22/11, opção C0):** sem contador novo. A identidade `gravações de flush = io.writes − dirty_evictions − forced_writes` vale exatamente, porque só o `BufferPool` chama `fm.write` (regra 1, verificada por `grep`) e o cabeçalho fica fora de `io` (`D-P1-03`). A identidade foi documentada na arquitetura §8.1 e no guia §3.4. Não é defeito de corretude: nenhuma gravação deixa de ser contada em `io.writes`. Falta só nomear a parcela de flush.
+- **Teste:** `tests/test_buffer_pool.py::test_identidade_das_gravacoes_com_flush`.
+
+---
+
+## 20. Gravar ou ler o cabeçalho (bloco 0) de outro arquivo não move a cabeça — Baixo (decidido manter)
+
+- **Arquivo / Local:** `cbd/storage/file_manager.py` (`_write_header`, `_read_header`; `_head` só muda em `_count`).
+- **Categoria:** Modelo de contagem de seeks.
+- **Achado:** `create`, `open` e `close` transferem o bloco 0 de verdade, mas sem contar em `io` (por decisão, `D-P1-03`) e sem mexer em `_head`. Se isso acontece entre duas leituras consecutivas de outro arquivo, a segunda conta como sequencial. Cenário: lê X1, cria e fecha Y, lê X2. Resultado: 1 seek, quando um braço físico faria 2.
+- **Detecção:** revisor independente de contagem de I/O (AGENTS §8.2), em 22/11/2026, com teste de sondagem reproduzido pela IA principal.
+- **Resolução (`D-P1-03`, revista em 22/11, opção D0):** comportamento mantido e documentado. A cabeça global conta os acessos aleatórios do modelo de custo do SKS §15.2 (`b·t_T + S·t_S`), que considera só os blocos de dados pedidos pelo algoritmo. O cabeçalho é metadado do simulador e fica fora das duas medidas. Isso evita seeks que nenhuma fórmula do cap. 15 prevê nos operadores com arquivos temporários (sort e hash).
+- **Teste que fixa o comportamento:** `tests/test_file_manager.py::test_cabecalho_de_outro_arquivo_nao_move_cabeca`.
+
+---
+
+## 21. A proteção das páginas pré-lidas era uma heurística sem dono, fora da semântica de pin dos livros — Médio (revisão de projeto)
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py` (`Frame.prefetched`, `_prefetch_*`, `_victim_or_none(for_prefetch)`) e `cbd/storage/policies.py` (`_second_chance_victim`), código das revisões de 12/11 e 22/11 da `D-P1-12`, ambos gerados pela IA.
+- **Categoria:** Projeto do buffer / aderência à teoria (SKS §13.5.1.2).
+- **Problema:** as páginas pré-lidas entravam com `pin_count = 0` e uma marca `prefetched`. Como ninguém era dono delas, cada efeito colateral pedia uma regra nova: a proteção entre cursores (12/11), a preferência do MRU (12/11), as órfãs protegidas para sempre (achado 17) e a segunda chance (22/11). O resultado foram LRU e MRU "modificados", e não os da literatura. Com área apertada e dois cursores, uma pré-lida ainda podia ser expulsa antes do uso. A própria justificativa da IA contra pins nas pré-lidas (estudo P1, pergunta 10: "um scan interrompido deixaria pins presos") supunha que o pin não tinha dono.
+- **Detecção:** discussão com o professor sobre prefetch e políticas, trazida pela integrante em 23/11/2026: "a transação coloca o pin no prefetch e, quando acaba, retira; se mais de uma colocou, todas precisam retirar".
+- **Alcance nas medições:** na matriz atual, nenhum (ninguém chama `allow_prefetch` ainda, #83).
+- **Correção aplicada (`D-P1-12`, revista em 23/11, opção S2):**
+  - `bp.seq_scan(fid, ptype)` abre um cursor dono das pré-lidas, que entram fixadas (`pin_count = 1`) em nome dele;
+  - `cur.page(bno)` assume o pin da pré-lida em vez de somar outro, e a saída do cursor solta as não usadas;
+  - teto: o prefetch nunca deixa a área com menos frames sem pin do que cursores abertos;
+  - o prefetch só roda nas áreas DATA e INDEX;
+  - `pin(seq=True)` fora de cursor não pré-lê;
+  - saíram `Frame.prefetched`, `for_prefetch` e a segunda chance, e as políticas voltaram a LRU/MRU puros.
+  - Primeira versão salva em `ai/P1/raw/buffer_pool_seq_scan_v1.py` e `ai/P1/raw/policies_puras_v1.py`.
+- **Registro tardio:** este achado foi escrito depois da implementação, na mesma sessão, e não antes, como pede o AGENTS §6. Os testes novos foram escritos depois do código, e não antes. Para compensar, o teste do teto foi conferido por mutação: com a regra do teto desligada, ele e mais dois testes falham.
+- **Testes que impedem a volta:** `tests/test_buffer_pool.py::test_prefetch_dois_donos_so_sai_quando_os_dois_soltam`, `::test_cursor_solta_pre_lidas_em_break_e_excecao`, `::test_teto_do_prefetch_garante_frame_para_outro_cursor`, `::test_allow_prefetch_so_em_data_e_index`, `::test_pin_seq_fora_de_cursor_nao_pre_le`, e o estresse `tests/stress/test_buffer_stress.py::test_buffer_random_stress_with_oracle` (cursores curtos com saída antecipada aleatória).
+
+---
+
+## 22. Script da IA apagou testes ao reescrever o arquivo de testes — Alto (processo, sem efeito no código entregue)
+
+- **Arquivo / Local:** script auxiliar da sessão (fora do repositório) que trocava funções inteiras de `tests/test_buffer_pool.py`.
+- **Categoria:** Ferramenta da IA / perda de trabalho não commitado.
+- **Defeito:** o regex que localizava uma função aceitava um decorador `@pytest.mark.parametrize(` opcional com casamento preguiçoso de várias linhas. Ele começou num decorador anterior e "casou" por cima de várias funções até a função-alvo, e a substituição apagou 20 testes (o arquivo caiu de 28 para 10 funções). As mudanças do arquivo ainda não estavam commitadas.
+- **Detecção:** a execução seguinte da suíte acusou `NameError: _orfas`; a contagem de funções (`grep "^def "`) confirmou a perda.
+- **Correção:** o arquivo foi reconstruído a partir da versão `HEAD`, aplicando de novo, em ordem, as edições registradas no histórico da sessão. A reconstrução foi conferida contra as 400 linhas lidas logo antes da reescrita: todas idênticas e nas mesmas posições. O regex passou a aceitar só decoradores colados à função. Depois disso, a lista de funções antes × depois foi comparada, e só as funções previstas mudaram.
+- **Lição:** antes de reescrever um arquivo não commitado por script, guardar uma cópia e comparar a lista de funções antes e depois.
+
+---
+
+## 23. Cursor que salta acumula pré-lidas e fixa quase a área inteira — Médio
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py`, `SeqScan.page` e `_pin(cursor=...)` (revisão de 23/11 da `D-P1-12`).
+- **Categoria:** Memória do buffer (páginas fixadas) / contagem.
+- **Defeito:** num pedido fora das pré-lidas, o cursor faz um miss e pré-lê mais k blocos, sem soltar as pré-lidas que sobraram do lote anterior. Elas só saem quando o cursor termina, então o limite "1 + k por cursor" do cartão não vale.
+- **Cenário:** DATA = 128, k = 8, scan de 400 blocos lendo 1 a cada 10: **126 de 128 frames fixados** e 166 leituras para 40 páginas úteis. Com DATA = 40, k = 4 e as páginas 1, 10, 20 e 30: 16 fixadas, contra o máximo de 5 documentado.
+- **Detecção:** revisor independente de contagem de I/O e memória (AGENTS §8.2), em 23/11/2026, com sonda reproduzida pela IA principal.
+- **Correção (`D-P1-12`, revisão de 23/11, opção S2, escolhida por Vivian):** um pedido fora das pré-lidas significa que o cursor saiu da sequência que pré-leu, por isso ele solta **todas** as pré-lidas restantes antes do pin. Assim o cursor segura no máximo 1 + k páginas sempre. A opção S1, que soltaria só as que ficaram para trás, foi preterida: ela só ganha quando o cursor volta para trás, padrão que nenhum dos nossos scans usa, e nesse caso perde o limite.
+- **Teste:** `tests/test_buffer_pool.py::test_cursor_que_salta_solta_pre_lidas`.
+
+---
+
+## 24. O cartão e o código prometiam que pré-leitura nunca causa `BufferFullError` — Médio (documentação falsa)
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py`, comentário do teto em `_prefetch_victims`; cartão `D-P1-12`, revisão de 23/11, item "Teto".
+- **Categoria:** Documentação contra comportamento / memória.
+- **Defeito:** o teto só reserva 1 frame sem pin para cada cursor aberto **no momento do prefetch**. Dois pins comuns simultâneos dentro de um cursor, ou um cursor aberto depois do prefetch, podem levar `BufferFullError` em área pequena, onde sem prefetch não levariam.
+- **Cenário:** DATA = 3 e k = 8. Dentro de `cur.page(1)` sobre `a`, fixar `b:1` e `b:2` ao mesmo tempo: com k = 0 passa; com k = 8, o segundo pin dá `BufferFullError`.
+- **Detecção:** três revisores independentes (corretude, contratos, I/O), em 23/11/2026, cada um com a própria sonda.
+- **Resolução (opção T0, escolhida por Vivian):** comportamento mantido; a garantia foi reescrita com a condição exata: `pins simultâneos fora dos cursores ≤ capacidade − cursores × (1 + k)`. Com DATA = 128, k = 8 e 1 cursor, isso dá até 119 pins, muito acima dos ~2 que os operadores usam. A opção T2 (o dono cede a pré-lida quando falta frame) foi preterida: com o achado 23 corrigido, o caso só aparece em área pequena, fora da matriz, e T2 acrescentaria um caminho novo à escolha de vítima. Marcado como `# LIMITAÇÃO:` no código.
+- **Teste que fixa o limite:** `tests/test_buffer_pool.py::test_limite_do_teto_documentado`.
+
+---
+
+## 25. Cursor usado depois do `with` vaza pins — Alto
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py`, `SeqScan.page` e `BufferPool.seq_scan`.
+- **Categoria:** Pin sem unpin.
+- **Defeito:** depois do `with bp.seq_scan(...) as cur`, o objeto `cur` continua funcionando. Um `cur.page(bno)` pré-lê e guarda as páginas em `_held`, mas ninguém mais chama `_release`. Como `area.cursors` já voltou a 0, o teto nem limita o lote.
+- **Cenário:** DATA = 8, k = 4: `with bp.seq_scan(a) as cur: pass` e depois `with cur.page(1): pass` deixa `pinned() == 4`.
+- **Detecção:** revisores de corretude e de qualidade dos testes, em 23/11/2026.
+- **Correção:** o cursor guarda uma marca de fechado, e `cur.page` depois do `with` levanta `RuntimeError`.
+- **Teste:** `tests/test_buffer_pool.py::test_cursor_fechado_levanta_erro`.
+
+---
+
+## 26. Erro de E/S no meio do lote de prefetch perde frames ou vaza pins — Baixo
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py`, `_pin` (chamada de `_prefetch_victims`) e `_prefetch_read`.
+- **Categoria:** Estado inconsistente em caminho de erro.
+- **Defeito:** há três casos.
+  1. Uma falha de `fm.write` ao expulsar uma vítima suja do lote acontecia fora do `try`. A vítima do bloco pedido e as do lote já expulsas não voltavam para `free`, e a área encolhia para sempre.
+  2. `_prefetch_read` capturava **qualquer** exceção (por exemplo, `KeyError` ou `OSError`) e só encerrava o lote, escondendo erros reais.
+  3. Ao propagar uma dessas exceções, as pré-lidas já instaladas ficariam fixadas sem dono, e o bloco pedido também.
+- **Cenário (caso 1):** DATA = 4 com 4 páginas sujas e a 2ª chamada de `fm.write` levantando `OSError`. Depois da exceção, a área tem 3 frames utilizáveis, e não 4.
+- **Detecção:** revisores de corretude, contratos e qualidade dos testes (mutações M26 e M27 sobreviviam), em 23/11/2026.
+- **Correção:**
+  - a 1ª fase devolve a `free` os frames já escolhidos se uma gravação falhar;
+  - `_prefetch_read` só trata como fim normal do lote o `ValueError` de bloco alocado mas nunca gravado;
+  - qualquer outra exceção devolve os frames restantes a `free`, deixa as pré-lidas já instaladas com o cursor (que as solta ao terminar), solta o pin do bloco pedido e propaga o erro.
+- **Testes:** `tests/test_buffer_pool.py::test_falha_de_gravacao_no_lote_nao_perde_frame`, `::test_falha_de_leitura_no_lote_propaga_sem_vazar`, `::test_lote_para_no_fim_fisico_sem_perder_frame`.
+
+---
+
+## 27. Lacunas de teste no prefetch com cursor — Médio
+
+- **Arquivo / Local:** `tests/test_buffer_pool.py`, `tests/stress/test_buffer_stress.py`.
+- **Categoria:** Qualidade dos testes.
+- **Defeito:** mutações que passavam pelos 43 testes unitários (conferidas pela IA principal):
+  - **M19:** apagar a parada do lote em bloco já residente. É corrupção: um segundo frame para o mesmo `(fid, bno)`. Só o estresse de 1M de operações pegava, depois de ~16 s.
+  - **M16:** `cur.page` ignorando `toss`. O `toss=True` dos testes rodava com `toss_immediate=False`, onde não tem efeito.
+  - **M25:** hit da pré-lida assumida contado só no contador global, e não em `stats_by_area`, que vai para o CSV como `bp.DATA.*`.
+  - **M32:** a pré-lida assumida sem `policy.accessed`, ou seja, recência errada.
+  - **M26, M27, M28:** caminhos de erro e fim do arquivo.
+  - **M29, M30:** prefetch na área INDEX nunca exercitado.
+  - **Estresse:** não exercitava o teto nem dois cursores. O comentário "convive com até 2 pins avulsos" estava errado: o cursor só abria com até 1.
+- **Detecção:** revisor independente de qualidade dos testes, com teste de mutação, em 23/11/2026.
+- **Correção:** um teste para cada mutação; contadores por área em `test_prefetch`; estresse novo com dois cursores aninhados e pins avulsos dentro da condição do achado 24. Também foram corrigidos três comentários de testes com contas imprecisas.
+
+---
+
+## 28. Pontos de medição documentados (sem defeito de código)
+
+- **`hit_rate` com prefetch:** a pré-lida que o cursor assume conta 1 request e 1 hit. Num scan frio de 90 blocos com k = 8, o `hit_rate` dá 0,89, embora os 90 blocos tenham saído do disco. A contagem é coerente (`io.reads == misses + prefetched`), mas, com prefetch, "hit" inclui pré-leitura. O reaproveitamento real é `hits − (prefetched − pré-lidas soltas sem uso)`. Registrado no cartão D-P1-12, para o relatório e para o P6 (`bench/compare_cost.py:71`).
+- **MRU com prefetch no laço interno:** sobe os seeks (12 contra 5 em 5 passadas de 200 blocos, DATA = 128). O lote precisa de k + 1 vítimas, e o MRU as tira das páginas mais recentes, fragmentando o que fica retido. A matriz usa LRU em todos os algoritmos (`bench/matrix.py:62`), então não muda. Marcado como `# LIMITAÇÃO:` no código.
+- **`free_block`, `drop_file`, `close_file` e `clear` com cursor aberto:** levantam `RuntimeError` se a página é uma pré-lida ainda não usada, porque ela está fixada. É coerente com a regra de pin; entra no aviso a P2 e P3.
