@@ -340,3 +340,17 @@ Este documento registra os defeitos identificados no código gerado por IA e as 
 - **`hit_rate` com prefetch:** a pré-lida que o cursor assume conta 1 request e 1 hit. Num scan frio de 90 blocos com k = 8, o `hit_rate` dá 0,89, embora os 90 blocos tenham saído do disco. A contagem é coerente (`io.reads == misses + prefetched`), mas, com prefetch, "hit" inclui pré-leitura. O reaproveitamento real é `hits − (prefetched − pré-lidas soltas sem uso)`. Registrado no cartão D-P1-12, para o relatório e para o P6 (`bench/compare_cost.py:71`).
 - **MRU com prefetch no laço interno:** sobe os seeks (12 contra 5 em 5 passadas de 200 blocos, DATA = 128). O lote precisa de k + 1 vítimas, e o MRU as tira das páginas mais recentes, fragmentando o que fica retido. A matriz usa LRU em todos os algoritmos (`bench/matrix.py:62`), então não muda. Marcado como `# LIMITAÇÃO:` no código.
 - **`free_block`, `drop_file`, `close_file` e `clear` com cursor aberto:** levantam `RuntimeError` se a página é uma pré-lida ainda não usada, porque ela está fixada. É coerente com a regra de pin; entra no aviso a P2 e P3.
+
+---
+
+## 29. Revisor de confirmação sobre o código final: S2 solta pré-lidas num hit e limite "1 + k" impreciso — Baixo
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py`, `SeqScan.page` e docstrings de `seq_scan` e `SeqScan.page`.
+- **Detecção:** revisor independente de confirmação (AGENTS §8.2), em 23/11/2026, depois das correções dos achados 23 a 27. A sonda de falhas injetadas passou: 40 seeds, cerca de 92 mil exceções em `fm.read` e `fm.write`, com todas as invariantes de frames, pins e contagem mantidas. Dois pontos baixos, cada um com teste que falha, reproduzidos pela IA principal.
+- **(a) Defeito: o código não seguia a decisão S2.** O cartão diz "**num miss**, soltar todas as pré-lidas restantes", mas o código soltava em **qualquer** pedido fora das pré-lidas, inclusive num hit. Por exemplo, pedir de novo a página atual (`cur.page(1)` aninhado, ou repetido em sequência) soltava 2..9: as páginas perdiam a proteção do pin e, sob MRU ou disputa da área, podiam sair antes do uso e ser relidas.
+  - **Correção:** soltar só quando o pedido vai ser um miss, porque só então o cursor pré-lê de novo. O limite de `k` pré-lidas por cursor continua valendo, já que um hit não pré-lê nada.
+  - **Teste:** `tests/test_buffer_pool.py::test_repetir_a_pagina_atual_nao_descarta_pre_lidas`.
+- **(b) Texto impreciso: "no máximo 1 + k páginas por cursor".** Com `cur.page` aninhado no mesmo cursor, cada página em uso soma 1. O limite real é `k` pré-lidas mais as páginas em uso pelo cursor (`d + k`, com `d` = profundidade de aninhamento). Os scans da camada 3 usam `d = 1`. O revisor verificou que a garantia T0 não piora: o teto conta os frames sem pin reais.
+  - **Correção:** textos ajustados no código, no cartão e na arquitetura.
+  - **Teste:** `tests/test_buffer_pool.py::test_cursor_aninhado_segura_k_pre_lidas_mais_paginas_em_uso`.
+- **(c) Observação mínima, sem correção:** se a gravação de um candidato vindo da fila `tossed` falha, a página continua residente e correta, mas sai da fila e perde a prioridade de descarte (D-P1-09). Não afeta corretude, pins nem contagem.

@@ -467,8 +467,9 @@ class BufferPool:
                     with cur.page(bno, toss=True) as p:
                         ...
         Custo de I/O: o mesmo dos pins que o cursor fizer, mais as leituras antecipadas (sequenciais).
-        Memória: no máximo 1 + cfg.prefetch páginas fixadas por cursor (um pedido fora das
-        pré-lidas solta as restantes, D-P1-12 opção S2); o teto da área pode encurtar o lote.
+        Memória: no máximo cfg.prefetch pré-lidas por cursor, mais as páginas em uso por ele: 1 + k
+        num scan simples, d + k com cur.page aninhado em profundidade d (um miss fora das pré-lidas
+        solta as restantes, D-P1-12 opção S2); o teto da área pode encurtar o lote.
         Garantia (T0): pré-leitura não causa BufferFullError enquanto os pins simultâneos fora dos
         cursores forem <= capacidade − cursores × (1 + cfg.prefetch).
         LIMITAÇÃO: com MRU, o lote tira k + 1 vítimas das páginas mais recentes e pode fragmentar o
@@ -826,8 +827,9 @@ class SeqScan:
 
         Se bno é uma página que este cursor pré-leu, assume o pin de pré-leitura (conta 1 request e
         1 hit, 0 leituras) em vez de somar outro. Senão, faz um pin normal, e um miss dispara o
-        prefetch dos blocos seguintes. Um pedido fora das pré-lidas solta antes as que sobraram
-        (opção S2): o cursor segura no máximo 1 + cfg.prefetch páginas.
+        prefetch dos blocos seguintes. Um miss fora das pré-lidas solta antes as que sobraram
+        (opção S2): o cursor segura no máximo cfg.prefetch pré-lidas, mais as páginas em uso por ele
+        (1 + k num scan simples; d + k com cur.page aninhado em profundidade d).
         Custo de I/O: hit = 0; miss = 1 leitura + até cfg.prefetch leituras sequenciais
         (+ 1 gravação por vítima suja).
         Levanta: RuntimeError se usado depois do fim do `with bp.seq_scan(...)`; as exceções de pin.
@@ -836,9 +838,11 @@ class SeqScan:
             raise RuntimeError("cursor seq_scan usado depois do fim do with (D-P1-12)")
         bp = self._bp
         fr = self._held.pop(bno, None)
-        if fr is None and self._held:
-            # D-P1-12 (S2, ai/P1/review.md achado 23): pedido fora das pré-lidas = o cursor saiu da
-            # sequência que pré-leu. Solta as restantes antes do pin, para segurar no máximo 1 + k.
+        if fr is None and self._held and (self.fid, bno) not in bp._table:
+            # D-P1-12 (S2, ai/P1/review.md achados 23 e 29): um MISS fora das pré-lidas = o cursor saiu
+            # da sequência que pré-leu e vai pré-ler de novo. Solta as restantes antes do pin, para
+            # segurar no máximo k pré-lidas. Num hit (ex.: pedir de novo a página atual) não solta:
+            # um hit não pré-lê, então o limite continua valendo.
             self._release()
         if fr is not None:
             # D-P1-12 (revista em 23/11): a pré-leitura é deste cursor; o pin dela passa a ser o pin de uso.

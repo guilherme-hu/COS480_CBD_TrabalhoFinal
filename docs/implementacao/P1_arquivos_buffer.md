@@ -210,7 +210,7 @@ with bp.seq_scan(fid, PageType.DATA) as cur:   # o cursor é o dono das pré-lid
 
   Cada vítima é expulsa já nessa fase, e as sujas são gravadas. A 2ª fase, `_prefetch_read`, lê o lote depois do bloco pedido: 1 seek + k leituras sequenciais, mesmo com vítimas sujas.
 - **Pré-lidas fixadas pelo dono.** Cada pré-lida entra com `pin_count = 1` em nome do cursor (`SeqScan._held`) e conta `prefetched += 1`. Quando o cursor chega nela, `cur.page` **assume** esse pin (conta 1 request e 1 hit, 0 leituras) e o solta na saída. Se outro leitor fixar a mesma página, o `pin_count` vai a 2 e ela só pode sair quando os dois soltarem.
-- **Salto (S2, 23/11).** Um pedido fora das pré-lidas solta as restantes antes do pin: o cursor segura no máximo `1 + k` páginas.
+- **Salto (S2, 23/11).** Um miss fora das pré-lidas solta as restantes antes do pin (um hit, como pedir de novo a página atual, não solta). O cursor segura no máximo `k` pré-lidas mais as páginas em uso: `1 + k` num scan simples, `d + k` com `cur.page` aninhado em profundidade `d`.
 - **Garantia de memória (T0, 23/11).** A pré-leitura não causa `BufferFullError` enquanto `pins simultâneos fora dos cursores ≤ capacidade − cursores × (1 + k)`. Fora disso (área pequena), um pin comum pode falhar. Está marcado como `# LIMITAÇÃO:` no código.
 - **Cursor fechado.** `cur.page` depois do `with` levanta `RuntimeError`.
 - **Erros de E/S no lote.** Bloco alocado mas nunca gravado (`ValueError` de `fm.read`) só encerra o lote. Qualquer outro erro devolve os frames restantes a `free`, solta o pin do bloco pedido e é propagado; as pré-lidas já instaladas ficam com o cursor, que as solta ao terminar.

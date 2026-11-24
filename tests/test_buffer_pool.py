@@ -1557,3 +1557,56 @@ def test_limite_do_teto_documentado(tmp_path):
                     pool.pin(b, 2, PageType.DATA)
     assert pool.pinned() == 0
     fm.close_all()
+
+
+# --- Revisor de confirmação de 23/11 (ai/P1/review.md, achado 29) ---
+
+
+def test_repetir_a_pagina_atual_nao_descarta_pre_lidas(tmp_path):
+    """S2 solta as pré-lidas só num MISS (quando o cursor vai pré-ler de novo), não num hit.
+
+    DATA = 16, k = 8. cur.page(1) lê 1 e pré-lê 2..9. Pedir o 1 de novo (aninhado ou em
+    sequência) é hit: as pré-lidas 2..9 continuam fixadas pelo cursor. Depois, 2..9 são hits
+    assumidos, sem leitura: 9 leituras no total (1 miss + 8 pré-lidas).
+    Antes da correção, o 2º pedido do 1 soltava 2..9 (perdiam a proteção do pin).
+    """
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
+    fid = _arquivo(fm, "t", 20)
+    fm.reset_stats()
+    pool = BufferPool(fm, BufferConfig(areas={PageType.DATA: 16, PageType.WORK: 1}, prefetch=8))
+    pool.allow_prefetch(fid, PageType.DATA)
+    with pool.seq_scan(fid, PageType.DATA) as cur:
+        with cur.page(1):
+            with cur.page(1):  # aninhado: hit
+                assert sorted(cur._held) == list(range(2, 10))
+        with cur.page(1):  # em sequência: hit
+            pass
+        assert sorted(cur._held) == list(range(2, 10))
+        assert pool.pinned() == 8
+        for b in range(2, 10):
+            with cur.page(b) as p:
+                assert p.data[0] == b
+    assert (fm.io.reads, pool.stats.misses, pool.stats.prefetched) == (9, 1, 8)
+    assert pool.pinned() == 0
+    fm.close_all()
+
+
+def test_cursor_aninhado_segura_k_pre_lidas_mais_paginas_em_uso(tmp_path):
+    """O limite por cursor é k pré-lidas + as páginas em uso (d + k com aninhamento de profundidade d).
+
+    DATA = 128, k = 8. cur.page(1) fixa 1 e pré-lê 2..9 (9 fixadas). Dentro dela, cur.page(100)
+    é miss: solta 2..9, fixa 100 e pré-lê 101..108. Fixadas: 1 e 100 em uso + 8 pré-lidas = 10
+    (d = 2). As pré-lidas seguradas nunca passam de k.
+    """
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
+    fid = _arquivo(fm, "t", 120)
+    pool = BufferPool(fm, BufferConfig(areas={PageType.DATA: 128, PageType.WORK: 1}, prefetch=8))
+    pool.allow_prefetch(fid, PageType.DATA)
+    with pool.seq_scan(fid, PageType.DATA) as cur:
+        with cur.page(1):
+            assert pool.pinned() == 9
+            with cur.page(100):
+                assert sorted(cur._held) == list(range(101, 109))
+                assert pool.pinned() == 10
+    assert pool.pinned() == 0
+    fm.close_all()
