@@ -33,8 +33,21 @@ _U32 = struct.Struct("<I")
 _PTR = struct.Struct("<IH")          # D-P2-10: bloco u32 + slot u16
 
 
-def _too_large(n, limit):
-    return RecordTooLarge(f"registro de {n} B não cabe num bloco vazio (máximo {limit} B; D-P2-06)")
+def _encode(codec, rec, limit):
+    """Bytes do registro; RecordTooLarge se não couber num bloco vazio (D-P2-06), antes de tocar em página."""
+    data = codec.encode(rec)
+    if len(data) > limit:
+        raise RecordTooLarge(f"registro de {len(data)} B não cabe num bloco vazio (máximo {limit} B; D-P2-06)")
+    return data
+
+
+def _fresh_page(bp, fid, ptype, data):
+    """Página nova, formatada, já com data no slot 0. Devolve (page, SlottedPage); a página fica fixada."""
+    page = bp.new_page(fid, ptype)
+    sp = SlottedPage(page.data)
+    sp.init()
+    sp.insert(data)
+    return page, sp
 
 
 class HeapFile:
@@ -72,11 +85,9 @@ class HeapFile:
             magic, h._n, h._deleted, h._tail, nr, nf = _META.unpack_from(p.data, 0)
             if magic != _MAGIC:
                 raise ValueError(f"{name}: o bloco 1 não é a meta de um heap")
-            pos = _META.size
-            for _ in range(nr):
-                h._ranges.append(list(_RANGE.unpack_from(p.data, pos)))
-                pos += _RANGE.size
-            h._fsm = [_U32.unpack_from(p.data, pos + 4 * i)[0] for i in range(nf)]
+            pos = _META.size + _RANGE.size * nr
+            h._ranges = [list(r) for r in _RANGE.iter_unpack(p.data[_META.size:pos])]
+            h._fsm = [b for (b,) in _U32.iter_unpack(p.data[pos:pos + 4 * nf])]
         return h
 
     def close(self):
@@ -161,15 +172,6 @@ class HeapFile:
         self.bp.unpin(page, dirty=slot is not None)
         return slot, free
 
-    def _new_block(self, data):
-        page = self.bp.new_page(self.fid, self.ptype)
-        sp = SlottedPage(page.data)
-        sp.init()
-        slot = sp.insert(data)
-        self.bp.unpin(page, dirty=True)
-        self._add_data_block(page.bno)
-        return page.bno, slot
-
     def _locate(self, ptr):
         """Valida o RID e devolve (bno, slot). KeyError se não apontar para um slot de dados."""
         bno, slot = ptr
@@ -183,9 +185,7 @@ class HeapFile:
 
         RecordTooLarge antes de tocar em página (D-P2-06). Custo típico: 1 bloco (a cauda no buffer).
         """
-        data = self.codec.encode(rec)
-        if len(data) > self._max:
-            raise _too_large(len(data), self._max)
+        data = _encode(self.codec, rec, self._max)
         old_tail = self._tail
         if old_tail:
             slot, tail_free = self._try_insert(old_tail, data)
@@ -199,12 +199,15 @@ class HeapFile:
                     if slot is not None:
                         self._n += 1
                         return RID(bno, slot)
-        bno, slot = self._new_block(data)
+        page, _ = _fresh_page(self.bp, self.fid, self.ptype, data)
+        bno = page.bno
+        self.bp.unpin(page, dirty=True)
+        self._add_data_block(bno)
         if old_tail:
             self._set_free(old_tail, tail_free)          # a cauda antiga passa a ser achada pelo mapa
         self._tail, self._n = bno, self._n + 1
         self._write_meta()
-        return RID(bno, slot)
+        return RID(bno, 0)
 
     def delete(self, ptr):
         """Apaga o registro (o slot fica reservado, D-P2-08). KeyError se não existir. Custo: 1 bloco."""
@@ -263,17 +266,12 @@ class HeapFile:
         closed = []                                        # (bno, livre) dos blocos que não são a cauda
         try:
             for rec in recs:
-                data = self.codec.encode(rec)
-                if len(data) > self._max:
-                    raise _too_large(len(data), self._max)
+                data = _encode(self.codec, rec, self._max)
                 if sp is None or sp.insert(data) is None:
                     if page is not None:
                         closed.append((page.bno, sp.free_space()))
                         self.bp.unpin(page, dirty=True)
-                    page = self.bp.new_page(self.fid, self.ptype)
-                    sp = SlottedPage(page.data)
-                    sp.init()
-                    sp.insert(data)
+                    page, sp = _fresh_page(self.bp, self.fid, self.ptype, data)
                     self._add_data_block(page.bno)
                 self._n += 1
         finally:
@@ -337,16 +335,11 @@ class TempHeap:
 
     def append(self, rec):
         """Acrescenta um registro, mantendo uma página de saída fixada."""
-        data = self.codec.encode(rec)
-        if len(data) > self._max:
-            raise _too_large(len(data), self._max)
+        data = _encode(self.codec, rec, self._max)
         if self._sp is None or self._sp.insert(data) is None:
             if self._out is not None:
                 self.bp.unpin(self._out, dirty=True)
-            self._out = self.bp.new_page(self.fid, PageType.WORK)
-            self._sp = SlottedPage(self._out.data)
-            self._sp.init()
-            self._sp.insert(data)
+            self._out, self._sp = _fresh_page(self.bp, self.fid, PageType.WORK, data)
             self._bnos.append(self._out.bno)
         self._n += 1
 
