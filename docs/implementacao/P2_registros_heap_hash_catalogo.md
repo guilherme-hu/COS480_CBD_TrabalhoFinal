@@ -102,13 +102,11 @@ offset  tam  campo
 0       2    n_slots     (u16)
 2       2    free_end    (u16)  início da área de dados (cresce para baixo, a partir de B)
 4       2    holes       (u16)  bytes livres fragmentados (registros apagados)
-6       2    flags       (u16)  livre para o dono do arquivo
-8       4    next        (u32)  próximo bloco (cadeia de overflow); 0 = nenhum
-12      16   USER               reservado para quem usa (P3: is_leaf, prev, next_leaf...)
-28           diretório de slots: n_slots × (u16 offset, u16 len); offset 0xFFFF = apagado
+6       4    next        (u32)  próximo bloco (overflow do hash; folha seguinte da B+); 0 = nenhum
+10           diretório de slots: n_slots × (u16 offset, u16 len); offset 0xFFFF = apagado
 ```
 
-`HEADER = 28`, `USER = 16`. Acessórios: `next` como propriedade de leitura/escrita e `user_header()` devolvendo `memoryview(buf)[12:28]`.
+`HEADER = 10` (D-P2-07 revista em 23/11: saíram o `flags` e os 16 B de `USER`, que não tinham uso; a folha da B+ encadeia pelo `next`). Acessório: `next` como propriedade de leitura/escrita.
 
 | Método | Regra |
 | :--- | :--- |
@@ -124,7 +122,7 @@ Valide tudo: `slot < n_slots`, `offset + len ≤ B`, `free_end ≥ HEADER + 4·n
 
 `SlottedPage` **não** faz pin/unpin nem marca dirty. Quem chamou faz `page.mark_dirty()`.
 
-Registro de 0 B é recusado (`AssertionError`), para `free_space() == 0` querer dizer "não cabe nada". `get` e `user_header` devolvem views da página: valem só enquanto ela estiver fixada, e `insert`/`insert_at`/`compact` podem mover registros (`delete` e `remove_at` não, D-P2-08). `insert` e `insert_at` copiam `data` antes de compactar, então aceitam uma view da própria página.
+Registro de 0 B é recusado (`AssertionError`), para `free_space() == 0` querer dizer "não cabe nada". `get` devolve uma view da página: vale só enquanto ela estiver fixada, e `insert`/`insert_at`/`compact` podem mover registros (`delete` e `remove_at` não, D-P2-08). `insert` e `insert_at` copiam `data` antes de compactar, então aceitam uma view da própria página.
 
 ---
 

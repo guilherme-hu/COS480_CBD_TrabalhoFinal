@@ -14,6 +14,7 @@ from bench.generator import BASE_COUNTS, Dataset
 from bench.schema import SCHEMAS
 from cbd.contracts import Field, FType, Schema
 from cbd.records.codec import MAX_LIST, RecordCodec, decode_key, encode_key, key_size
+from cbd.records.slotted_page import SlottedPage
 
 ALL = Schema("t", (
     Field("i", FType.INT), Field("f", FType.FLOAT), Field("d", FType.DATE), Field("c", FType.CHAR, 4),
@@ -91,9 +92,9 @@ def test_codec_has_no_block_limit():
 @pytest.mark.parametrize("table", sorted(SCHEMAS))
 def test_every_schema_fits_the_smallest_block(table):
     # D-P2-06: o maior registro possível de cada tabela (VARCHAR cheio, LIST com 16 itens cheios)
-    # cabe numa página de 2 048 B (max_record = 2048 − 28 − 4 = 2 016). Hoje o maior é
+    # cabe numa página de 2 048 B (max_record = 2048 − 10 − 4 = 2 034). Hoje o maior é
     # detalhes com 989 B; então RecordTooLarge nunca dispara na bancada.
-    assert RecordCodec(SCHEMAS[table]).max_size <= 2048 - 32
+    assert RecordCodec(SCHEMAS[table]).max_size <= SlottedPage.max_record(2048)
 
 
 @pytest.mark.parametrize("bad", [
@@ -250,27 +251,28 @@ def test_generated_base_roundtrips(table):
 
 
 def _heap_blocks(sizes, block_size):
-    # Modelo do heap de slotted pages (guia P2 §3): cabeçalho de 28 B e 4 B de slot por registro,
+    # Modelo do heap de slotted pages (guia P2 §3): cabeçalho de HEADER B e 4 B de slot por registro,
     # enchendo cada bloco na ordem de inserção.
     blocks, free = 0, 0
     for s in sizes:
         if s + 4 > free:
-            blocks, free = blocks + 1, block_size - 28
+            blocks, free = blocks + 1, block_size - SlottedPage.HEADER
         free -= s + 4
     return blocks
 
 
 def test_record_sizes_give_the_block_counts_of_the_decisions():
-    # N4: os cartões D-P2-01 a D-P2-04 (e o PR #91) estimaram, em escala 1 e B = 4096,
-    # aluno = 1 830 blocos e inscricao = 4 425. Aqui medimos com o codec real.
-    # inscricao: 4 campos fixos de 8 B, sem bitmap = 32 B; ⌊4 068 / 36⌋ = 113 por bloco;
+    # N4: os cartões D-P2-01 a D-P2-04 (e o PR #91) estimaram, em escala 1 e B = 4096, com o
+    # cabeçalho de 28 B, aluno = 1 830 blocos e inscricao = 4 425. D-P2-07 revista (sem flags e
+    # sem USER, cabeçalho de 10 B): aluno 3 726 / 1 815 / 899 em 2/4/8 KB.
+    # inscricao: 4 campos fixos de 8 B, sem bitmap = 32 B; ⌊4 086 / 36⌋ = 113 por bloco;
     # ⌈500 000 / 113⌉ = 4 425 (conferimos o tamanho numa amostra, não os 500 mil).
     ins = RecordCodec(SCHEMAS["inscricao"])
     assert {len(ins.encode(r)) for r in Dataset(scale=0.01).records("inscricao")} == {32}
     # aluno: tamanho variável, 50 000 registros (~0,5 s).
     alu = RecordCodec(SCHEMAS["aluno"])
     sizes = [len(alu.encode(r)) for r in Dataset().records("aluno")]
-    assert [_heap_blocks(sizes, b) for b in (2048, 4096, 8192)] == [3790, 1830, 901]
+    assert [_heap_blocks(sizes, b) for b in (2048, 4096, 8192)] == [3726, 1815, 899]
 
 
 # ------------------------------------------------------------------ chaves (D-P2-05)

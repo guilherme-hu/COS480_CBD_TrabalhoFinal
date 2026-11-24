@@ -504,8 +504,8 @@ def decode_key(f: Field, b: bytes | memoryview) -> Any
 # cbd/records/slotted_page.py
 class SlottedPage:
     """Opera sobre page.data (bytearray) in-place. Não faz pin/unpin nem dirty."""
-    HEADER: int                                        # bytes do cabeçalho padrão
-    USER: int = 16                                     # bytes livres no cabeçalho para quem usa (ex.: P3: is_leaf, next, prev)
+    HEADER: int                                        # bytes do cabeçalho (10: n_slots, free_end, holes, next; D-P2-07)
+    next: int                                          # propriedade: próximo bloco (overflow do hash, folha seguinte da B+); 0 = nenhum
     def __init__(self, buf: bytearray): ...
     def init(self) -> None                             # formata página vazia
     def n_slots(self) -> int
@@ -516,7 +516,6 @@ class SlottedPage:
     def remove_at(self, pos: int) -> None              # remove a entrada do diretório (desloca; para folhas B+)
     def free_space(self) -> int
     def compact(self) -> None
-    def user_header(self) -> memoryview                # USER bytes reservados
     @staticmethod
     def max_record(block_size: int) -> int             # maior registro que cabe num bloco vazio
 

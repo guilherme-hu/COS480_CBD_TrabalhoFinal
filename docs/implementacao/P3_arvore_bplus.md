@@ -45,7 +45,7 @@ Até o P1 entregar (05/11), use a fixture `bp` do `tests/conftest.py`. Até o P2
 | Comparação | sobre **bytes**: `encode_key(f, k) + seq.to_bytes(8, "big")`. O `encode_key` do P2 preserva a ordem, e comparar `bytes` em Python é rápido |
 | Tamanho da chave | **fixo** (`key_size(f)`; VARCHAR preenchido até `size`) → fan-out fixo e calculável |
 | Nó interno | `p0, (k1, p1), …, (kn, pn)` com chaves de tamanho fixo. **Fan-out** `n = (B − 8) // (ks + 8 + 4) + 1` (ks + 8 da chave composta, 4 do ponteiro) |
-| Folha do arquivo primário | **slotted page** (P2) com registros completos, em ordem lógica pelo diretório de slots; encadeamento `prev`/`next` no `user_header` |
+| Folha do arquivo primário | **slotted page** (P2) com registros completos, em ordem lógica pelo diretório de slots; encadeamento só para a frente, pelo `next` da própria página (`SlottedPage.next`, o ponteiro *Pn* do SKS §14.3.1, p. 635; D-P2-07 revista) |
 | Folha do índice | slotted page com entradas `(chave, carga)`; **sem repetição de chave** no índice NOT UNIQUE (§5) |
 | Ocupação mínima | internos: `⌈n/2⌉` filhos. Folhas (registros de tamanho variável): **≥ 50% dos bytes úteis** (`params["min_fill"]`, padrão 0.5). A raiz fica isenta |
 | Overflow do nó | **split** (não há redistribuição na inserção). Na remoção: **redistribuição** com o irmão se ele tiver sobra; senão **fusão** |
@@ -79,7 +79,7 @@ Busca no nó: `bisect` manual sobre `memoryview` (sem montar uma lista Python da
 
 ### 3.3 Folha (slotted page, `PageType.DATA` no arquivo e `INDEX` no índice)
 
-`user_header()` (16 bytes): `u8 is_leaf = 1 | u8 pad | u16 pad | u32 prev | u32 next | u32 reservado`.
+A folha não tem cabeçalho próprio: o encadeamento é `SlottedPage.next` (bloco da folha seguinte; `0` na última), e não há `prev` nem `is_leaf` (D-P2-07 revista em 23/11, o `USER` saiu da `SlottedPage`). A descida sabe pela `height` quando chegou na folha. Cuidado: o byte 0 de uma folha é o `n_slots` da slotted page, então nunca use "byte 0 = `is_leaf`" para reconhecer o tipo de um nó.
 
 - Folha de `BTreeFile`: cada slot = `CK (chave composta) + RecordCodec.encode(rec)`.
 - Folha de `BTreeIndex` (§5).
@@ -116,7 +116,7 @@ Cada nível custa 1 `pin`. A busca custa `height` pins, mais as folhas extras de
 1. `ck = encode_key(k) + seq` (UNIQUE: `seq=0` e, antes, `search(k)` → `DuplicateKey` se existir; NOT UNIQUE: `seq = next_seq; next_seq += 1`).
 2. Desce (§4.1) e acha a posição na folha por busca binária.
 3. Se `insert_at(pos, entrada)` couber, faz `mark_dirty` e termina.
-4. Senão, **split da folha**: `new_page`, move a metade superior **por bytes** (até equilibrar os bytes usados), insere a entrada na metade certa e acerta `prev`/`next` (incluindo o `prev` da antiga vizinha da direita: 1 pin a mais). O separador que sobe = **CK do 1º slot da nova folha** (cópia; a entrada continua na folha).
+4. Senão, **split da folha**: `new_page`, move a metade superior **por bytes** (até equilibrar os bytes usados), insere a entrada na metade certa e acerta o encadeamento: `nova.next = antiga.next` e `antiga.next = nova` (só as duas folhas mudam; a vizinha da direita não é tocada). O separador que sobe = **CK do 1º slot da nova folha** (cópia; a entrada continua na folha).
 5. Insere `(separador, nova)` no pai (o último da `path`). Se o pai estourar, **split interno**: a chave do meio **sobe** (não fica em nenhum dos dois).
 6. Repete até a raiz. Se a raiz dividir, cria uma raiz nova com `p0 = antiga` e `(sep, nova)`, e `height += 1`.
 7. Devolve `Ptr = (k, seq)`.
@@ -127,7 +127,7 @@ Cada nível custa 1 `pin`. A busca custa `height` pins, mais as folhas extras de
 2. Se a folha ficou abaixo do mínimo e não é raiz:
    - escolha um irmão **com o mesmo pai** (o da esquerda se existir, senão o da direita);
    - **redistribuição:** se o irmão ficar ≥ mínimo depois de ceder, mova entradas de borda até equilibrar e atualize o separador no pai;
-   - **fusão:** senão, junte o da direita no da esquerda, ajuste `next`/`prev` (e o `prev` do vizinho seguinte), remova o separador e o ponteiro do pai e chame **`bp.free_block(fid, bno)`** no nó removido (não `fm.free`: veja geral §3.2).
+   - **fusão:** senão, junte o da direita no da esquerda, faça `esquerda.next = direita.next`, remova o separador e o ponteiro do pai e chame **`bp.free_block(fid, bno)`** no nó removido (não `fm.free`: veja geral §3.2).
 3. O pai pode ficar abaixo de `⌈n/2⌉` filhos: mesma lógica para nós internos. Na redistribuição interna, a chave do pai **desce** e a do irmão **sobe** (rotação).
 4. Raiz interna com 0 chaves: o filho único vira a raiz, `height −= 1`, e `free_block` na raiz antiga.
 
@@ -149,7 +149,7 @@ Cada nível custa 1 `pin`. A busca custa `height` pins, mais as folhas extras de
 - chaves ordenadas dentro de cada nó e entre folhas (pelo `next`);
 - cada separador limita corretamente as subárvores;
 - ocupação ≥ mínimo em todo nó não-raiz;
-- `prev`/`next` consistentes nos dois sentidos;
+- o `next` da folha mais à esquerda percorre todas as folhas em ordem de chave e termina em `0`, passando por `n_leaves` folhas;
 - a soma das entradas nas folhas é igual a `n_entries`.
 
 ---
@@ -247,7 +247,7 @@ Fórmulas de referência: SKS 14.3 (altura `⌈log_{⌈n/2⌉}(N)⌉` no pior ca
 ## 9. Armadilhas da IA (enunciado §7.1). Procure ativamente
 
 - Árvore que **não mantém a ocupação mínima** (delete só remove e nunca funde): a altura não cai e as folhas ficam quase vazias.
-- **Folhas não encadeadas**, ou `prev` da vizinha da direita esquecido no split.
+- **Folhas não encadeadas**, ou `next` da folha nova esquecido no split (a cadeia pula a folha nova).
 - Split que **não propaga até a raiz**, ou raiz nova sem `height += 1`.
 - Split interno que **copia** a chave do meio em vez de subi-la (fica duplicada) e split de folha que a **move** em vez de copiar.
 - **Busca binária sobre uma lista Python montada com todos os registros** do arquivo em vez de busca no nó. O enunciado cita isso.

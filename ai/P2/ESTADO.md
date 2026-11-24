@@ -1,7 +1,7 @@
 # Estado da parte P2 — atualizado em 23/11
 ## Pronto (com teste que prova)
 - **Codec (#39), `cbd/records/codec.py`:** `RecordCodec` (encode/decode, `max_size`), `key_size`, `encode_key`, `decode_key`, com D-P2-01 a D-P2-06. 80 testes em `tests/test_codec.py` (N1 roundtrip, layout, sentinelas, corrompidos, fuzz de 20 mil registros corrompidos, aleatórios; N3 todas as tabelas do gerador; N4 contagens de blocos das decisões; ordem das chaves em 10 mil pares por tipo). Versão bruta em `ai/P2/raw/codec_v1.py`.
-- **Slotted page (#40), `cbd/records/slotted_page.py`:** `SlottedPage` com a assinatura da arquitetura §5.1, D-P2-07 (formato) e D-P2-08 (compactação preguiçosa). 86 testes em `tests/test_slotted_page.py` (N1 enchimento exato em 2/4/8 KB, `free_space` exato com `insert` e `insert_at`, `insert_at` recusando página com slot apagado, reuso de slot, compactação, ordem lógica, padrão do split da B+, cabeçalho corrompido, oráculos `dict` e lista; N2 página sobrevivendo ao disco com 1 leitura). Versão bruta em `ai/P2/raw/slotted_page_v1.py`; 4 revisores independentes e uma 2ª revisão (`/code-review` + `/ponytail-review`), achados em `review.md`.
+- **Slotted page (#40), `cbd/records/slotted_page.py`:** `SlottedPage` com a assinatura da arquitetura §5.1, D-P2-07 (formato; revista em 23/11: sem `flags` e sem `USER`, `HEADER` = 10 B, folha da B+ encadeia pelo `next`) e D-P2-08 (compactação preguiçosa). 86 testes em `tests/test_slotted_page.py` (N1 enchimento exato em 2/4/8 KB, `free_space` exato com `insert` e `insert_at`, `insert_at` recusando página com slot apagado, reuso de slot, compactação, ordem lógica, padrão do split da B+, cabeçalho corrompido, oráculos `dict` e lista; N2 página sobrevivendo ao disco com 1 leitura). Versão bruta em `ai/P2/raw/slotted_page_v1.py`; 4 revisores independentes e uma 2ª revisão (`/code-review` + `/ponytail-review`), achados em `review.md`.
 - `cbd/records/hashing.py` existe (escrito pelo P6 para a referência SQLite), sem teste próprio (#41).
 ## Em andamento
 - #39: PR #91 (`p2/39-codec`) aberto, esperando revisão de P3/P4 e merge. O ajuste da arquitetura §5.1 (D-P2-06) entrou no `main` pelo PR #92.
@@ -19,7 +19,7 @@
 | §3.1.4 registros deletados e slotted page | `slotted_page.py` (`delete` marca, `insert` reaproveita, compactação preguiçosa, D-P2-08) | `test_delete_keeps_slot_and_rid_of_others`, `test_insert_reuses_smallest_deleted_slot`, `test_insert_compacts_when_only_holes_fit`, `test_random_ops_match_dict_oracle` |
 | §3.2.2 critério de compactação (no bloco) | `slotted_page.py` (`_make_room`: só quando o insert precisa) | `test_insert_that_fits_contiguously_does_not_compact`, `test_insert_compacts_when_only_holes_fit` |
 | §3.4 chaves da B+ (ordem da árvore) | `encode_key`/`key_size` (D-P2-05) | `test_key_order`, `test_composite_key_with_seq_keeps_order` |
-| §3.4 folhas da B+ em ordem | `insert_at`/`remove_at`/`user_header` | `test_insert_at_keeps_logical_order`, `test_split_pattern_of_the_btree`, `test_random_insert_at_remove_at_match_list_oracle` |
+| §3.4 folhas da B+ em ordem | `insert_at`/`remove_at`/`next` | `test_insert_at_keeps_logical_order`, `test_split_pattern_of_the_btree`, `test_random_insert_at_remove_at_match_list_oracle` |
 | §7.1 acesso fora da faixa | `decode` valida cada tamanho; `get` valida offset e slot | `test_codec_corrupt`, `test_corrupt_directory_is_detected`, `test_offset_inside_header_is_detected` |
 ## Desvios ou dúvidas sobre o contrato
 - **D-P2-06:** o codec tem a assinatura `RecordCodec(schema)` do §5.1 e não levanta `RecordTooLarge`; quem insere (heap, hash) compara com `SlottedPage.max_record(B)`. O P3 precisa checar o limite da folha (`ks + 8` B a mais).
@@ -30,7 +30,7 @@
 ## Armadilhas conhecidas / bugs abertos
 - No Windows, 2 testes do P6 (`test_data_preparation.py`) só passam com `PYTHONUTF8=1` (abrem arquivo sem `encoding`). Avisar o P6.
 - Chave de texto não aceita `\x00` (é o preenchimento). A bancada não tem chave de texto.
-- Views de `get`/`user_header` valem só com a página fixada; `insert`/`insert_at`/`compact` podem mover registros. Avisar o P3 no PR.
+- Views de `get` valem só com a página fixada; `insert`/`insert_at`/`compact` podem mover registros. Avisar o P3 no PR.
 - LIMITAÇÃO: slots apagados no fim do diretório guardam seus 4 B até um `insert` reaproveitá-los.
 - O campo `flags` (offset 6) não tem acessor nem consumidor; quem precisar (#43, #48) acrescenta um.
 ## Decisões provisórias a rever

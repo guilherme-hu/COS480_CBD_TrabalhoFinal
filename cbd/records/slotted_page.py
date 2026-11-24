@@ -2,7 +2,7 @@
 
 Implementa: SlottedPage (arquitetura §5.1). Usa: só a biblioteca padrão.
 Usada por: heap, hash (dados e índice), temporários e folhas da B+ (P3).
-Decisões: D-P2-07 (slotted page em todos os arquivos, cabeçalho de 28 B),
+Decisões: D-P2-07 (slotted page em todos os arquivos, cabeçalho de 10 B),
           D-P2-08 (apagar marca o slot; compactação preguiçosa). Ver docs/decisoes/P2.md.
 
 Layout (little-endian), SKS §13.2.2, Fig. 13.6:
@@ -11,10 +11,8 @@ Layout (little-endian), SKS §13.2.2, Fig. 13.6:
     0       2    n_slots
     2       2    free_end   início da área de registros (cresce para baixo, a partir de B)
     4       2    holes      bytes de registros apagados ou removidos ainda não compactados
-    6       2    flags      reservado ao dono do arquivo
-    8       4    next       próximo bloco (cadeia de overflow do hash); 0 = nenhum
-    12      16   USER       reservado a quem usa a página (P3: is_leaf, prev, next)
-    28           diretório: n_slots × (u16 offset, u16 len); offset 0xFFFF = slot apagado
+    6       4    next       próximo bloco: overflow do hash, folha seguinte da B+ (P3); 0 = nenhum
+    10           diretório: n_slots × (u16 offset, u16 len); offset 0xFFFF = slot apagado
 
 Invariantes: HEADER + 4·n_slots <= free_end <= B; todo slot vivo fica em [free_end, B).
 Não faz pin/unpin nem marca dirty: quem chama faz page.mark_dirty() (ou unpin(dirty=True)).
@@ -36,8 +34,7 @@ def _require(ok: bool, msg: str) -> None:
 class SlottedPage:
     """Opera sobre page.data (bytearray) in-place. Não faz pin/unpin nem dirty."""
 
-    HEADER = 28   # D-P2-07
-    USER = 16
+    HEADER = 10   # D-P2-07 (revista: sem flags e sem USER; cada campo tem uso)
 
     def __init__(self, buf: bytearray):
         self.buf = buf
@@ -64,28 +61,25 @@ class SlottedPage:
 
     @property
     def next(self) -> int:
-        return int.from_bytes(self.buf[8:12], "little")
+        """Próximo bloco do mesmo arquivo; 0 = nenhum (o bloco 0 nunca guarda dados).
+
+        Hash: cadeia de overflow do bucket. B+ (P3): folha seguinte em ordem de chave, o ponteiro
+        Pn do SKS (§14.3.1, p. 635). Quem grava aqui marca a página como suja.
+        """
+        return int.from_bytes(self.buf[6:10], "little")
 
     @next.setter
     def next(self, bno: int) -> None:
-        self.buf[8:12] = bno.to_bytes(4, "little")
-
-    def user_header(self) -> memoryview:
-        """Os USER = 16 bytes reservados a quem usa a página (P3: is_leaf, prev, next).
-
-        View da página: só vale enquanto ela estiver fixada (depois do unpin o buffer pode pôr
-        outro bloco no mesmo frame). Quem grava aqui marca a página como suja.
-        """
-        return memoryview(self.buf)[12:12 + self.USER]
+        self.buf[6:10] = bno.to_bytes(4, "little")
 
     def init(self) -> None:
-        """Formata a página vazia: zera o cabeçalho (inclusive next e USER) e free_end = B."""
+        """Formata a página vazia: zera o cabeçalho (inclusive next) e free_end = B."""
         self.buf[:self.HEADER] = bytes(self.HEADER)
         self._set16(2, self._b)
 
     @staticmethod
     def max_record(block_size: int) -> int:
-        """Maior registro que cabe num bloco vazio: B − 28 − 4 (um slot). D-P2-06, D-P2-07."""
+        """Maior registro que cabe num bloco vazio: B − 10 − 4 (um slot). D-P2-06, D-P2-07."""
         return block_size - SlottedPage.HEADER - _SLOT_SIZE
 
     # ----- diretório -----

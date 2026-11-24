@@ -22,7 +22,7 @@ Gerado de `docs/decisoes/`: 31 cartões, 0 provisórios. A última coluna diz em
 | D-P2-04 | Campos estruturados e derivados | decidida | Descrição da base, dos campos e das chaves |
 | D-P2-05 | Chaves de tamanho fixo que preservam a ordem | decidida | Descrição da base, dos campos e das chaves |
 | D-P2-06 | Onde se checa o registro maior que o bloco | decidida | Descrição da base, dos campos e das chaves |
-| D-P2-07 | Organização dos registros dentro do bloco | decidida | Blocagem |
+| D-P2-07 | Organização dos registros dentro do bloco | decidida (revista) | Blocagem |
 | D-P2-08 | Registro apagado e compactação dentro do bloco | decidida | Blocagem |
 | D-P6-01 | Número de buckets comum nos pares hash do bucket-join | decidida | Funções de hash |
 | D-P6-02 | Memória do buffer constante em bytes no experimento de tamanho de bloco | decidida | Tamanhos de bloco; Descrição da base, dos campos e das chaves |
