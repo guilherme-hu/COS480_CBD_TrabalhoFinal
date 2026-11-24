@@ -397,5 +397,5 @@ def test_decode_key_rejects_wrong_length():
 
 def test_inscricao_block_count_in_every_block_size():
     # inscricao: 500 000 registros de 24 B (INT 4 + 4, FLOAT 8 + 8), 28 B com o slot; cabeçalho de página
-    # de 28 B nesta branch: ⌊2 020 / 28⌋ = 72, ⌊4 068 / 28⌋ = 145, ⌊8 164 / 28⌋ = 291 por bloco.
-    assert [_heap_blocks([24] * 500_000, b) for b in (2048, 4096, 8192)] == [6945, 3449, 1719]
+    # de 10 B (D-P2-07 revista): ⌊2 038 / 28⌋ = 72, ⌊4 086 / 28⌋ = 145, ⌊8 182 / 28⌋ = 292 por bloco.
+    assert [_heap_blocks([24] * 500_000, b) for b in (2048, 4096, 8192)] == [6945, 3449, 1713]
