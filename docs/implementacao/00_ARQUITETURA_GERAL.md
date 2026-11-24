@@ -846,11 +846,11 @@ Estes esquemas ficam em `bench/schema.py` (P6). Os demais importam de lá nos te
 
 Joins de referência (só o NATURAL mestre-detalhe, §0):
 
-| Combinação de tamanho | Junção (mestre ⋈ detalhe) | Coluna | Blocos com B = 4096 (estimativa de `results/base_stats.csv`) |
+| Combinação de tamanho | Junção (mestre ⋈ detalhe) | Coluna | Blocos de heap com B = 4096 (medidos com o codec: INT de 4 B, cabeçalho de 10 B) |
 | :--- | :--- | :--- | :--- |
-| menor ⋈ menor | curso ⋈ disciplina | `codigo` = `curso` | 2 ⋈ 27 |
-| menor ⋈ maior | curso ⋈ aluno | `codigo` = `curso` | 2 ⋈ 1 962 |
-| maior ⋈ maior | aluno ⋈ inscricao | `dre` | 1 962 ⋈ 4 588 |
+| menor ⋈ menor | curso ⋈ disciplina | `codigo` = `curso` | 2 ⋈ 21 |
+| menor ⋈ maior | curso ⋈ aluno | `codigo` = `curso` | 2 ⋈ 1 664 |
+| maior ⋈ maior | aluno ⋈ inscricao | `dre` | 1 664 ⋈ 3 449 |
 
 "Menor" = cabe em `M − 2 = 62` páginas. As tabelas reais já cobrem as três combinações, então não há subconjuntos. `turma` e `detalhes` ficam na base lógica, mas não entram nos experimentos. Seleções: igualdade em `aluno.dre` e faixa em `aluno.cr`.
 

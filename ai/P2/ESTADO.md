@@ -1,11 +1,13 @@
-# Estado da parte P2 — atualizado em 23/11
+# Estado da parte P2 — atualizado em 24/11
 ## Pronto (com teste que prova)
-- **Codec (#39), `cbd/records/codec.py`:** `RecordCodec` (encode/decode, `max_size`), `key_size`, `encode_key`, `decode_key`, com D-P2-01 a D-P2-06. 80 testes em `tests/test_codec.py` (N1 roundtrip, layout, sentinelas, corrompidos, fuzz de 20 mil registros corrompidos, aleatórios; N3 todas as tabelas do gerador; N4 contagens de blocos das decisões; ordem das chaves em 10 mil pares por tipo). Versão bruta em `ai/P2/raw/codec_v1.py`.
+- **Codec (#39), `cbd/records/codec.py`:** `RecordCodec` (encode/decode, `max_size`), `key_size`, `encode_key`, `decode_key`, com D-P2-01 a D-P2-06; INT de 4 B no registro e na chave desde a revisão do D-P2-05 (23/11). 83 testes em `tests/test_codec.py` (N1 roundtrip, layout, sentinelas, corrompidos, fuzz de 20 mil registros corrompidos, aleatórios; N3 todas as tabelas do gerador; N4 contagens de blocos das decisões; ordem das chaves em 10 mil pares por tipo). Versão bruta em `ai/P2/raw/codec_v1.py`.
 - **Slotted page (#40), `cbd/records/slotted_page.py`:** `SlottedPage` com a assinatura da arquitetura §5.1, D-P2-07 (formato; revista em 23/11: sem `flags` e sem `USER`, `HEADER` = 10 B, folha da B+ encadeia pelo `next`) e D-P2-08 (compactação preguiçosa). 86 testes em `tests/test_slotted_page.py` (N1 enchimento exato em 2/4/8 KB, `free_space` exato com `insert` e `insert_at`, `insert_at` recusando página com slot apagado, reuso de slot, compactação, ordem lógica, padrão do split da B+, cabeçalho corrompido, oráculos `dict` e lista; N2 página sobrevivendo ao disco com 1 leitura). Versão bruta em `ai/P2/raw/slotted_page_v1.py`; 4 revisores independentes e uma 2ª revisão (`/code-review` + `/ponytail-review`), achados em `review.md`.
 - `cbd/records/hashing.py` existe (escrito pelo P6 para a referência SQLite), sem teste próprio (#41).
 ## Em andamento
-- #39: PR #91 (`p2/39-codec`) aberto, esperando revisão de P3/P4 e merge. O ajuste da arquitetura §5.1 (D-P2-06) entrou no `main` pelo PR #92.
-- #40: branch `p2/40-slotted-page`, criada sobre `p2/39-codec` (os cartões e este arquivo só existem lá). Código, testes e documentos prontos, sem commit. Falta: commit, PR com `Closes #40` (base `main`; o diff fica limpo depois que o #91 entrar) e revisão do P3.
+- #39: PR #91 (`p2/39-codec`) aberto, esperando revisão de P3/P4 e merge. O INT de 4 B (commit `e806c37`, com o comentário do contrato em `cbd/contracts.py` e na arquitetura §4) ainda não foi enviado; o texto do PR fala em INT de 8 B.
+- #40: PR #93 (`p2/40-slotted-page`, base `p2/39-codec`), com o merge do INT de 4 B (`c08c68a`) ainda não enviado. Falta: push, atualizar os textos do #91 e do #93, revisão do P3, merge do #91 e troca da base do #93 para `main`.
+- #43: branch `p2/43-heap` (igual à `p2/40-slotted-page` por enquanto). D-P2-09 (achar bloco com espaço) em debate; página no site.
+- Avisos pendentes (precisam do ok do Guilherme): P6 na #94 (`record_bytes` soma 4 B por INT e cabeçalho de 10 B); P3 (fan-out 256 e chave composta de 12 B com INT de 4 B).
 ## Falta
 - #41, #43, #83, #46, #48, #52, #55, #62, nesta ordem (tabela no `CLAUDE.local.md` §5).
 ## Requisitos do enunciado cobertos
@@ -32,6 +34,5 @@
 - Chave de texto não aceita `\x00` (é o preenchimento). A bancada não tem chave de texto.
 - Views de `get` valem só com a página fixada; `insert`/`insert_at`/`compact` podem mover registros. Avisar o P3 no PR.
 - LIMITAÇÃO: slots apagados no fim do diretório guardam seus 4 B até um `insert` reaproveitá-los.
-- O campo `flags` (offset 6) não tem acessor nem consumidor; quem precisar (#43, #48) acrescenta um.
 ## Decisões provisórias a rever
-- Nenhuma.
+- Nenhuma. Mas há escolhas herdadas do guia sem justificativa, a debater nas issues: RID de 8 B, fator de carga 0,8 e buckets no bloco 2 + i (#48), `compact_at` 0,2 e `bulk_load` a 100% (#43), `hash_value` (#41), catálogo em JSON reescrito e forçado a cada mudança (#46).
