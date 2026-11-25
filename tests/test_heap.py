@@ -278,7 +278,7 @@ def test_heap_reorganize(bp):
     assert st["blocks"] < before
     assert st["records"] == 1000 and st["deleted"] == 0
     assert sorted(x for _, x in h.scan()) == [rec(i, 150) for i in range(1, 2000, 2)]
-    assert not bp.fm.exists("h__reorg")
+    assert not bp.fm.exists("h__reorg0")
     h.close()
     h = HeapFile.open(bp, "h", S, SPEC)
     assert h.stats()["records"] == 1000
@@ -651,7 +651,7 @@ def test_reorganize_failure_cleans_up(bp, monkeypatch):
     with pytest.raises(OSError):
         h.reorganize()
     monkeypatch.undo()
-    assert bp.pinned() == 0 and not bp.fm.exists("h__reorg")
+    assert bp.pinned() == 0 and not bp.fm.exists("h__reorg0")
 
 
 # ---------- 2ª revisão independente ----------
@@ -712,3 +712,28 @@ def test_interrupted_bulk_load_keeps_a_tail(bp, monkeypatch):
     blocks = h.stats()["blocks"]
     h.insert(rec(99, 10))                                   # cabe na sobra do último bloco
     assert h.stats()["blocks"] == blocks
+
+
+# ---------- gravação forçada (D-P2-13, usada pelo catálogo) ----------
+def test_force_writes_only_dirty_pages_now(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    bp.flush_all()
+    w0, f0 = bp.fm.io.writes, bp.stats.forced_writes
+    rid = h.insert(rec(1))
+    h.force([rid.block])
+    # o bloco de dados e a meta ficaram sujos com o insert; o mapa não mudou (insert na cauda)
+    assert bp.stats.forced_writes - f0 == bp.fm.io.writes - w0 == 2
+    h.force([rid.block])                                 # tudo limpo: nada a gravar
+    assert bp.stats.forced_writes - f0 == 2
+    h.close()
+
+
+def test_force_includes_the_free_space_map(bp):
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rids = [h.insert(rec(i, 1500)) for i in range(6)]       # 2 por bloco: 3 blocos de dados
+    bp.flush_all()
+    f0 = bp.stats.forced_writes
+    h.delete(rids[0])                                        # bloco que não é a cauda: o mapa muda
+    h.force([rids[0].block])
+    assert bp.stats.forced_writes - f0 == 3                  # o bloco, a meta e o mapa
+    h.close()

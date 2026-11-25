@@ -1,16 +1,18 @@
-# Estado da parte P2 — atualizado em 24/11
+# Estado da parte P2 — atualizado em 25/11
 ## Pronto (com teste que prova)
 - **Codec (#39), `cbd/records/codec.py`:** `RecordCodec` (encode/decode, `max_size`), `key_size`, `encode_key`, `decode_key`, com D-P2-01 a D-P2-06; INT de 4 B no registro e na chave desde a revisão do D-P2-05 (23/11). 83 testes em `tests/test_codec.py` (N1 roundtrip, layout, sentinelas, corrompidos, fuzz de 20 mil registros corrompidos, aleatórios; N3 todas as tabelas do gerador; N4 contagens de blocos das decisões; ordem das chaves em 10 mil pares por tipo). Versão bruta em `ai/P2/raw/codec_v1.py`.
 - **Slotted page (#40), `cbd/records/slotted_page.py`:** `SlottedPage` com a assinatura da arquitetura §5.1, D-P2-07 (formato; revista em 23/11: sem `flags` e sem `USER`, `HEADER` = 10 B, folha da B+ encadeia pelo `next`) e D-P2-08 (compactação preguiçosa). 86 testes em `tests/test_slotted_page.py` (N1 enchimento exato em 2/4/8 KB, `free_space` exato com `insert` e `insert_at`, `insert_at` recusando página com slot apagado, reuso de slot, compactação, ordem lógica, padrão do split da B+, cabeçalho corrompido, oráculos `dict` e lista; N2 página sobrevivendo ao disco com 1 leitura). Versão bruta em `ai/P2/raw/slotted_page_v1.py`; 4 revisores independentes e uma 2ª revisão (`/code-review` + `/ponytail-review`), achados em `review.md`.
 - **Heap e temporário (#43), `cbd/files/heap.py`:** `HeapFile` (DataFile) e `TempHeap` (TempFile). Meta no bloco 1, 1ª página do mapa no bloco 2, dados contíguos a partir do 3; mapa de espaço livre de 1 byte por bloco consultado só depois de remoções (D-P2-09); RID de 6 B (D-P2-10); `RecordTooLarge` antes de tocar em página (D-P2-06); `bulk_load` enchendo em ordem (guia §5.3); `reorganize()` manual por um temporário. Testes em `tests/test_heap.py` (N1/N2 operações e erros; N3 a base do gerador; N4 scan frio = b leituras e 1 seek, fetch = 1 leitura, insert na cauda = 2 pins; N5 oráculo `dict` com close/open e reorganize; testes de mutação). Versão bruta em `ai/P2/raw/heap_v1.py`; `/ponytail:ponytail-review`, 4 revisores independentes e uma 2ª revisão (que achou uma regressão no RID do insert, corrigida em `8a14c1a`), achados em `review.md`. A 2ª rodada de testes de mutação foi interrompida pelo limite de uso (24/11): refazer.
+- **Table e Catalog (#46), `cbd/files/table.py` e `cbd/files/catalog.py`:** catálogo como 4 relações (heaps em páginas CATALOG: `relacoes`, `atributos`, `indices`, `params`; D-P2-12), lido para a memória ao abrir, com gravação forçada no fim de cada operação, em ordem (D-P2-13); órfãs apagadas ao abrir. `create_table`, `load_table(bulk=)` (com `analyze` no fim, como o SKS p. 1219), `create_index` (bulk a partir dos dados, NULL de fora), `drop_index`, `drop_table`, `table`, `tables`, `analyze` (n_r, b_r, f_r, l_r, V(A, r) sem NULL, min/max de INT/FLOAT/DATE/CHAR), `temp`, `close`; fábricas com import preguiçoso. `Table.insert` desfaz o que entrou se um índice recusar; `Table.delete` tira dos índices antes de liberar o slot. `HeapFile.force(blocks)` acrescentado. 47 testes em `tests/test_catalog.py` (índices por um dublê em memória até a #52 e o P3) + 2 em `tests/test_heap.py`. Revisado por 4 revisores independentes (25/11): 9 defeitos corrigidos, 28 de 45 mutantes sobreviventes cobertos (`ai/P2/review.md`).
 - `cbd/records/hashing.py` existe (escrito pelo P6 para a referência SQLite), sem teste próprio (#41).
 ## Em andamento
 - #39: PR #91 (`p2/39-codec`) aberto, com o INT de 4 B, esperando revisão de P3/P4 e merge.
 - #40: PR #93 (`p2/40-slotted-page`, base `p2/39-codec`), esperando revisão do P3; depois do merge do #91, trocar a base para `main`.
-- #43: branch `p2/43-heap` (sobre a `p2/40-slotted-page`), heap implementado e revisado, commits locais ainda sem push e sem PR (precisam do ok do Guilherme). Todos os critérios da #43 atendidos (D-P2-09, D-P2-10 e D-P2-11).
+- #43: PR #99 (`p2/43-heap`, base `p2/40-slotted-page`), esperando revisão. Todos os critérios da #43 atendidos.
+- #46: branch `p2/46-catalog` (sobre a `p2/43-heap`), implementada e revisada; ainda sem PR. Critério do adaptador do P6 cumprido só para as variantes heap sem índices: o resto do plano precisa de `HashFile` (#48), `HashIndex` (#52) e da B+ (P3).
 - Para a #83 (prefetch): o `TempHeap` usa páginas WORK, então o `allow_prefetch` dele é com `PageType.WORK`, não DATA como diz o texto da issue; o `reorganize` cria um fid novo, e a declaração precisa ser refeita depois dele.
 ## Falta
-- #41, #83, #46, #48, #52, #55, #62, nesta ordem (tabela no `CLAUDE.local.md` §5).
+- #41, #48, #52, #83, #55, #62, nesta ordem (tabela no `CLAUDE.local.md` §5).
 ## Requisitos do enunciado cobertos
 | Enunciado § | Onde está | Teste que prova |
 | :-- | :-- | :-- |
@@ -27,6 +29,9 @@
 | §3.1.3 unspanned no heap | `RecordTooLarge` antes de tocar em página | `test_record_too_large_touches_nothing`, `test_temp_record_too_large` |
 | §3.4 chaves da B+ (ordem da árvore) | `encode_key`/`key_size` (D-P2-05) | `test_key_order`, `test_composite_key_with_seq_keeps_order` |
 | §3.4 folhas da B+ em ordem | `insert_at`/`remove_at`/`next` | `test_insert_at_keeps_logical_order`, `test_split_pattern_of_the_btree`, `test_random_insert_at_remove_at_match_list_oracle` |
+| §1 mini catálogo (esquema, organização, índices, parâmetros, estatísticas) | `catalog.py` (4 relações, D-P2-12) | `test_catalog_persist`, `test_k_index_params_persist_and_stay_separate`, `test_k_orgspec_key_unique_persist` |
+| §2.2.7 gravação forçada | `catalog.py` (`_write` + `HeapFile.force`, D-P2-13) | `test_create_table_forces_details_before_the_table_row`, `test_k_analyze_writes_new_before_deleting_old`, `test_no_dirty_catalog_page_with_a_bigger_area` |
+| §6.1.1 estatísticas para as fórmulas de custo | `Catalog.analyze`, `Table.stats` | `test_stats_follow_the_catalog_formulas`, `test_data_stats_have_the_keys_of_section_6_3` |
 | §7.1 acesso fora da faixa | `decode` valida cada tamanho; `get` valida offset e slot | `test_codec_corrupt`, `test_corrupt_directory_is_detected`, `test_offset_inside_header_is_detected` |
 ## Desvios ou dúvidas sobre o contrato
 - **D-P2-06:** o codec tem a assinatura `RecordCodec(schema)` do §5.1 e não levanta `RecordTooLarge`; quem insere (heap, hash) compara com `SlottedPage.max_record(B)`. O P3 precisa checar o limite da folha (`ks + 8` B a mais).
@@ -35,6 +40,8 @@
 - `aluno.curso` é Zipf (0,7) no gerador: curso 1 tem 6 192 alunos, o menor 416. O guia P2 §6.1 fala em "~1 000 por curso" (é só a média).
 - D-P2-01 muda o tamanho do registro: o estimador do P6 (`bench/sqlite_ref.py::record_bytes`) precisa acompanhar. Pedido ao P6 na issue #90.
 ## Armadilhas conhecidas / bugs abertos
+- **P1 (D-P1-03):** o `FileManager` só grava o bloco 0 (`high_water`) no fechamento. A gravação forçada do catálogo dá coerência, não durabilidade: uma queda de verdade perde os blocos alocados depois da abertura. Avisar o P1 (issue a propor, com o ok do Guilherme).
+- **P3:** o catálogo não usa `fid` (fora do contrato); grava os arquivos com `bp.flush_all` e apaga pelo nome. O `BTreeFile`/`BTreeIndex` precisa do construtor da arquitetura §5.2 (`create`/`open`) e de `spec`, `stats()`, `close()`.
 - No Windows, 2 testes do P6 (`test_data_preparation.py`) só passam com `PYTHONUTF8=1` (abrem arquivo sem `encoding`). Avisar o P6.
 - Chave de texto não aceita `\x00` (é o preenchimento). A bancada não tem chave de texto.
 - Views de `get` valem só com a página fixada; `insert`/`insert_at`/`compact` podem mover registros. Avisar o P3 no PR.
