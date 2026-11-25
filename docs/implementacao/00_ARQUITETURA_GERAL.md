@@ -574,7 +574,7 @@ class Table:
 
 ```python
 class Catalog:
-    def __init__(self, bp: BufferPool): ...           # abre ou cria o arquivo "catalog" (páginas CATALOG)
+    def __init__(self, bp: BufferPool): ...           # abre ou cria as relações do catálogo (D-P2-12; páginas CATALOG)
     def create_table(self, schema: Schema, spec: OrgSpec) -> Table
     def load_table(self, name: str, recs: Iterable[Record], bulk: bool = True) -> None
         # bulk=True: BTREE ordena e usa bulk_load; HEAP/HASH inserem em lote. Depois roda analyze().

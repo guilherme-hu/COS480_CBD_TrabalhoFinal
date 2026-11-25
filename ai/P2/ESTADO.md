@@ -41,4 +41,4 @@
 - LIMITAÇÃO: slots apagados no fim do diretório guardam seus 4 B até um `insert` reaproveitá-los.
 ## Decisões provisórias a rever
 - **D-P2-11 decidida (24/11):** reorganizar só por comando, com `stats()["deleted"]` como critério; revisitar se o estresse (#55) precisar de outra forma. O `reorganize` copia por um temporário (`b + 3·b'`, não atômico) porque o `FileManager` não tem rename.
-- Escolhas herdadas do guia ainda sem justificativa, a debater nas issues: fator de carga 0,8 e buckets no bloco 2 + i (#48), `hash_value` (#41), catálogo em JSON reescrito e forçado a cada mudança (#46). Resolvidas em 24/11: mapa de espaço livre (D-P2-09) e RID de 6 B (D-P2-10).
+- Escolhas herdadas do guia ainda sem justificativa, a debater nas issues: fator de carga 0,8 e buckets no bloco 2 + i (#48), `hash_value` (#41), quando gravar e forçar o catálogo (#46, D-P2-13). O formato do catálogo foi decidido em 25/11: relações como na Fig. 13.12 do SKS (D-P2-12). Resolvidas em 24/11: mapa de espaço livre (D-P2-09) e RID de 6 B (D-P2-10).

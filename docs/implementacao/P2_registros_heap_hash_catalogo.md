@@ -282,24 +282,20 @@ Avise no docstring: **`Ptr`s ficam inválidos depois de `reorganize()`**. Quem a
 
 ## 8. Catálogo (`catalog.py`)
 
-### 8.1 Persistência
+### 8.1 Persistência (D-P2-12)
 
-Arquivo `catalog`, com páginas `PageType.CATALOG` em cadeia (`next`). O conteúdo é **JSON** (`utf-8`) espalhado pelas páginas: `u32 len` + bytes. A cada mudança (criar ou apagar tabela/índice, `analyze`), reescreva tudo e faça `bp.force(page)` em cada página. Isso é a **gravação forçada** do enunciado §2.2.7, e conta em `forced_writes`.
+O catálogo é guardado **como relações do próprio SGBD** (SKS §13.4, Fig. 13.12): quatro `HeapFile`s em páginas `PageType.CATALOG`, com esquemas fixos no código e nomes fixos (o bootstrap: SKS p. 604).
 
-Conteúdo:
+| Relação (arquivo) | Campos | Uma linha por |
+| :--- | :--- | :--- |
+| `catalog__relacoes` | `nome, org, chave, unique, arquivo, n_records, n_blocks, bfr, record_size` | tabela |
+| `catalog__atributos` | `relacao, posicao, nome, tipo, tamanho, nulo, unique, distinct, min, max` | campo de cada tabela |
+| `catalog__indices` | `relacao, coluna, tipo, unique, arquivo` | índice secundário |
+| `catalog__params` | `dono, chave, valor` (FLOAT) | parâmetro de `OrgSpec`/`IndexSpec` (`buckets`, `seed`, `fill`…) |
 
-```json
-{"tables": {"aluno": {
-   "schema": {"name": "aluno", "fields": [["dre","INT",0,false,true], ...]},
-   "spec": {"org": "HEAP", "key": null, "unique": false, "params": {}},
-   "file": "aluno",
-   "indexes": [{"column": "dre", "kind": "HASH", "unique": true, "params": {}, "file": "aluno__dre"}],
-   "stats": {"n_records": 100000, "n_blocks": 4000, "bfr": 25.0, "record_size": 150.2,
-             "distinct": {...}, "min": {...}, "max": {...}}
-}}}
-```
-
-Datas em `min`/`max`: `{"$date": "2001-05-03"}`; converta na leitura.
+- `min`/`max` ficam como texto e são convertidos com o `tipo` da própria linha (DATE em ISO).
+- Ao abrir, um `scan` de cada relação monta o `dict` em memória; as operações só consultam o `dict`.
+- Quando gravar e forçar as páginas do catálogo (enunciado §2.2.7) é a D-P2-13.
 
 ### 8.2 Fábricas
 
@@ -363,6 +359,6 @@ A ordenação em memória e os `set`s do `load_table`/`analyze` são **preparaç
 - `free_space` sem os 4 bytes do slot novo: o insert "cabe" e corrompe o diretório.
 - `decode` sem checar faixa: lê lixo do registro vizinho.
 - Reuso de slot apagado que deixa o índice apontando para o registro novo. O `Table.delete` tem que tirar a entrada do índice **antes**.
-- Catálogo que serializa com `pickle`: não é legível nem estável; use JSON.
+- Catálogo gravado fora do buffer (`json.dump`/`pickle` direto num arquivo): viola a regra 1 e não conta em `forced_writes`; o catálogo são as relações da D-P2-12, gravadas pelo `BufferPool`.
 
 Registre o que achar em `ai/P2/review.md` e guarde o código bruto em `ai/P2/raw/`. Guarde uma versão **executável** do hash ingênuo, sem overflow na busca, para o teste ingênuo × refatorado do P1.
