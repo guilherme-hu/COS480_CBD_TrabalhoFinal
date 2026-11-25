@@ -149,7 +149,7 @@ def hash_value(v, seed: int = 0) -> int:
 ```
 
 - **Nunca** `hash()` do Python: para `str` ele muda a cada processo (PYTHONHASHSEED). Teste obrigatório: rodar `hash_value("abc")` em dois subprocessos dá o mesmo valor.
-- Seeds diferentes dão funções independentes. O P5 usa `seed=1, 2, ...` nos níveis de particionamento, diferentes da seed do arquivo hash.
+- Seeds diferentes dão funções independentes. O P5 usa `seed = 100 + nível` nos níveis de particionamento (guia P5 §4), diferentes da seed do arquivo hash.
 - **Escolha da função (enunciado §3.5.3): D-P2-14.** O `bucket_of` do hash usa `(k + seed) % N` para chave INT (chaves densas: n/N por bucket, sem overflow por azar) e o `hash_value` para os outros tipos. O `hash_value` continua nas partições do hash join (P5) e no checksum (P6), onde o mod não serve. Testes em `tests/test_hashing.py`.
 
 ---

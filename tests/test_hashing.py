@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 from collections import Counter
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
@@ -26,8 +26,9 @@ def _z(sizes):
     Para uma função que espalha como um sorteio, z ~ N(0, 1); |z| < 4 deixa passar com
     probabilidade 1 − 6·10⁻⁵ (k grande) e reprova qualquer concentração de verdade. É bilateral:
     também reprova a uniformidade perfeita (o (k + seed) mod N da D-P2-14 dá z ≈ −150 em
-    aluno.dre), então não serve para testar o bucket_of de chaves INT. Com k = 4 a cauda de
-    baixo não é alcançável (χ² = 0 dá z ≈ −4,0): ali o teste é só contra concentração.
+    aluno.dre), então não serve para testar o bucket_of de chaves INT. Com poucos buckets a
+    cauda de baixo quase some: χ² = 0 dá z = −3,40 com 4 buckets (k = 3), que passa, e
+    z = −4,007 com 5 (k = 4), que reprovaria por 0,007; ali o teste é só contra concentração.
     """
     n, k = sum(sizes), len(sizes) - 1
     e = n / len(sizes)
@@ -50,12 +51,19 @@ def test_hash_stable():
     assert outs == {str([hash_value(v, s) for v in VALUES for s in (0, 101)]) + "\n"}
 
 
-def test_int_float_date_null_unchanged_by_the_fix():
-    # A correção da #41 só mexeu em texto e tupla. Estes valores são os da versão bruta
-    # (ai/P2/raw/hashing_v1.py): as partições do P5 e os buckets de FLOAT não mudam.
+def test_values_are_fixed():
+    # INT, FLOAT, DATE e NULL: os mesmos da versão bruta (ai/P2/raw/hashing_v1.py), então a
+    # correção da #41 não mudou as partições do P5 nem os buckets de FLOAT.
     assert [hash_value(v) for v in (1, -7, 2.5, date(2026, 11, 26), None)] == [
         9340483029297802312, 12123389045890068926, 88064665064755608, 3031378479847296906, 758538543980035830]
     assert hash_value(1, 101) == 17381439065210294877
+    # Texto e tupla: os da versão corrigida (#41). O checksum do P6 soma o hash de tuplas: se
+    # isto falhar, a codificação mudou e o workload.json do P6 precisa ser refeito.
+    values = ("abc", "", "ação", (1,), ((1,), (1, 7)), -0.0)
+    assert [hash_value(v, s) for v in values for s in (0, 101)] == [
+        5244449289133915670, 14483796909450408714, 11793318583766997345, 9517369960659235066,
+        12538709554468450616, 4675882129179974526, 17449735858702529886, 3577865206382776947,
+        3207436678667525634, 7268720151011552786, 17436960656331623218, 1821658083230550956]
 
 
 def test_encoding_is_injective():
@@ -111,30 +119,7 @@ def test_seeds_are_independent():
 def test_datetime_is_rejected():
     # datetime é subclasse de date: no ramo DATE perderia a hora (10h e 23h do mesmo dia
     # com o mesmo hash). O codec também recusa datetime.
-    from datetime import datetime
     with pytest.raises(TypeError):
         hash_value(datetime(2026, 1, 1, 10))
     with pytest.raises(TypeError):
         hash_value((1, datetime(2026, 1, 1)))
-
-
-def test_text_and_tuple_values_are_fixed():
-    # Valores da versão corrigida (#41). O checksum do P6 soma o hash de tuplas: se este
-    # teste falhar, a codificação mudou e o workload.json do P6 precisa ser refeito.
-    values = ("abc", "", "ação", (1,), ((1,), (1, 7)), -0.0)
-    assert [hash_value(v, s) for v in values for s in (0, 101)] == [
-        5244449289133915670, 14483796909450408714, 11793318583766997345, 9517369960659235066,
-        12538709554468450616, 4675882129179974526, 17449735858702529886, 3577865206382776947,
-        3207436678667525634, 7268720151011552786, 17436960656331623218, 1821658083230550956]
-
-
-def test_every_p6_checksum_changes():
-    # O checksum do P6 (D-P6-05) sempre soma o hash de uma tupla, mesmo com PK só INT;
-    # a correção de #41 muda todos eles: o workload.json gerado antes precisa ser refeito.
-    import importlib.util
-    raw = os.path.join(os.path.dirname(__file__), "..", "ai", "P2", "raw", "hashing_v1.py")
-    spec = importlib.util.spec_from_file_location("hashing_v1", raw)
-    v1 = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(v1)
-    for key in ((1,), ((1,), (1, 7))):
-        assert hash_value(key) != v1.hash_value(key)
