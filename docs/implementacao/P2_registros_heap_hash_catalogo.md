@@ -295,7 +295,7 @@ O catálogo é guardado **como relações do próprio SGBD** (SKS §13.4, Fig. 1
 
 - `min`/`max` ficam como texto e são convertidos com o `tipo` da própria linha (DATE em ISO).
 - Ao abrir, um `scan` de cada relação monta o `dict` em memória; as operações só consultam o `dict`.
-- Quando gravar e forçar as páginas do catálogo (enunciado §2.2.7) é a D-P2-13.
+- Gravação (D-P2-13, enunciado §2.2.7): no fim de cada operação que muda o catálogo, `flush_file` do arquivo novo e `bp.force` das páginas sujas do catálogo, em ordem: detalhes (`atributos`, `params`, `indices`) primeiro e a linha de `relacoes` por último no `create_table`; no `drop`, a linha "ponteiro" primeiro. Ao abrir, linhas sem a tabela correspondente em `relacoes` são ignoradas.
 
 ### 8.2 Fábricas
 
