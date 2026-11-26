@@ -6,8 +6,10 @@ N3: o plano do P6 com os índices hash. N4: contagens com cache frio, por área 
 """
 import pytest
 
-from cbd.contracts import (DuplicateKey, Field, FType, IndexKind, IndexSpec, NotApplicable, Org, OrgSpec,
-                           PageType, RID, Schema)
+from cbd.contracts import (BufferConfig, DuplicateKey, Field, FType, IndexKind, IndexSpec, NotApplicable, Org,
+                           OrgSpec, PageType, RID, Schema, StorageConfig)
+from cbd.engine import Engine
+from cbd.files.hash_file import HashFile
 from cbd.files.hash_index import HashIndex
 from cbd.files.heap import HeapFile
 
@@ -22,6 +24,10 @@ def cold(bp):
     bp.clear()
     bp.fm.reset_stats()
     bp.reset_stats()
+
+
+def engine(tmp_path):
+    return Engine(StorageConfig(root_dir=str(tmp_path)), BufferConfig())
 
 
 def heap_with_index(bp, n, size=100, **params):
@@ -59,9 +65,7 @@ def test_index_overflow_chain_is_followed(bp):
 
 def test_table_keeps_the_index_coherent(tmp_path):
     # Critério: remoção e atualização (delete + insert) pelo Table mantêm o índice; chave repetida desfaz o heap.
-    from cbd.contracts import BufferConfig, StorageConfig
-    from cbd.engine import Engine
-    e = Engine(StorageConfig(root_dir=str(tmp_path)), BufferConfig())
+    e = engine(tmp_path)
     e.catalog.create_table(S, OrgSpec(Org.HEAP))
     e.catalog.load_table("t", [(i, f"v{i}") for i in range(300)])
     idx = e.catalog.create_index(ispec())
@@ -77,7 +81,7 @@ def test_table_keeps_the_index_coherent(tmp_path):
     assert sum(1 for _, r in t.data.scan() if r[0] == 7) == 1      # o heap foi desfeito
     assert list(idx.search(7)) == [p2]
     e.close()
-    e = Engine(StorageConfig(root_dir=str(tmp_path)), BufferConfig())   # reabre pelo catálogo
+    e = engine(tmp_path)                                 # reabre pelo catálogo
     t = e.catalog.table("t")
     assert [t.data.fetch(q) for q in t.indexes["k"].search(7)] == [(7, "novo")]
     assert all(len(list(t.indexes["k"].search(i))) == 1 for i in range(300))
@@ -176,8 +180,6 @@ def test_load_physical_heap_variants_with_hash_indexes(tmp_path):
     from bench.build import load_physical, physical_plan
     from bench.generator import Dataset
     from bench.schema import ACCESS_COLUMNS, SCHEMAS
-    from cbd.contracts import BufferConfig, StorageConfig
-    from cbd.engine import Engine
     ds = Dataset(scale=0.002)
     stats = {t: {"n": ds.counts[t], "estimated_bfr": 10.0,
                  "distinct": {c: len({r[SCHEMAS[t].idx(c)] for r in ds.records(t)}) for c in cols}}
@@ -185,10 +187,10 @@ def test_load_physical_heap_variants_with_hash_indexes(tmp_path):
     plan = [dict(item, indexes=[i for i in item["indexes"] if i["kind"] == IndexKind.HASH])
             for item in physical_plan(stats) if item["org"]["org"] == Org.HEAP]
     assert sum(len(p["indexes"]) for p in plan) == 2           # aluno__heap.dre e curso__heap.codigo
-    e = Engine(StorageConfig(root_dir=str(tmp_path)), BufferConfig())
+    e = engine(tmp_path)
     load_physical(e, SimpleNamespace(records=ds.records), plan)
     e.close()
-    e = Engine(StorageConfig(root_dir=str(tmp_path)), BufferConfig())
+    e = engine(tmp_path)
     for p in plan:
         t = e.catalog.table(p["name"])
         for i in p["indexes"]:
@@ -199,12 +201,6 @@ def test_load_physical_heap_variants_with_hash_indexes(tmp_path):
 
 
 # ---------- testes da revisão independente da #52 (26/11) ----------
-
-def engine(tmp_path):
-    from cbd.contracts import BufferConfig, StorageConfig
-    from cbd.engine import Engine
-    return Engine(StorageConfig(root_dir=str(tmp_path)), BufferConfig())
-
 
 def test_bulk_load_with_a_repeated_key_leaves_nothing(tmp_path):
     # Defeito (catálogo): load_table em massa com chave repetida carregava o heap e falhava só ao refazer o
@@ -260,7 +256,6 @@ def test_catalog_reopen_keeps_the_index_in_the_index_area(tmp_path):
 
 def test_hash_file_with_index_ptype_uses_only_the_index_area(bp):
     # Todo método do HashFile respeita o ptype (scan, scan_bucket, fetch e delete também).
-    from cbd.files.hash_file import HashFile
     hf = HashFile.create(bp, "p", S, OrgSpec(Org.HASH, "k", True, {"buckets": 2}), PageType.INDEX)
     hf.bulk_load([(i, "x" * 1000) for i in range(20)])
     p = hf.insert((100, "y"))

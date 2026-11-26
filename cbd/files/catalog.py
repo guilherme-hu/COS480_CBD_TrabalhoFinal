@@ -271,12 +271,12 @@ class Catalog:
         t = self.table(name)
         if bulk:
             recs = list(recs)                                        # preparação: fora da medição
-            for col, idx in t.indexes.items():
+            for col in [c for c, i in t.indexes.items() if i.spec.unique]:
                 # chave repetida num índice UNIQUE: recusa antes de tocar no heap (senão o heap ficaria
                 # carregado e o índice, ao ser refeito, vazio)
                 k = t.schema.idx(col)
                 keys = [r[k] for r in recs if r[k] is not None]
-                if idx.spec.unique and len(set(keys)) != len(keys):
+                if len(set(keys)) != len(keys):
                     raise DuplicateKey(f"{name}.{col}: chave repetida na carga (índice UNIQUE)")
             if t.data.spec.org is Org.BTREE:
                 k = t.schema.idx(t.data.spec.key)
