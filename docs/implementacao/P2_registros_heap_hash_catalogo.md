@@ -224,7 +224,7 @@ Nomes únicos: `f"__tmp_{os.getpid()}_{contador}"`. As páginas de temporário s
 | Endereçamento | o bucket `i` está no bno `2 + i` (pré-alocados em sequência no `create`); sem diretório |
 | Função | INT: `(key + seed) % N`; outros tipos: `hash_value(key, seed) % N` (D-P2-14), com `seed = params.get("seed", 0)` salva no meta. O P5 precisa forçar N e seed iguais em duas tabelas para o *bucket-join* |
 | Colisão (overflow) | encadeamento de blocos de overflow, alocados sob demanda; inserção no primeiro bloco da cadeia com espaço |
-| Skew | NOT UNIQUE de baixa cardinalidade concentra registros num bucket (todos os iguais caem juntos, independentemente de N). **Caso real da nossa matriz:** `aluno` organizado por hash em `curso` (50 valores, ~1 000 alunos por curso). Com o N padrão (~2 500 buckets) sobrariam ~2 450 buckets vazios que o `scan` lê à toa. Recomendação: em NOT UNIQUE, `N = min(N_padrão, V(A))`, com `V(A)` de `params["distinct"]` (a bancada passa). Relate em `stats()` `max_chain` e `avg_chain_x1000` |
+| Skew | NOT UNIQUE de baixa cardinalidade concentra registros num bucket (todos os iguais caem juntos, independentemente de N). **Caso real da nossa matriz:** `aluno` organizado por hash em `curso` (50 valores, ~1 000 alunos por curso). Com o N padrão (2 084 buckets, D-P2-16) sobrariam 2 034 buckets vazios que o `scan` lê à toa (~3 694 blocos, contra 1 682). Recomendação: em NOT UNIQUE, `N = min(N_padrão, V(A))`, com `V(A)` de `params["distinct"]` (a bancada passa). Relate em `stats()` `max_chain` e `avg_chain_x1000` |
 | Fator de carga | `stats()["load_x1000"] = 1000·n_records / (N·bfr_est)`. `reorganize()` refaz o hash com N recalculado para o n atual, **só por comando** (D-P2-17: a reorganização automática não faz parte do escopo, como no heap, D-P2-11) |
 
 ### 6.2 `HashFile` (organização primária)
@@ -248,9 +248,7 @@ bno > N+1    : overflow
 
 ### 6.3 `HashIndex` (índice secundário; geral §5.3: campo UNIQUE de heap)
 
-Mesma estrutura do `HashFile`, só que cada entrada é `encode_key(f, key) + data.encode_ptr(ptr)`, de tamanho fixo, guardada em slotted page com `PageType.INDEX`. `search(key)` devolve `Ptr`s. N vem de `spec.params["buckets"]` ou de `n_records` da tabela (o catálogo passa no `create_index`). `insert`/`delete(key, ptr)` percorrem a cadeia; `delete` procura a entrada **exata** (chave + ptr).
-
-**Reaproveite:** o `HashFile` e o `HashIndex` podem compartilhar uma classe base `_StaticHash`, que cuida de buckets, cadeia e meta, e recebe a função de "o que guardar no slot". É uma abstração justificada: duas implementações reais.
+D-P2-18: o índice é um `HashFile` com `PageType.INDEX` cujos registros são `(chave, bloco, slot)` (chave + 4 B + 4 B). É a mesma estrutura do hash primário, só que o bucket guarda o ponteiro em vez do registro (SKS §14.5, p. 659), e herda a cadeia, o UNIQUE, o N e o fator de carga (D-P2-14 a D-P2-17). `search(key)` devolve os `RID`s; `insert(key, ptr)`; `delete(key, ptr)` procura a entrada **exata** (chave + ptr). N vem de `spec.params["buckets"]`, ou de `expected_records`, ou do número de registros do arquivo de dados na criação. A entrada em bytes `encode_key + encode_ptr` (10 B) com uma classe base `_StaticHash` foi preterida: 2 B menor por entrada, mas exigia refatorar o `HashFile`.
 
 ---
 

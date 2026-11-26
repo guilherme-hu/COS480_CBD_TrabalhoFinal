@@ -648,9 +648,11 @@ def test_failed_rebuild_keeps_a_live_index(engine, monkeypatch):
     e.catalog.create_index(IndexSpec("t", "sigla", IndexKind.HASH, True))
     t = e.catalog.table("t")
     old = t.indexes["sigla"]                                 # o arquivo dele é apagado na reconstrução
+    # Falha simulada ao encher o índice novo. Sem chave repetida: desde a revisão da #52, a chave repetida é
+    # recusada antes de carregar o heap (test_bulk_load_with_a_repeated_key_leaves_nothing) e não chega aqui.
     monkeypatch.setattr(FakeIndex, "bulk_load", lambda self, pairs: (_ for _ in ()).throw(DuplicateKey("ab0")))
     with pytest.raises(DuplicateKey):
-        e.catalog.load_table("t", rows(6))                   # sigla repete: o índice UNIQUE recusa
+        e.catalog.load_table("t", rows(3))                   # siglas ab1, ab2, ab0: distintas
     assert t.indexes["sigla"] is not old                     # a Table aponta para o índice novo, vivo
     t.insert((99, "z", None, 1.0, "zz9", None))
     assert t.indexes["sigla"].search("zz9")
@@ -732,3 +734,22 @@ def test_data_stats_have_the_keys_of_section_6_3(engine):
     t = e.catalog.create_table(S, SPEC)
     keys = {"blocks", "records", "overflow_blocks", "levels", "leaf_blocks", "buckets", "meta_blocks"}
     assert keys <= set(t.data.stats())
+
+
+# ---------- issue #105 (revisão do P6 dos PRs #99 a #102) ----------
+
+def test_reorganize_updates_the_stats(engine):
+    # #105, item 1: Table.reorganize não rodava o analyze; depois de apagar metade e reorganizar,
+    # stats().n_blocks continuava com o tamanho antigo.
+    e = engine()
+    e.catalog.create_table(S, SPEC)
+    e.catalog.load_table("t", rows(3000))
+    t = e.catalog.table("t")
+    before = t.stats().n_blocks
+    for p, r in list(t.data.scan()):
+        if r[0] % 2:
+            t.delete(p)
+    t.reorganize()
+    ds = t.data.stats()
+    assert t.stats().n_records == 1500
+    assert t.stats().n_blocks == ds["blocks"] - ds["meta_blocks"] < before

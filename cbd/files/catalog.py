@@ -29,7 +29,7 @@ import dataclasses
 import itertools
 from datetime import date
 
-from cbd.contracts import Field, FType, IndexKind, IndexSpec, Org, OrgSpec, PageType, Schema, TableStats
+from cbd.contracts import DuplicateKey, Field, FType, IndexKind, IndexSpec, Org, OrgSpec, PageType, Schema, TableStats
 from cbd.files.heap import HeapFile, TempHeap
 from cbd.files.table import Table
 from cbd.records.codec import RecordCodec
@@ -270,6 +270,14 @@ class Catalog:
         """Carga em massa (bulk_load; B+ ordena antes) ou registro a registro (Table.insert). No fim, analyze."""
         t = self.table(name)
         if bulk:
+            recs = list(recs)                                        # preparação: fora da medição
+            for col in [c for c, i in t.indexes.items() if i.spec.unique]:
+                # chave repetida num índice UNIQUE: recusa antes de tocar no heap (senão o heap ficaria
+                # carregado e o índice, ao ser refeito, vazio)
+                k = t.schema.idx(col)
+                keys = [r[k] for r in recs if r[k] is not None]
+                if len(set(keys)) != len(keys):
+                    raise DuplicateKey(f"{name}.{col}: chave repetida na carga (índice UNIQUE)")
             if t.data.spec.org is Org.BTREE:
                 k = t.schema.idx(t.data.spec.key)
                 recs = sorted(recs, key=lambda r: r[k])              # preparação: fora da medição
