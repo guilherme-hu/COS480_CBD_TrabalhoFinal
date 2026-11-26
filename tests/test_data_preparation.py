@@ -284,3 +284,31 @@ def test_size_checks_use_areas_of_each_block_size():
     small_small = lambda b: next(c for c in size_checks_for_block(big, b) if c['size_combo'] == 'small_small')
     assert small_small(2048)['status'] == 'ok'
     assert small_small(8192)['problems'] == ['disciplina: 40 blocos, esperado <= 30']
+
+
+@pytest.mark.parametrize('block_size', [2048, 4096, 8192])
+def test_estimated_blocks_match_real_heap_bulk_load(prepared, tmp_path, block_size):
+    # #90/#94: a estimativa do base_stats.csv usa o RecordCodec e o SlottedPage.HEADER reais.
+    # Prova: carregar cada tabela num HeapFile pela pilha real (bulk_load, na ordem do
+    # ref.sqlite) dá exatamente estimated_blocks blocos de dados. O arquivo tem ainda
+    # meta_blocks blocos (meta + mapa de espaço livre), que a estimativa não conta.
+    from cbd.contracts import BufferConfig, OrgSpec, StorageConfig
+    from cbd.files.heap import HeapFile
+    from cbd.storage.buffer_pool import BufferPool
+    from cbd.storage.file_manager import FileManager
+
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=block_size))
+    bp = BufferPool(fm, BufferConfig())
+    try:
+        with SQLiteReference(prepared / 'ref.sqlite') as ref:
+            for table in BASE_COUNTS:
+                expected = ref.stats(table, block_size)['estimated_blocks']
+                heap = HeapFile.create(bp, table, SCHEMAS[table], OrgSpec(Org.HEAP))
+                heap.bulk_load(ref.records(table))
+                stats = heap.stats()
+                assert stats['blocks'] - stats['meta_blocks'] == expected, (table, block_size)
+                heap.close()
+        assert bp.pinned() == 0
+    finally:
+        bp.flush_all()
+        fm.close_all()
