@@ -165,10 +165,12 @@ class HeapFile:
     def force(self, blocks=()):
         """Gravação forçada (D-P2-13; enunciado §2.2.7): bp.force nas páginas sujas entre `blocks`, a meta e o mapa.
 
-        `blocks` são os blocos de dados que quem chama alterou (os dos RIDs que inseriu ou apagou). Página limpa
+        `blocks` são os blocos de dados que quem chama alterou (os dos RIDs que inseriu ou apagou). Ordem da D-P2-13
+        (detalhes primeiro, "ponteiro" por último): os dados, depois o mapa, por último a meta. Página limpa
         não é gravada. Custo: 1 gravação forçada por página suja; uma página do mapa fora do buffer custa 1 leitura.
         """
-        for bno in sorted({1, *self._fsm, *blocks}):
+        control = [*self._fsm, 1]
+        for bno in [*sorted(set(blocks) - set(control)), *control]:
             with self.bp.page(self.fid, bno, self.ptype) as p:
                 if p.dirty:
                     self.bp.force(p)
@@ -412,8 +414,7 @@ class TempHeap:
         self.codec = RecordCodec(schema)
         self._max = SlottedPage.max_record(bp.block_size)
         self._out = self._sp = None
-        self._bnos = []
-        self._n = 0
+        self._blocks = self._n = 0                       # arquivo novo: os blocos são 1, 2, ..., _blocks
 
     def append(self, rec):
         """Acrescenta um registro, mantendo uma página de saída fixada."""
@@ -423,7 +424,7 @@ class TempHeap:
                 self.bp.unpin(self._out, dirty=True)
                 self._out = self._sp = None              # já solta: drop/finish não podem soltá-la de novo
             self._out, self._sp = _fresh_page(self.bp, self.fid, PageType.WORK, data)
-            self._bnos.append(self._out.bno)
+            self._blocks += 1
         self._n += 1
 
     def finish(self):
@@ -436,7 +437,7 @@ class TempHeap:
         """Os registros na ordem do append; 1 página fixada por vez, seq=True, toss=True."""
         if self._out is not None:
             raise RuntimeError(f"{self.name}: chame finish() antes do scan")
-        for bno in self._bnos:
+        for bno in range(1, self._blocks + 1):
             page = self.bp.pin(self.fid, bno, PageType.WORK, seq=True)
             try:
                 sp = SlottedPage(page.data)
@@ -446,7 +447,7 @@ class TempHeap:
                 self.bp.unpin(page, toss=True)
 
     def n_blocks(self):
-        return len(self._bnos)
+        return self._blocks
 
     def n_records(self):
         return self._n

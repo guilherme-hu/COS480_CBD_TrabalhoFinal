@@ -1,7 +1,9 @@
 """Hash estático primário (organização por hash). Camada 3, dono: P2.
 
 Implementa: DataFile e os extras do HashFile (arquitetura §5.2: n_buckets, seed, bucket_of, scan_bucket).
-Usa: BufferPool (P1), SlottedPage, RecordCodec, hash_value e os auxiliares do heap (P2).
+Usa: BufferPool (P1), SlottedPage, RecordCodec, hash_value e os auxiliares privados do heap (_encode, _fresh_page,
+_view, _rebuild, _PTR): mesma camada e mesmo dono (P2); o AGENTS §2 fecha o `_` para outras camadas, e copiar
+esses auxiliares duplicaria a validação do RID e o caminho seguro do reorganize.
 Decisões: D-P2-10 (RID de 6 B), D-P2-14 (bucket_of), D-P2-15 (bucket = 1 bloco + cadeia pelo next; bucket i
 no bloco 2 + i; meta no bloco 1), D-P2-16 (N = params["buckets"], ou ⌈n / (bfr_est · carga)⌉ com carga 0,8,
 limitado a params["distinct"]; sem forçar primo), D-P2-17 (insert no 1º bloco da cadeia com espaço; delete só
@@ -148,16 +150,16 @@ class HashFile:
         """Bucket da chave (D-P2-14): coluna INT, (key + seed) mod N; outros tipos, hash_value(key, seed) mod N.
 
         O ramo segue o tipo da coluna, não o do valor: 5 == 5.0 no Python, e as duas formas caem no mesmo bucket.
-        Chave de outro tipo (texto numa coluna INT) vai para o hash_value: a busca não acha nada, sem erro.
+        Chave que não é do tipo da coluna (texto, 5.5, inf ou nan numa coluna INT) vai para o hash_value: a busca
+        não acha nada, sem erro. TypeError para tipo fora do domínio do hash_value (datetime, lista; D-P2-14).
         ValueError se o arquivo ainda não tem buckets (nenhuma carga e nenhum params["buckets"]).
         """
         if not self.n_buckets:
             raise ValueError(f"{self.name}: ainda sem buckets (carregue o arquivo ou passe params['buckets'])")
-        if isinstance(key, (int, float)):
-            if self._ktype is FType.INT:
-                return (int(key) + self.seed) % self.n_buckets
-            if self._ktype is FType.FLOAT:
-                key = float(key)
+        if self._ktype is FType.INT and (isinstance(key, int) or isinstance(key, float) and key.is_integer()):
+            return (int(key) + self.seed) % self.n_buckets
+        if self._ktype is FType.FLOAT and isinstance(key, int):
+            key = float(key)
         return hash_value(key, self.seed) % self.n_buckets
 
     # ------------------------------------------------------------ leitura
@@ -252,7 +254,8 @@ class HashFile:
         # LIMITAÇÃO: sem buckets, o 1º insert estima o bfr só com o próprio registro (o guia pede a média dos
         # 100 primeiros, que só o bulk_load tem). O erro pode ser grande: com expected_records = 1 000, um 1º
         # registro de 2 006 B e os outros de 16 B dão N = 625 (o bulk_load dá 13). Para carga registro a
-        # registro, passe params["buckets"] (a bancada carrega o hash com bulk_load).
+        # registro, passe params["buckets"] (a bancada carrega o hash com bulk_load). Mantido por decisão do
+        # Guilherme (26/11, #105): o hash estático precisa do n antes (SKS p. 661); o reorganize() refaz o N.
         self._ensure([len(data)], self.spec.params.get("expected_records"))
         if self.spec.unique:
             found = self.search(key)

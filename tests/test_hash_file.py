@@ -718,3 +718,25 @@ def test_fetch_and_delete_at_the_slot_boundaries(bp):
         with pytest.raises(KeyError):
             h.delete(bad)
     assert h.fetch(p) == rec(1, 10)
+
+
+# ---------- issue #105 (revisão do P6 dos PRs #99 a #102) ----------
+
+def test_int_column_with_a_float_that_is_not_an_integer(bp):
+    # #105, item 4: numa coluna INT, search(inf) dava OverflowError e search(nan), ValueError (int(...)).
+    # Agora só float inteiro (5.0) vai para o ramo do mod; os outros vão para o hash_value e não acham nada.
+    h = HashFile.create(bp, "h", S, spec(buckets=7))
+    h.insert(rec(5, 10))
+    for k in (float("inf"), float("-inf"), float("nan"), 5.5):
+        assert list(h.search(k)) == []
+    assert len(list(h.search(5.0))) == 1
+
+
+def test_date_column_with_a_datetime_raises_type_error(bp):
+    # #105, item 4: datetime fica fora do domínio do hash_value (perderia a hora, D-P2-14): TypeError, como diz
+    # a docstring do bucket_of.
+    from datetime import date, datetime
+    d = HashFile.create(bp, "d", Schema("d", (Field("k", FType.DATE), Field("v", FType.INT))), spec(buckets=3))
+    d.insert((date(2026, 1, 1), 1))
+    with pytest.raises(TypeError):
+        list(d.search(datetime(2026, 1, 1, 10)))

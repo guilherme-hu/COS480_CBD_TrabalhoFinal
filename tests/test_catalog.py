@@ -734,3 +734,22 @@ def test_data_stats_have_the_keys_of_section_6_3(engine):
     t = e.catalog.create_table(S, SPEC)
     keys = {"blocks", "records", "overflow_blocks", "levels", "leaf_blocks", "buckets", "meta_blocks"}
     assert keys <= set(t.data.stats())
+
+
+# ---------- issue #105 (revisão do P6 dos PRs #99 a #102) ----------
+
+def test_reorganize_updates_the_stats(engine):
+    # #105, item 1: Table.reorganize não rodava o analyze; depois de apagar metade e reorganizar,
+    # stats().n_blocks continuava com o tamanho antigo.
+    e = engine()
+    e.catalog.create_table(S, SPEC)
+    e.catalog.load_table("t", rows(3000))
+    t = e.catalog.table("t")
+    before = t.stats().n_blocks
+    for p, r in list(t.data.scan()):
+        if r[0] % 2:
+            t.delete(p)
+    t.reorganize()
+    ds = t.data.stats()
+    assert t.stats().n_records == 1500
+    assert t.stats().n_blocks == ds["blocks"] - ds["meta_blocks"] < before

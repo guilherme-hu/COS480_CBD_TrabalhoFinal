@@ -806,3 +806,30 @@ def test_heap_fetch_and_delete_at_the_slot_boundaries(bp):
         with pytest.raises(KeyError):
             h.delete(bad)
     assert h.fetch(p) == rec(1, 10)
+
+
+# ---------- issue #105 (revisão do P6 dos PRs #99 a #102) ----------
+
+def test_force_writes_the_data_before_the_map_and_the_meta(bp, monkeypatch):
+    # #105, item 2 (D-P2-13: detalhes primeiro, ponteiro por último): os blocos de dados vão para o disco antes
+    # do mapa (bloco 2) e da meta (bloco 1). A versão anterior gravava em ordem crescente: 1, 2, 3.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rid = h.insert(rec(1))
+    order = []
+    real = bp.force
+    monkeypatch.setattr(bp, "force", lambda p: (order.append(p.bno), real(p))[1])
+    h.force([rid.block])
+    assert order == [3, 2, 1]
+
+
+def test_temp_keeps_no_list_that_grows_with_the_blocks(bp):
+    # #105, item 3: o temporário guardava um int por bloco (sempre 1, 2, ..., n), memória Python fora das
+    # M páginas (AGENTS §0, regra 6). Agora é um contador: nenhum atributo é uma coleção.
+    t = TempHeap(bp, "tmp", S)
+    for i in range(200):
+        t.append(rec(i, 900))                                  # 4 por bloco: 50 blocos
+    t.finish()
+    assert t.n_blocks() == 50
+    assert not any(isinstance(v, (list, set, dict, tuple)) for v in vars(t).values())
+    assert [r[0] for r in t.scan()] == list(range(200))
+    t.drop()

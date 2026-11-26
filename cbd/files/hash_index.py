@@ -6,6 +6,9 @@ estrutura do hash primário, só que o bucket guarda o ponteiro em vez do regist
 D-P2-14 a D-P2-17 (função, bucket, N e fator de carga, overflow). Ver docs/decisoes/P2.md.
 Entrada: chave + bloco (INT 4 B) + slot (INT 4 B). O ponteiro é o RID do heap (D-P2-10): o índice hash só existe
 sobre heap (arquitetura §5.3), então guarda os dois números do RID.
+LIMITAÇÃO: bloco e slot vão como INT de 4 B com sinal (o codec não tem inteiro sem sinal); o RID do heap é
+u32 + u16 (D-P2-10), então o índice só aponta para blocos até 2^31 − 1 (o codec recusa acima). Na bancada, o maior
+heap tem ~3 500 blocos.
 Custo esperado: search = blocos da cadeia do bucket do índice (1 sem overflow), mais 1 bloco do heap no fetch;
 insert e delete = a cadeia do bucket, mais o meta.
 LIMITAÇÃO: sem params["buckets"] nem ["expected_records"], o N sai do número de registros do arquivo de dados na
