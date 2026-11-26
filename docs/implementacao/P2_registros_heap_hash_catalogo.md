@@ -248,9 +248,7 @@ bno > N+1    : overflow
 
 ### 6.3 `HashIndex` (índice secundário; geral §5.3: campo UNIQUE de heap)
 
-Mesma estrutura do `HashFile`, só que cada entrada é `encode_key(f, key) + data.encode_ptr(ptr)`, de tamanho fixo, guardada em slotted page com `PageType.INDEX`. `search(key)` devolve `Ptr`s. N vem de `spec.params["buckets"]` ou de `n_records` da tabela (o catálogo passa no `create_index`). `insert`/`delete(key, ptr)` percorrem a cadeia; `delete` procura a entrada **exata** (chave + ptr).
-
-**Reaproveite:** o `HashFile` e o `HashIndex` podem compartilhar uma classe base `_StaticHash`, que cuida de buckets, cadeia e meta, e recebe a função de "o que guardar no slot". É uma abstração justificada: duas implementações reais.
+D-P2-18: o índice é um `HashFile` com `PageType.INDEX` cujos registros são `(chave, bloco, slot)` (chave + 4 B + 4 B). É a mesma estrutura do hash primário, só que o bucket guarda o ponteiro em vez do registro (SKS §14.5, p. 659), e herda a cadeia, o UNIQUE, o N e o fator de carga (D-P2-14 a D-P2-17). `search(key)` devolve os `RID`s; `insert(key, ptr)`; `delete(key, ptr)` procura a entrada **exata** (chave + ptr). N vem de `spec.params["buckets"]`, ou de `expected_records`, ou do número de registros do arquivo de dados na criação. A entrada em bytes `encode_key + encode_ptr` (10 B) com uma classe base `_StaticHash` foi preterida: 2 B menor por entrada, mas exigia refatorar o `HashFile`.
 
 ---
 

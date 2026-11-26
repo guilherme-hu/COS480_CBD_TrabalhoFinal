@@ -34,14 +34,13 @@ from cbd.records.slotted_page import SlottedPage
 
 _MAGIC = b"HSH1"
 _META = struct.Struct("<4sIqIIIIHB")
-_DATA = PageType.DATA
 
 
 class HashFile:
     """Arquivo organizado por hash estático na chave spec.key (UNIQUE ou NOT UNIQUE)."""
 
-    def __init__(self, bp, name, schema, spec, fid):
-        self.bp, self.name, self.schema, self.spec, self.fid = bp, name, schema, spec, fid
+    def __init__(self, bp, name, schema, spec, fid, ptype=PageType.DATA):
+        self.bp, self.name, self.schema, self.spec, self.fid, self.ptype = bp, name, schema, spec, fid, ptype
         self.codec = RecordCodec(schema)
         self.ptr_size = _PTR.size
         self._max = SlottedPage.max_record(bp.block_size)
@@ -56,21 +55,27 @@ class HashFile:
 
     # ------------------------------------------------------------ abrir e fechar
     @classmethod
-    def create(cls, bp, name, schema, spec):
-        """Cria o arquivo: meta no bloco 1 e, se params["buckets"] veio, os N primários. Custo: nenhuma leitura."""
-        h = cls(bp, name, schema, spec, bp.fm.create(name))
+    def create(cls, bp, name, schema, spec, ptype=PageType.DATA):
+        """Cria o arquivo: meta no bloco 1 e, se params["buckets"] veio, os N primários. Custo: nenhuma leitura.
+
+        ptype: área do buffer (DATA para a organização primária; INDEX quando é o índice hash, D-P2-18).
+        ValueError (antes de criar o arquivo) se params["buckets"] < 1.
+        """
+        if int(spec.params.get("buckets", 1)) < 1:
+            raise ValueError(f"{name}: o número de buckets precisa ser ≥ 1, veio {spec.params['buckets']}")
+        h = cls(bp, name, schema, spec, bp.fm.create(name), ptype)
         h._new_meta()
         return h
 
     @classmethod
-    def open(cls, bp, name, schema, spec):
+    def open(cls, bp, name, schema, spec, ptype=PageType.DATA):
         """Abre um hash existente. Custo: 1 leitura (a meta). N e seed vêm da meta, não do spec.
 
         ValueError se não for um hash, ou se o spec tiver outra chave ou outro UNIQUE que o da criação.
         """
-        h = cls(bp, name, schema, spec, bp.fm.open(name))
+        h = cls(bp, name, schema, spec, bp.fm.open(name), ptype)
         try:
-            with bp.page(h.fid, 1, _DATA) as p:
+            with bp.page(h.fid, 1, h.ptype) as p:
                 meta = bytes(p.data[:_META.size])
         except ValueError:                               # arquivo sem nenhum bloco
             meta = b""
@@ -92,7 +97,7 @@ class HashFile:
         self.fid = None
 
     def _new_meta(self):
-        page = self.bp.new_page(self.fid, _DATA)
+        page = self.bp.new_page(self.fid, self.ptype)
         bno = page.bno
         self.bp.unpin(page, dirty=True)
         if bno != 1:
@@ -104,7 +109,7 @@ class HashFile:
     def _write_meta(self):
         body = _META.pack(_MAGIC, self.n_buckets, self.seed, self._n, self._overflow, self._bfr, self._max_chain,
                           self._k, self.spec.unique)
-        page = self.bp.pin(self.fid, 1, _DATA)
+        page = self.bp.pin(self.fid, 1, self.ptype)
         changed = page.data[:len(body)] != body
         page.data[:len(body)] = body
         self.bp.unpin(page, dirty=changed)              # meta igual não vira gravação
@@ -115,7 +120,7 @@ class HashFile:
         if n_buckets < 1:
             raise ValueError(f"{self.name}: o número de buckets precisa ser ≥ 1, veio {n_buckets}")
         for i in range(n_buckets):
-            page = self.bp.new_page(self.fid, _DATA)
+            page = self.bp.new_page(self.fid, self.ptype)
             bno = page.bno
             SlottedPage(page.data).init()
             self.bp.unpin(page, dirty=True)
@@ -165,7 +170,7 @@ class HashFile:
             return
         bno = 2 + self.bucket_of(key)
         while bno:
-            page = self.bp.pin(self.fid, bno, _DATA)
+            page = self.bp.pin(self.fid, bno, self.ptype)
             try:
                 sp = SlottedPage(page.data)
                 for rid, rec in self._live(bno, sp):
@@ -186,7 +191,7 @@ class HashFile:
             raise IndexError(f"{self.name}: bucket {i} fora de [0, {self.n_buckets})")
         bno = 2 + i
         while bno:
-            page = self.bp.pin(self.fid, bno, _DATA)
+            page = self.bp.pin(self.fid, bno, self.ptype)
             try:
                 sp = SlottedPage(page.data)
                 yield from self._live(bno, sp)
@@ -197,7 +202,7 @@ class HashFile:
     def scan(self):
         """Todos os registros em ordem física (primários, depois o overflow). Custo: b leituras, 1 seek."""
         for bno in range(2, self._last() + 1):
-            page = self.bp.pin(self.fid, bno, _DATA, seq=True)
+            page = self.bp.pin(self.fid, bno, self.ptype, seq=True)
             try:
                 yield from self._live(bno, SlottedPage(page.data))
             finally:
@@ -222,7 +227,7 @@ class HashFile:
     def fetch(self, ptr):
         """Registro do RID. KeyError se o slot não existir ou estiver apagado. Custo: 1 bloco."""
         bno, slot = self._locate(ptr)
-        with self.bp.page(self.fid, bno, _DATA) as page:
+        with self.bp.page(self.fid, bno, self.ptype) as page:
             view = _view(SlottedPage(page.data), slot)
             if view is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
@@ -258,7 +263,7 @@ class HashFile:
                 found.close()                            # solta a página se a busca parou no meio
         bno, length = 2 + self.bucket_of(key), 0
         while True:
-            page = self.bp.pin(self.fid, bno, _DATA)
+            page = self.bp.pin(self.fid, bno, self.ptype)
             try:
                 sp = SlottedPage(page.data)
                 slot = sp.insert(data)
@@ -266,7 +271,7 @@ class HashFile:
                     page.mark_dirty()
                     return self._inserted(bno, slot)
                 if not sp.next:
-                    new, _ = _fresh_page(self.bp, self.fid, _DATA, data)
+                    new, _ = _fresh_page(self.bp, self.fid, self.ptype, data)
                     new_bno = new.bno
                     self.bp.unpin(new, dirty=True)
                     sp.next = new_bno                    # liga o bloco novo ao fim da cadeia
@@ -289,7 +294,7 @@ class HashFile:
         Custo: 1 bloco, mais o meta (bloco 1), em geral no buffer.
         """
         bno, slot = self._locate(ptr)
-        with self.bp.page(self.fid, bno, _DATA) as page:
+        with self.bp.page(self.fid, bno, self.ptype) as page:
             sp = SlottedPage(page.data)
             if _view(sp, slot) is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
@@ -306,8 +311,9 @@ class HashFile:
         (_n_target, só do reorganize, vence os dois). Quem ordena é o próprio bulk_load, porque o N só existe
         depois de ver os registros (o load_table só ordena para a B+).
         Custo (fora da medição): os blocos do arquivo, gravados quando saem do buffer. LIMITAÇÃO: com N maior que a
-        área DATA, os primários vazios saem do buffer antes de receber registros: cada um é gravado 2 vezes e
-        relido 1 vez (aluno.dre: ~2 084 leituras e ~4 168 gravações na carga).
+        área do arquivo no buffer (DATA, 128 páginas; INDEX, 64, no índice hash), os primários vazios saem do buffer
+        antes de receber registros: cada um é gravado 2 vezes e relido 1 vez (aluno.dre: ~2 084 leituras e ~4 168
+        gravações na carga; o índice de aluno.dre: 247 leituras).
         """
         if self._n or self._overflow:
             raise ValueError(f"{self.name}: bulk_load exige um arquivo novo, sem registros nem cadeias "
@@ -330,10 +336,10 @@ class HashFile:
                         self.bp.unpin(page, dirty=True)
                         page = None
                     cur, length = bk[j], 0
-                    page = self.bp.pin(self.fid, 2 + cur, _DATA)
+                    page = self.bp.pin(self.fid, 2 + cur, self.ptype)
                     sp = SlottedPage(page.data)
                 if sp.insert(datas[j]) is None:
-                    new, new_sp = _fresh_page(self.bp, self.fid, _DATA, datas[j])
+                    new, new_sp = _fresh_page(self.bp, self.fid, self.ptype, datas[j])
                     sp.next = new.bno
                     self.bp.unpin(page, dirty=True)
                     page, sp = new, new_sp
