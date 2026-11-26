@@ -110,7 +110,7 @@ Consequências práticas:
 | Página × bloco | **1 página = 1 bloco.** O tamanho do bloco é configurável: 2048, 4096 (padrão) ou 8192. |
 | Endereço de bloco | `(fid, bno)`: `fid` é um `int` dado pelo `FileManager`; `bno` vai de **1** em diante. O bloco físico 0 de cada arquivo é o cabeçalho, e só o P1 mexe nele. |
 | Registro em memória | `tuple` Python na ordem do esquema (§4). Nulo = `None`. Campo multivalorado = `tuple[str, ...]`. Data = `datetime.date`. |
-| Ponteiro para registro | **Opaco** (`Ptr`). Heap e Hash usam `RID(block, slot)`. Arquivo B+ usa `(chave, seq)`. Quem guarda ponteiro (índices) usa `DataFile.encode_ptr/decode_ptr`, com tamanho fixo `ptr_size`. |
+| Ponteiro para registro | **Opaco** (`Ptr`). Heap e Hash usam `RID(block, slot)`. Arquivo B+ usa `(chave, seq)`. Quem guarda ponteiro (índices) usa `DataFile.encode_ptr/decode_ptr`, com tamanho fixo `ptr_size`; a exceção é o `HashIndex`, que só existe sobre heap e guarda o `RID` em dois campos INT (D-P2-18). |
 | Hashing | **Proibido usar `hash()` do Python** em qualquer coisa que vá para o disco ou que defina partição: o hash de `str` muda a cada execução. Use `cbd.records.hashing.hash_value(v, seed)` (§5.1). |
 | Blocagem | **Não estendida (unspanned).** Um registro maior que o espaço útil do bloco gera `RecordTooLarge`, levantado por quem insere na página (`DataFile.insert`, `bulk_load`), não pelo codec (D-P2-06). |
 | Saída dos operadores | Iteradores Python (`yield`). O resultado **não** é gravado em disco, nem contado, como nos livros-texto. |
@@ -541,13 +541,15 @@ Construtores padronizados. **Todos os `DataFile` e `Index` seguem esta forma**, 
 ```python
 # DataFile:  Cls.create(bp, name, schema, spec) / Cls.open(bp, name, schema, spec)
 HeapFile.create(bp, name, schema, spec, ptype=PageType.DATA)      # cbd/files/heap.py      (P2)
-HashFile.create(bp, name, schema, spec)                           # cbd/files/hash_file.py (P2)
+HashFile.create(bp, name, schema, spec, ptype=PageType.DATA)      # cbd/files/hash_file.py (P2); INDEX quando é o índice hash
 BTreeFile.create(bp, name, schema, spec)                          # cbd/files/btree_file.py (P3)
 
 # Index:     Cls.create(bp, name, spec, key_field: Field, data: DataFile) / Cls.open(...mesmos args)
 HashIndex.create(bp, name, spec, key_field, data)                 # cbd/files/hash_index.py  (P2)
 BTreeIndex.create(bp, name, spec, key_field, data)                # cbd/files/btree_index.py (P3)
-#   o índice usa data.ptr_size / data.encode_ptr / data.decode_ptr para guardar ponteiros
+#   o BTreeIndex usa data.ptr_size / data.encode_ptr / data.decode_ptr para guardar ponteiros.
+#   O HashIndex (D-P2-18) é um HashFile com páginas INDEX cujos registros são (chave, bloco INT, slot INT): só existe
+#   sobre heap (§5.3), então guarda os dois números do RID e devolve RID no search
 ```
 
 Extras do `HashFile` (usados por P5 no hash join, §7.3):
@@ -556,7 +558,7 @@ Extras do `HashFile` (usados por P5 no hash join, §7.3):
 class HashFile(DataFile):
     n_buckets: int
     seed: int
-    def bucket_of(self, key: Any) -> int          # INT: (key + seed) % n_buckets; outros tipos: hash_value(key, seed) % n_buckets (D-P2-14)
+    def bucket_of(self, key: Any) -> int          # coluna INT: (key + seed) % n_buckets; outros tipos: hash_value(key, seed) % n_buckets (D-P2-14); o ramo segue o tipo da coluna
     def scan_bucket(self, i: int) -> Iterator[tuple[Ptr, Record]]   # bucket i + cadeia de overflow
 ```
 
@@ -635,11 +637,12 @@ Todo iterador da camada 3 fixa **no máximo uma página por vez** e a desafixa a
 | :--- | :--- |
 | `HeapFile.scan()` | `b_r` |
 | `HashFile.search(k)` | 1 + overflow do bucket |
+| `HashFile.scan()` | todos os blocos de dados, em ordem física (primários, depois o overflow): 1 seek (D-P2-17) |
 | `HashFile.scan_bucket(i)` | blocos do bucket i |
 | `BTreeFile.search(k)` | `height` + folhas extras com a mesma chave |
 | `BTreeFile.range(lo, hi)` | `height` + folhas na faixa |
 | `BTreeIndex.search(k)` (não-unique) | `height` + blocos da lista de ponteiros da chave |
-| `HashIndex.search(k)` | 1 + overflow |
+| `HashIndex.search(k)` | 1 + overflow, na área INDEX; mais 1 bloco do heap no `fetch` (D-P2-18) |
 | `DataFile.fetch(ptr)` | ver §5.4 |
 
 ### 6.3 Chaves de `stats()` (para o indicador 6.1.1 do enunciado)
