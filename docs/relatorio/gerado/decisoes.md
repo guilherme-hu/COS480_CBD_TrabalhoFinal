@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 34 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 36 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
@@ -14,7 +14,7 @@ Gerado de `docs/decisoes/`: 34 cartões, 0 provisórios. A última coluna diz em
 | D-P1-08 | Políticas de substituição de página (`LRU` vs. `MRU`) e escolha para os testes | decidida | Configurações da gerência do buffer pool |
 | D-P1-09 | Emprego de *Toss-Immediate* | decidida | Configurações da gerência do buffer pool |
 | D-P1-10 | Fixação de páginas (`pin_count`), preservação de `dirty` e reserva `reserve_work` | decidida | Configurações da gerência do buffer pool |
-| D-P1-11 | Gravação forçada de páginas (*Forced Output*) | decidida | Configurações da gerência do buffer pool |
+| D-P1-11 | Gravação forçada de páginas (*Forced Output*) | decidida | Estruturas dos arquivos e dos cabeçalhos; Configurações da gerência do buffer pool |
 | D-P1-12 | Leitura antecipada (*Prefetching*) sem vazamento de `pin`, proteção entre cursores/MRU e arquivos monotipados | decidida (revista) | Configurações da gerência do buffer pool |
 | D-P2-01 | Marcação dos campos variáveis no registro | decidida | Descrição da base, dos campos e das chaves |
 | D-P2-02 | Campos comuns, opcionais e null bitmap | decidida | Descrição da base, dos campos e das chaves |
@@ -27,6 +27,8 @@ Gerado de `docs/decisoes/`: 34 cartões, 0 provisórios. A última coluna diz em
 | D-P2-09 | Heap: como achar um bloco com espaço (gerência do espaço livre) | decidida | Estruturas dos arquivos e dos cabeçalhos |
 | D-P2-10 | Tamanho do RID (ponteiro para registro do heap e do hash) | decidida | Estruturas dos arquivos e dos cabeçalhos |
 | D-P2-11 | Heap: quando reorganizar o arquivo inteiro | decidida | Estruturas dos arquivos e dos cabeçalhos |
+| D-P2-12 | Catálogo: formato e onde guardar | decidida | Estruturas dos arquivos e dos cabeçalhos |
+| D-P2-13 | Catálogo: quando gravar e forçar | decidida | Estruturas dos arquivos e dos cabeçalhos |
 | D-P6-01 | Número de buckets comum nos pares hash do bucket-join | decidida | Funções de hash |
 | D-P6-02 | Memória do buffer constante em bytes no experimento de tamanho de bloco | decidida | Tamanhos de bloco; Descrição da base, dos campos e das chaves |
 | D-P6-03 | Seeds por tabela e distribuições dos dados | decidida | Descrição da base, dos campos e das chaves |

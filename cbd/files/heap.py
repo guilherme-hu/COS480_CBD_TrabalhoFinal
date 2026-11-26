@@ -114,6 +114,17 @@ class HeapFile:
         self.bp.close_file(self.fid)
         self.fid = None
 
+    def force(self, blocks=()):
+        """Gravação forçada (D-P2-13; enunciado §2.2.7): bp.force nas páginas sujas entre `blocks`, a meta e o mapa.
+
+        `blocks` são os blocos de dados que quem chama alterou (os dos RIDs que inseriu ou apagou). Página limpa
+        não é gravada. Custo: 1 gravação forçada por página suja; uma página do mapa fora do buffer custa 1 leitura.
+        """
+        for bno in sorted({1, *self._fsm, *blocks}):
+            with self.bp.page(self.fid, bno, self.ptype) as p:
+                if p.dirty:
+                    self.bp.force(p)
+
     def _new_meta(self):
         page = self.bp.new_page(self.fid, self.ptype)
         if page.bno != 1:
@@ -325,7 +336,10 @@ class HeapFile:
         LIMITAÇÃO: não é atômico (uma falha entre apagar e recarregar perde os dados); o FileManager não tem
         rename, e renomear o .dat por fora dele furaria a camada 4. O guia previa <nome>__new + rename (2·b).
         """
-        tmp = TempHeap(self.bp, f"{self.name}__reorg", self.schema)
+        k = 0
+        while self.bp.fm.exists(f"{self.name}__reorg{k}"):          # fm.create recriaria outro arquivo
+            k += 1
+        tmp = TempHeap(self.bp, f"{self.name}__reorg{k}", self.schema)
         try:
             for _, rec in self.scan():
                 tmp.append(rec)
