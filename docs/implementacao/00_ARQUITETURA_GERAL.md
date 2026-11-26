@@ -515,8 +515,8 @@ def decode_key(f: Field, b: bytes | memoryview) -> Any
 # cbd/records/slotted_page.py
 class SlottedPage:
     """Opera sobre page.data (bytearray) in-place. Não faz pin/unpin nem dirty."""
-    HEADER: int                                        # bytes do cabeçalho padrão
-    USER: int = 16                                     # bytes livres no cabeçalho para quem usa (ex.: P3: is_leaf, next, prev)
+    HEADER: int                                        # bytes do cabeçalho (10: n_slots, free_end, holes, next; D-P2-07)
+    next: int                                          # propriedade: próximo bloco (overflow do hash, folha seguinte da B+); 0 = nenhum
     def __init__(self, buf: bytearray): ...
     def init(self) -> None                             # formata página vazia
     def n_slots(self) -> int
@@ -527,7 +527,6 @@ class SlottedPage:
     def remove_at(self, pos: int) -> None              # remove a entrada do diretório (desloca; para folhas B+)
     def free_space(self) -> int
     def compact(self) -> None
-    def user_header(self) -> memoryview                # USER bytes reservados
     @staticmethod
     def max_record(block_size: int) -> int             # maior registro que cabe num bloco vazio
 
@@ -596,7 +595,7 @@ class Catalog:
     def tables(self) -> list[str]
     def drop_table(self, name: str) -> None
     def analyze(self, name: str) -> TableStats        # scan completo; grava no catálogo (forced output)
-    def temp(self, schema: Schema) -> TempFile        # HeapFile em páginas WORK, nome único, fora do catálogo
+    def temp(self, schema: Schema) -> TempFile        # TempHeap (cbd/files/heap.py) em páginas WORK, nome único, fora do catálogo
     def close(self) -> None
 ```
 
@@ -616,8 +615,8 @@ Pela tabela, todo índice B+ secundário é NOT UNIQUE e todo índice secundári
 
 | Organização | `Ptr` | `ptr_size` | Custo de `fetch(ptr)` |
 | :--- | :--- | :--- | :--- |
-| HEAP | `RID(block, slot)` | 8 | 1 bloco |
-| HASH | `RID(block, slot)` (o bloco pode ser de overflow) | 8 | 1 bloco |
+| HEAP | `RID(block, slot)` | 6 (bloco u32 + slot u16, D-P2-10) | 1 bloco |
+| HASH | `RID(block, slot)` (o bloco pode ser de overflow) | 6 | 1 bloco |
 | BTREE | `(chave, seq)`, em que `seq` é um inteiro oculto e crescente por arquivo, que torna a chave única | `key_size + 8` | `height` blocos (desce a árvore) |
 
 O ponteiro lógico do B+ existe porque registros mudam de folha nos splits. Um RID quebraria os índices secundários.
@@ -808,7 +807,6 @@ Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) s
 | P2 | `OrgSpec.params["expected_records"]` (HASH) | base para calcular N quando `buckets` não é dado | n_r da tabela |
 | P2 | `OrgSpec.params["distinct"]` (HASH NOT UNIQUE) | `V(A)` da chave, para limitar N | a bancada passa |
 | P2 | `OrgSpec.params["seed"]` (HASH) | seed da função de hash | 0; igual em duas tabelas para o *bucket-join* do P5 |
-| P2 | `OrgSpec.params["compact_at"]` (HEAP) | fração apagada que dispara reorganize | 0.2 |
 | P2 | `IndexSpec.params["buckets"]` (índice HASH) | nº de buckets | idem |
 | P3 | `OrgSpec.params["fill"]` / `IndexSpec.params["fill"]` | ocupação no bulk load | 0.7 a 1.0 (padrão 0.9) |
 | P3 | `Catalog.load_table(bulk=...)` | bulk load × inserção registro a registro | `True`/`False` |
@@ -859,11 +857,11 @@ Estes esquemas ficam em `bench/schema.py` (P6). Os demais importam de lá nos te
 
 Joins de referência (só o NATURAL mestre-detalhe, §0):
 
-| Combinação de tamanho | Junção (mestre ⋈ detalhe) | Coluna | Blocos com B = 4096 (estimativa de `results/base_stats.csv`) |
+| Combinação de tamanho | Junção (mestre ⋈ detalhe) | Coluna | Blocos de heap com B = 4096 (medidos com o codec: INT de 4 B, cabeçalho de 10 B) |
 | :--- | :--- | :--- | :--- |
-| menor ⋈ menor | curso ⋈ disciplina | `codigo` = `curso` | 2 ⋈ 27 |
-| menor ⋈ maior | curso ⋈ aluno | `codigo` = `curso` | 2 ⋈ 1 962 |
-| maior ⋈ maior | aluno ⋈ inscricao | `dre` | 1 962 ⋈ 4 588 |
+| menor ⋈ menor | curso ⋈ disciplina | `codigo` = `curso` | 2 ⋈ 21 |
+| menor ⋈ maior | curso ⋈ aluno | `codigo` = `curso` | 2 ⋈ 1 664 |
+| maior ⋈ maior | aluno ⋈ inscricao | `dre` | 1 664 ⋈ 3 449 |
 
 "Menor" = cabe em `M − 2 = 62` páginas. As tabelas reais já cobrem as três combinações, então não há subconjuntos. `turma` e `detalhes` ficam na base lógica, mas não entram nos experimentos. Seleções: igualdade em `aluno.dre` e faixa em `aluno.cr`.
 

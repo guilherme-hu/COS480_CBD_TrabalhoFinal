@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 29 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 34 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
@@ -22,6 +22,11 @@ Gerado de `docs/decisoes/`: 29 cartões, 0 provisórios. A última coluna diz em
 | D-P2-04 | Campos estruturados e derivados | decidida | Descrição da base, dos campos e das chaves |
 | D-P2-05 | Chaves de tamanho fixo que preservam a ordem | revista | Descrição da base, dos campos e das chaves |
 | D-P2-06 | Onde se checa o registro maior que o bloco | decidida | Descrição da base, dos campos e das chaves |
+| D-P2-07 | Organização dos registros dentro do bloco | decidida (revista) | Blocagem |
+| D-P2-08 | Registro apagado e compactação dentro do bloco | decidida | Blocagem; Estruturas dos arquivos e dos cabeçalhos |
+| D-P2-09 | Heap: como achar um bloco com espaço (gerência do espaço livre) | decidida | Estruturas dos arquivos e dos cabeçalhos |
+| D-P2-10 | Tamanho do RID (ponteiro para registro do heap e do hash) | decidida | Estruturas dos arquivos e dos cabeçalhos |
+| D-P2-11 | Heap: quando reorganizar o arquivo inteiro | decidida | Estruturas dos arquivos e dos cabeçalhos |
 | D-P6-01 | Número de buckets comum nos pares hash do bucket-join | decidida | Funções de hash |
 | D-P6-02 | Memória do buffer constante em bytes no experimento de tamanho de bloco | decidida | Tamanhos de bloco; Descrição da base, dos campos e das chaves |
 | D-P6-03 | Seeds por tabela e distribuições dos dados | decidida | Descrição da base, dos campos e das chaves |

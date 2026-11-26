@@ -102,27 +102,27 @@ offset  tam  campo
 0       2    n_slots     (u16)
 2       2    free_end    (u16)  início da área de dados (cresce para baixo, a partir de B)
 4       2    holes       (u16)  bytes livres fragmentados (registros apagados)
-6       2    flags       (u16)  livre para o dono do arquivo
-8       4    next        (u32)  próximo bloco (cadeia de overflow); 0 = nenhum
-12      16   USER               reservado para quem usa (P3: is_leaf, prev, next_leaf...)
-28           diretório de slots: n_slots × (u16 offset, u16 len); offset 0xFFFF = apagado
+6       4    next        (u32)  próximo bloco (overflow do hash; folha seguinte da B+); 0 = nenhum
+10           diretório de slots: n_slots × (u16 offset, u16 len); offset 0xFFFF = apagado
 ```
 
-`HEADER = 28`, `USER = 16`. Acessórios: `next` como propriedade de leitura/escrita e `user_header()` devolvendo `memoryview(buf)[12:28]`.
+`HEADER = 10` (D-P2-07 revista em 23/11: saíram o `flags` e os 16 B de `USER`, que não tinham uso; a folha da B+ encadeia pelo `next`). Acessório: `next` como propriedade de leitura/escrita.
 
 | Método | Regra |
 | :--- | :--- |
-| `insert(data)` | reusa um slot apagado se houver; senão cria um slot novo (+4 bytes). Se o espaço contíguo não bastar mas `free_space()` sim, chama `compact()` e tenta de novo. Senão devolve `None` |
-| `insert_at(pos, data)` | sempre cria um slot novo na posição `pos` (desloca o diretório). Para folhas ordenadas do B+ |
+| `insert(data)` | reusa o menor slot apagado se houver (D-P2-08); senão cria um slot novo (+4 bytes). Se o espaço contíguo não bastar mas `free_space()` sim, chama `compact()` e tenta de novo. Senão devolve `None` |
+| `insert_at(pos, data)` | sempre cria um slot novo na posição `pos` (desloca o diretório). Para folhas ordenadas do B+; recusa (`AssertionError`) página com slot apagado, onde `free_space()` não desconta o slot novo |
 | `delete(slot)` | `offset = 0xFFFF`, `holes += len`. O slot continua existindo (RID estável) |
 | `remove_at(pos)` | tira a entrada do diretório (desloca); `holes += len`. Muda os slots seguintes; só para B+ |
-| `free_space()` | bytes de dados que ainda cabem num **novo** slot: `free_end − (HEADER + 4·n_slots) + holes − 4`, mínimo 0 |
+| `free_space()` | maior registro que `insert` aceita agora: `free_end − (HEADER + 4·n_slots) + holes − 4`, sem o `− 4` quando há slot apagado para reaproveitar; mínimo 0 (D-P2-08) |
 | `compact()` | reempacota os registros vivos no fim do bloco, mantendo os números de slot; `holes = 0` |
 | `max_record(B)` (staticmethod) | `B − HEADER − 4` |
 
 Valide tudo: `slot < n_slots`, `offset + len ≤ B`, `free_end ≥ HEADER + 4·n_slots`. Violação levanta `AssertionError` com mensagem. `B ≤ 8192` cabe em u16.
 
 `SlottedPage` **não** faz pin/unpin nem marca dirty. Quem chamou faz `page.mark_dirty()`.
+
+Registro de 0 B é recusado (`AssertionError`), para `free_space() == 0` querer dizer "não cabe nada". `get` devolve uma view da página: vale só enquanto ela estiver fixada, e `insert`/`insert_at`/`compact` podem mover registros (`delete` e `remove_at` não, D-P2-08). `insert` e `insert_at` copiam `data` antes de compactar, então aceitam uma view da própria página.
 
 ---
 
@@ -160,32 +160,33 @@ def hash_value(v, seed: int = 0) -> int:
 | Decisão | Escolha |
 | :--- | :--- |
 | Registros apagados | slot marcado como apagado na slotted page; RID estável |
-| Gerência de espaço livre | **mapa de espaço livre (FSM)** com 1 byte por bloco de dados (`livre·255 // B`), em páginas `DATA` do próprio arquivo, lidas pelo buffer (contam I/O) |
+| Gerência de espaço livre | **mapa de espaço livre (FSM)** com 1 byte por bloco de dados (`livre·256 // B`, arredondado para baixo; 256 faixas de 16 B em 4 KB, menos que o menor registro), em páginas `DATA` do próprio arquivo gravadas depois dos dados, lidas pelo buffer (contam I/O). D-P2-09 |
 | Política de inserção | 1) tenta o **último bloco** (`tail`); 2) se não couber **e** houver apagados (`n_deleted > 0`), consulta o FSM; 3) senão `new_page` |
-| Compactação do espaço livre | **dentro do bloco**: automática no `insert` (§3). **Do arquivo**: `reorganize()` quando `n_deleted / (n_records + n_deleted) > compact_at` (padrão 0.2), disparada por `Table.delete` |
+| Compactação do espaço livre | **dentro do bloco**: automática no `insert` (§3, D-P2-08). **Do arquivo**: só por comando, `reorganize()`, com `stats()["deleted"]` (slots apagados) para quem chama decidir (D-P2-11; sem `compact_at` e sem disparo no `Table.delete`) |
 
 ### 5.2 Layout do arquivo
 
 ```
-bno 1         : meta (n_records, n_deleted, tail, fsm_bnos[...]) — PageType.DATA
-bno 2..       : blocos de dados (slotted page) intercalados com páginas FSM conforme alocadas
+bno 1         : meta ('HEP1', n_records, n_deleted, tail, faixas de blocos de dados, blocos do mapa) — PageType.DATA
+bno 2         : 1ª página do mapa (criada com a meta, para os dados começarem contíguos)
+bno 3..       : blocos de dados (slotted page); novas páginas do mapa só quando o arquivo passa de B blocos
 ```
 
-Guarde em meta a **lista de bnos de dados** como faixas `[(ini, fim), ...]`. Assim o `scan` não lê páginas FSM. Como o heap só aloca com `new_page`, quase tudo é uma faixa só.
+O mapa tem 1 byte por bloco, indexado pelo número do bloco: a página k cobre os blocos k·B .. k·B + B − 1 (D-P2-09). A meta guarda as **faixas** de blocos de dados `[(ini, fim), ...]`, e o `scan` percorre só elas (não lê meta nem mapa). `n_deleted` = slots apagados que ainda existem. A meta é regravada a cada mudança (fica no buffer; só suja se os bytes mudam).
 
 ### 5.3 Operações
 
 | Método | Implementação | Custo |
 | :--- | :--- | :--- |
 | `create(bp, name, schema, spec, ptype=DATA)` | `fm.create(name)`; meta | — |
-| `insert(rec)` | `codec.encode` → `RecordTooLarge` se `len > max_record(B)` (D-P2-06) → §5.1 → `SlottedPage.insert` → `mark_dirty`; atualiza FSM só quando a categoria muda | ~1 bloco (tail no buffer) |
-| `delete(rid)` | `SlottedPage.delete`, FSM, `n_deleted += 1` | 1 bloco |
+| `insert(rec)` | `codec.encode` → `RecordTooLarge` se `len > max_record(B)` (D-P2-06) → §5.1 → `SlottedPage.insert` → `mark_dirty`; atualiza o mapa quando a cauda muda ou um bloco antigo recebe o registro; regrava a meta | 1 bloco de dados; 2 pins na cauda (cauda e meta, em geral no buffer) |
+| `delete(rid)` | `SlottedPage.delete`, mapa, `n_deleted += 1`, meta | 1 bloco de dados; 3 pins (bloco, mapa e meta) |
 | `fetch(rid)` | pin, `get(slot)`, decode, unpin. Slot apagado → `KeyError` | 1 bloco |
 | `scan()` | percorre as faixas de dados em ordem, `pin(seq=True)`, devolve `(RID, rec)` dos slots vivos, `unpin(toss=True)` | `b_r` |
 | `search` / `range` | `NotApplicable` | — |
 | `bulk_load(recs)` | append direto, sem consultar o FSM; grava o FSM no fim | `b_r` gravações |
-| `reorganize()` | cria `<name>__new`, `bulk_load` com os registros vivos, apaga o antigo, renomeia (`os.replace` + atualizar o fid) | `2·b_r` |
-| `encode_ptr`/`decode_ptr` | `struct.pack('<II', block, slot)`; `ptr_size = 8` | — |
+| `reorganize()` | copia os vivos para um `TempHeap`, recria o arquivo com o mesmo nome e recarrega com `bulk_load` (o `FileManager` não tem rename, e renomear o `.dat` por fora furaria a camada 4). Não é atômico. Quando disparar: D-P2-11, em aberto | `b_r + 3·b'` |
+| `encode_ptr`/`decode_ptr` | `struct.pack('<IH', block, slot)` (bloco u32, slot u16); `ptr_size = 6`. D-P2-10 | — |
 
 O `scan` é um **gerador** com `try/finally` garantindo o `unpin`. Ele lê os registros da página para uma lista local antes do `yield`? **Não**: decodifique slot a slot enquanto a página está fixada e faça o `yield` de cada registro. O `finally` faz o `unpin` se o consumidor abandonar o gerador.
 
@@ -268,8 +269,7 @@ class Table:
         for col, idx in self.indexes.items():
             k = rec[self.schema.idx(col)]
             if k is not None: idx.delete(k, ptr)
-        self.data.delete(ptr)
-        if self._should_reorganize(): self.reorganize()
+        self.data.delete(ptr)              # D-P2-11: nada de reorganizar aqui
     def reorganize(self):
         self.data.reorganize()
         for col in list(self.indexes): self.catalog._rebuild_index(self.name, col)
