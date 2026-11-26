@@ -15,7 +15,8 @@ Layout do arquivo:
     bno > N+1    blocos de overflow, ligados pelo next da slotted page (0 = fim da cadeia)
 
 Invariantes: todo bloco de 2 até o último alocado é de dados (nenhum é devolvido: D-P2-17, R1); no máximo 1 página
-fixada por iterador (2 só no instante de ligar um bloco novo à cadeia). Quem para um iterador no meio o fecha
+fixada por iterador; o insert fixa 2 (o bloco da cadeia e a meta) e o bulk_load fixa 2 no instante de ligar um
+bloco novo à cadeia. Quem para um iterador no meio o fecha
 (close), senão a página fica fixada. UNIQUE trata NULL como valor: dois NULL na chave são duplicata (nenhuma chave
 de hash da bancada é nula).
 Custo esperado (cache frio): search = blocos da cadeia do bucket (1 sem overflow; UNIQUE para no 1º achado);
@@ -26,7 +27,7 @@ import math
 import struct
 
 from cbd.contracts import DuplicateKey, FType, NotApplicable, PageType, RID
-from cbd.files.heap import TempHeap, _PTR, _encode, _fresh_page
+from cbd.files.heap import HeapFile, _PTR, _encode, _fresh_page, _rebuild, _view
 from cbd.records.codec import RecordCodec
 from cbd.records.hashing import hash_value
 from cbd.records.slotted_page import SlottedPage
@@ -167,14 +168,11 @@ class HashFile:
             page = self.bp.pin(self.fid, bno, _DATA)
             try:
                 sp = SlottedPage(page.data)
-                for slot in range(sp.n_slots()):
-                    view = sp.get(slot)
-                    if view is not None:
-                        rec = self.codec.decode(view)
-                        if rec[self._k] == key:
-                            yield RID(bno, slot), rec
-                            if self.spec.unique:
-                                return
+                for rid, rec in self._live(bno, sp):
+                    if rec[self._k] == key:
+                        yield rid, rec
+                        if self.spec.unique:
+                            return
                 bno = sp.next
             finally:
                 self.bp.unpin(page)
@@ -184,7 +182,7 @@ class HashFile:
 
         Sem seq=True: o bloco seguinte ao primário 2 + i é o primário de outro bucket, e o prefetch o leria.
         """
-        if not 0 <= i < self.n_buckets:
+        if type(i) is not int or not 0 <= i < self.n_buckets:  # float daria RID com bloco float
             raise IndexError(f"{self.name}: bucket {i} fora de [0, {self.n_buckets})")
         bno = 2 + i
         while bno:
@@ -225,8 +223,7 @@ class HashFile:
         """Registro do RID. KeyError se o slot não existir ou estiver apagado. Custo: 1 bloco."""
         bno, slot = self._locate(ptr)
         with self.bp.page(self.fid, bno, _DATA) as page:
-            sp = SlottedPage(page.data)
-            view = sp.get(slot) if 0 <= slot < sp.n_slots() else None
+            view = _view(SlottedPage(page.data), slot)
             if view is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
             return self.codec.decode(view)
@@ -248,7 +245,9 @@ class HashFile:
             raise ValueError(f"{self.name}: sem buckets: passe params['buckets'] ou ['expected_records'], "
                              "ou carregue com bulk_load")
         # LIMITAÇÃO: sem buckets, o 1º insert estima o bfr só com o próprio registro (o guia pede a média dos
-        # 100 primeiros, que só o bulk_load tem). Para carga registro a registro, passe params["buckets"].
+        # 100 primeiros, que só o bulk_load tem). O erro pode ser grande: com expected_records = 1 000, um 1º
+        # registro de 2 006 B e os outros de 16 B dão N = 625 (o bulk_load dá 13). Para carga registro a
+        # registro, passe params["buckets"] (a bancada carrega o hash com bulk_load).
         self._ensure([len(data)], self.spec.params.get("expected_records"))
         if self.spec.unique:
             found = self.search(key)
@@ -292,25 +291,24 @@ class HashFile:
         bno, slot = self._locate(ptr)
         with self.bp.page(self.fid, bno, _DATA) as page:
             sp = SlottedPage(page.data)
-            if not 0 <= slot < sp.n_slots() or sp.get(slot) is None:
+            if _view(sp, slot) is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
             sp.delete(slot)
             page.mark_dirty()
         self._n -= 1
         self._write_meta()
 
-    def bulk_load(self, recs):
+    def bulk_load(self, recs, _n_target=None):
         """Carga num hash vazio, ordenada por bucket (D-P2-17, C3): a cadeia de cada bucket fica contígua.
 
-        N sai de params["expected_records"] ou, sem ele, do número de registros carregados. Quem ordena é o próprio
-        bulk_load, porque o N só existe depois de ver os registros (o load_table só ordena para a B+).
+        N (D-P2-16) = params["buckets"], se veio no create; senão ⌈n / (bfr_est · carga)⌉, limitado a
+        params["distinct"], com n = params["expected_records"] ou, sem ele, o número de registros carregados
+        (_n_target, só do reorganize, vence os dois). Quem ordena é o próprio bulk_load, porque o N só existe
+        depois de ver os registros (o load_table só ordena para a B+).
         Custo (fora da medição): os blocos do arquivo, gravados quando saem do buffer. LIMITAÇÃO: com N maior que a
         área DATA, os primários vazios saem do buffer antes de receber registros: cada um é gravado 2 vezes e
         relido 1 vez (aluno.dre: ~2 084 leituras e ~4 168 gravações na carga).
         """
-        self._bulk(recs, None)
-
-    def _bulk(self, recs, n_target):
         if self._n or self._overflow:
             raise ValueError(f"{self.name}: bulk_load exige um arquivo novo, sem registros nem cadeias "
                              "(para refazer um arquivo usado, reorganize)")
@@ -321,7 +319,7 @@ class HashFile:
         keys = [r[self._k] for r in recs]
         if self.spec.unique and len(set(keys)) != len(keys):
             raise DuplicateKey(f"{self.name}: chave repetida na carga de um hash UNIQUE")
-        self._ensure([len(d) for d in datas], n_target or self.spec.params.get("expected_records") or len(recs))
+        self._ensure([len(d) for d in datas], _n_target or self.spec.params.get("expected_records") or len(recs))
         bk = [self.bucket_of(k) for k in keys]
         page = sp = None
         cur = length = -1
@@ -353,43 +351,19 @@ class HashFile:
 
         Só por comando (D-P2-17, L1). Custo: lê o arquivo (b), grava e relê o temporário (até 2·b', só o que sai
         da área WORK) e grava o arquivo novo (b', mais o efeito da carga com N grande, ver bulk_load).
+        Mesmo caminho do heap (_rebuild: numa falha depois de apagar o original, o temporário fica no disco).
         LIMITAÇÃO: não é atômico, como o do heap (o FileManager não tem rename), e a recarga põe a tabela em memória.
         """
-        k = 0
-        while self.bp.fm.exists(f"{self.name}__reorg{k}"):
-            k += 1
-        tmp = TempHeap(self.bp, f"{self.name}__reorg{k}", self.schema)
-        try:
-            for _, rec in self.scan():
-                tmp.append(rec)
-            tmp.finish()
-            n, bfr = self._n, self._bfr
-            self.bp.drop_file(self.fid)
-            self.bp.fm.delete(self.fid)
-            self.fid = self.bp.fm.create(self.name)
-            self._reset()
-            self._new_meta()
-            rows = tmp.scan()
-            try:
-                self._bulk(rows, n)
-            finally:
-                rows.close()
-            if not self.n_buckets and bfr:                # arquivo vazio: N pela conta, com o bfr de antes
-                self._bfr = bfr
-                self._ensure([], max(n, 1))
-                self._write_meta()
-        finally:
-            tmp.drop()
+        n, bfr = self._n, self._bfr
+        _rebuild(self, lambda rows: self.bulk_load(rows, n))
+        if not self.n_buckets and bfr:                    # arquivo vazio: N pela conta, com o bfr de antes
+            self._bfr = bfr
+            self._ensure([], max(n, 1))
+            self._write_meta()
 
     # ------------------------------------------------------------ ponteiros e estatísticas
-    def encode_ptr(self, ptr):
-        try:
-            return _PTR.pack(*ptr)
-        except struct.error as e:
-            raise ValueError(f"RID fora da faixa (bloco u32, slot u16): {ptr}") from e
-
-    def decode_ptr(self, b):
-        return RID(*_PTR.unpack(b))
+    encode_ptr = HeapFile.encode_ptr                      # RID de 6 B (D-P2-10), o mesmo do heap
+    decode_ptr = HeapFile.decode_ptr
 
     def stats(self):
         n_b = self.n_buckets

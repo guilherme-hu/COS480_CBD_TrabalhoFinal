@@ -60,6 +60,54 @@ def _fresh_page(bp, fid, ptype, data):
     return page, sp
 
 
+def _view(sp, slot):
+    """Bytes do slot, ou None se o slot não existe ou está apagado."""
+    return sp.get(slot) if 0 <= slot < sp.n_slots() else None
+
+
+def _rebuild(df, reload):
+    """Miolo do reorganize do heap e do hash: copia os vivos de df para um temporário, recria o arquivo vazio
+    com o mesmo nome e chama reload(registros do temporário). Os RIDs mudam.
+
+    Falha na cópia (ou página de df fixada, que o drop_file recusa antes de descartar nada): o original fica
+    inteiro e o temporário é apagado. Falha depois de apagar o original: o temporário é a única cópia, então fica
+    no disco (gravado) e a exceção ganha uma nota com o nome dele; df fica apontando para um arquivo parcial e os
+    índices da tabela não são refeitos, até alguém restaurar a partir do temporário (um 2º reorganize antes
+    disso copiaria o arquivo parcial para um __reorg1 e deixaria o __reorg0 completo de lado).
+    LIMITAÇÃO: não é atômico; o FileManager não tem rename, e renomear o .dat por fora dele furaria a camada 4.
+    """
+    k = 0
+    while df.bp.fm.exists(f"{df.name}__reorg{k}"):          # fm.create recriaria outro arquivo
+        k += 1
+    tmp = TempHeap(df.bp, f"{df.name}__reorg{k}", df.schema)
+    try:
+        for _, rec in df.scan():
+            tmp.append(rec)
+        tmp.finish()
+        df.bp.drop_file(df.fid)                          # ou falha sem mudar nada, ou o original deixa de existir
+    except BaseException:
+        tmp.drop()
+        raise
+    try:
+        df.bp.fm.delete(df.fid)
+        df.fid = df.bp.fm.create(df.name)
+        df._reset()
+        df._new_meta()
+        rows = tmp.scan()
+        try:
+            reload(rows)
+        finally:
+            rows.close()                                 # solta a página WORK se a recarga falhar
+    except BaseException as e:
+        e.add_note(f"{df.name}: o reorganize falhou depois de apagar o original; os registros estão em {tmp.name}")
+        try:
+            df.bp.close_file(tmp.fid)                    # grava a cópia: é a única que sobrou
+        except Exception as e2:
+            e.add_note(f"e gravar {tmp.name} também falhou: {e2!r}")
+        raise
+    tmp.drop()
+
+
 class HeapFile:
     """Arquivo heap: registros em qualquer bloco com espaço, achado pelo mapa depois de remoções."""
 
@@ -256,7 +304,7 @@ class HeapFile:
         bno, slot = self._locate(ptr)
         with self.bp.page(self.fid, bno, self.ptype) as page:
             sp = SlottedPage(page.data)
-            if not 0 <= slot < sp.n_slots() or sp.get(slot) is None:
+            if _view(sp, slot) is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
             sp.delete(slot)
             free = sp.free_space()
@@ -271,8 +319,7 @@ class HeapFile:
         """Registro do RID. KeyError se o slot não existir ou estiver apagado. Custo: 1 bloco."""
         bno, slot = self._locate(ptr)
         with self.bp.page(self.fid, bno, self.ptype) as page:
-            sp = SlottedPage(page.data)
-            view = sp.get(slot) if 0 <= slot < sp.n_slots() else None
+            view = _view(SlottedPage(page.data), slot)
             if view is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
             return self.codec.decode(view)
@@ -331,31 +378,11 @@ class HeapFile:
     def reorganize(self):
         """Reescreve o heap só com os registros vivos (os RIDs mudam). Custo: b + 3·b' blocos.
 
-        Copia os vivos para um temporário, recria o arquivo com o mesmo nome e recarrega com bulk_load.
+        Copia os vivos para um temporário, recria o arquivo com o mesmo nome e recarrega com bulk_load (_rebuild:
+        o que acontece numa falha e a LIMITAÇÃO de não ser atômico). O guia previa <nome>__new + rename (2·b).
         D-P2-11: só por comando; quem chama decide olhando stats()['deleted'] (revisitar se o estresse precisar).
-        LIMITAÇÃO: não é atômico (uma falha entre apagar e recarregar perde os dados); o FileManager não tem
-        rename, e renomear o .dat por fora dele furaria a camada 4. O guia previa <nome>__new + rename (2·b).
         """
-        k = 0
-        while self.bp.fm.exists(f"{self.name}__reorg{k}"):          # fm.create recriaria outro arquivo
-            k += 1
-        tmp = TempHeap(self.bp, f"{self.name}__reorg{k}", self.schema)
-        try:
-            for _, rec in self.scan():
-                tmp.append(rec)
-            tmp.finish()
-            self.bp.drop_file(self.fid)
-            self.bp.fm.delete(self.fid)
-            self.fid = self.bp.fm.create(self.name)
-            self._reset()
-            self._new_meta()
-            rows = tmp.scan()
-            try:
-                self.bulk_load(rows)
-            finally:
-                rows.close()                             # solta a página WORK se o bulk_load falhar
-        finally:
-            tmp.drop()
+        _rebuild(self, self.bulk_load)
 
     def encode_ptr(self, ptr):
         try:

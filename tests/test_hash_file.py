@@ -40,6 +40,24 @@ def keys_of(rows):
     return sorted(r[0] for _, r in rows)
 
 
+def read_temp_after_crash(root, name, schema):
+    # "Queda": outro FileManager e outro BufferPool leem só o que está no disco (pelo buffer, nunca fm.read).
+    from cbd.contracts import BufferConfig, StorageConfig
+    from cbd.records.codec import RecordCodec
+    from cbd.storage.buffer_pool import BufferPool
+    from cbd.storage.file_manager import FileManager
+    fm = FileManager(StorageConfig(root_dir=str(root)))
+    pool = BufferPool(fm, BufferConfig())
+    fid, codec, out = fm.open(name), RecordCodec(schema), []
+    for bno in range(1, fm.n_blocks(fid) + 1):
+        with pool.page(fid, bno, PageType.WORK) as p:
+            sp = SlottedPage(p.data)
+            out += [codec.decode(sp.get(s)) for s in range(sp.n_slots())]
+    pool.close_file(fid)
+    fm.close_all()
+    return sorted(out)
+
+
 def chain_bnos(h, i):
     # Blocos do bucket i na ordem da cadeia, tirados dos Ptrs do scan_bucket (sem repetir).
     out = []
@@ -611,3 +629,92 @@ def test_random_ops_unique_with_cold_cache(bp, seed):
         if rng.random() < 0.05:
             cold(bp)
     assert sorted(h.scan()) == sorted(live.values())
+
+
+# ---------- /code-review e /ponytail-review do PR #102 (26/11) ----------
+
+def test_failed_reorganize_keeps_the_temp_copy(bp, tmp_path, monkeypatch):
+    # Defeito: uma falha depois de apagar o arquivo original apagava também o temporário, a única cópia que
+    # restava (o hash ficava com 0 registros). Agora o temporário fica no disco e a exceção diz o nome dele.
+    # 30 registros de 1 006 B, 4 por bloco: o temporário tem ceil(30 / 4) = 8 blocos WORK.
+    h = HashFile.create(bp, "h", S, spec(buckets=3))
+    h.bulk_load([rec(i) for i in range(30)])
+    real = bp.new_page
+
+    def flaky(fid, ptype=PageType.DATA):
+        if ptype is PageType.DATA:                         # a recarga: meta e buckets do arquivo novo
+            raise OSError("disco cheio")
+        return real(fid, ptype)
+    monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError) as err:
+        h.reorganize()
+    monkeypatch.undo()
+    assert bp.pinned() == 0
+    assert any("h__reorg0" in note for note in err.value.__notes__)
+    # Revisor de testes (26/11): n_blocks vem do contador em memória e não prova que o temporário foi gravado;
+    # lido por outro FileManager, como depois de uma queda, ele tem de ter os 30 registros.
+    assert read_temp_after_crash(tmp_path, "h__reorg0", S) == [rec(i) for i in range(30)]
+
+
+def test_failure_during_the_reorganize_copy_cleans_up(bp, monkeypatch):
+    # Se a falha vem antes de apagar o original (na cópia para o temporário), o original fica inteiro e o
+    # temporário some.
+    h = HashFile.create(bp, "h", S, spec(buckets=3))
+    h.bulk_load([rec(i) for i in range(30)])
+    real, calls = bp.new_page, []
+
+    def flaky(fid, ptype=PageType.DATA):
+        calls.append(1)
+        if ptype is PageType.WORK and len(calls) > 3:
+            raise OSError("disco cheio")
+        return real(fid, ptype)
+    monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError):
+        h.reorganize()
+    monkeypatch.undo()
+    assert bp.pinned() == 0 and not bp.fm.exists("h__reorg0")
+    assert keys_of(h.scan()) == list(range(30))
+
+
+def test_scan_bucket_rejects_a_float_index(bp):
+    # Defeito: scan_bucket(1.0) era aceito e devolvia RID(block=3.0, ...), que fetch e encode_ptr recusam.
+    h = HashFile.create(bp, "h", S, spec(buckets=4))
+    h.bulk_load([rec(i, 10) for i in range(8)])
+    with pytest.raises(IndexError):
+        list(h.scan_bucket(1.0))
+
+
+def test_failure_to_save_the_temp_keeps_the_original_error(bp, monkeypatch):
+    # Revisor de testes (26/11): se gravar o temporário também falhar, a exceção que sai é a da recarga, com as
+    # duas notas (onde estão os registros e que a gravação falhou).
+    h = HashFile.create(bp, "h", S, spec(buckets=3))
+    h.bulk_load([rec(i) for i in range(30)])
+    real_new = bp.new_page
+
+    def flaky(fid, ptype=PageType.DATA):
+        if ptype is PageType.DATA:
+            raise OSError("disco cheio")
+        return real_new(fid, ptype)
+
+    def bad_close(fid):
+        raise OSError("de novo")
+    monkeypatch.setattr(bp, "new_page", flaky)
+    monkeypatch.setattr(bp, "close_file", bad_close)
+    with pytest.raises(OSError, match="disco cheio") as err:
+        h.reorganize()
+    monkeypatch.undo()
+    assert any("h__reorg0" in n for n in err.value.__notes__)
+    assert any("também falhou" in n for n in err.value.__notes__)
+
+
+def test_fetch_and_delete_at_the_slot_boundaries(bp):
+    # Revisor de testes (26/11): os RIDs ruins dos outros testes ficam longe das bordas do _view. Com n_slots = 1,
+    # os slots -1 e 1 são os vizinhos da faixa válida e precisam dar KeyError (contrato), não AssertionError.
+    h = HashFile.create(bp, "h", S, spec(buckets=2))
+    p = h.insert(rec(1, 10))
+    for bad in (RID(p.block, -1), RID(p.block, 1)):
+        with pytest.raises(KeyError):
+            h.fetch(bad)
+        with pytest.raises(KeyError):
+            h.delete(bad)
+    assert h.fetch(p) == rec(1, 10)
