@@ -176,8 +176,19 @@ class BufferPool:
                                                              # use em vez de fm.free (ex.: merge da B+), senão fica frame velho no buffer
 
     @contextmanager
-    def page(self, fid: int, bno: int, ptype: PageType, seq: bool = False) -> Iterator[Page]
-        # pin no __enter__, unpin no __exit__ (mesmo com exceção). Use SEMPRE que der.
+    def page(self, fid: int, bno: int, ptype: PageType, seq: bool = False, toss: bool = False) -> Iterator[Page]
+        # pin no __enter__, unpin(toss=toss) no __exit__ (mesmo com exceção). Use SEMPRE que der.
+
+    def allow_prefetch(self, fid: int, ptype: PageType = PageType.DATA) -> None   # monotipado; só DATA ou INDEX
+    @contextmanager
+    def seq_scan(self, fid: int, ptype: PageType = PageType.DATA) -> Iterator[SeqScan]
+        # cursor dono das pré-lidas (D-P1-12, revista em 23/11); ao sair, solta as que não usou
+
+class SeqScan:                                   # criado só por bp.seq_scan
+    @contextmanager
+    def page(self, bno: int, toss: bool = False) -> Iterator[Page]
+        # como bp.page; assume o pin de uma pré-lida deste cursor (1 request, 1 hit, 0 leituras);
+        # um pedido fora das pré-lidas solta as restantes; RuntimeError depois do fim do with
 
     def force(self, page: Page) -> None          # forced output: grava já; conta forced_writes
     def flush_file(self, fid: int) -> None       # grava os sujos do arquivo
@@ -201,7 +212,7 @@ Semântica que todos precisam saber:
 - **Contagem.** Cada `pin` é 1 *request*. Se a página está no buffer é *hit*; se não está é *miss*, que gera 1 leitura física. `new_page` não conta request nem leitura.
 - **Dirty.** Quem altera `page.data` **tem que** chamar `page.mark_dirty()` ou `unpin(page, dirty=True)`. Página suja expulsa é gravada (`dirty_evictions`).
 - **Pin.** Todo `pin` precisa do `unpin` correspondente. Prefira `with bp.page(...) as p:`. Se não houver frame livre nem frame não fixado na área, `pin` levanta `BufferFullError`.
-- **`seq=True`** indica leitura sequencial (scan). Com `cfg.prefetch = k > 0`, um *miss* com `seq=True` lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`), **desde que** o arquivo tenha sido declarado monotipado via `bp.allow_prefetch(fid, ptype)` (D-P1-12). **Contrato estrito:** como o `FileManager` não grava `PageType` no disco, P3 não deve chamar `allow_prefetch` em arquivos mistos (`INDEX` + `DATA`, como Árvore B+).
+- **Prefetch: use `bp.seq_scan`.** Com `cfg.prefetch = k > 0`, um *miss* dentro de `with bp.seq_scan(fid, ptype) as cur:` (via `cur.page(bno)`) lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`), **desde que** o arquivo tenha sido declarado monotipado via `bp.allow_prefetch(fid, ptype)` e `ptype` seja `DATA` ou `INDEX` (D-P1-12, revista em 23/11). As pré-lidas ficam **fixadas em nome do cursor** (SKS §13.5.1.2): `cur.page` assume esse pin quando chega nelas, e a saída do `with` solta as não usadas, inclusive em `break` e exceção. Por isso um cursor segura no máximo `k` pré-lidas mais as páginas em uso por ele, isto é, `1 + k` frames num scan simples (um *miss* fora das pré-lidas solta as restantes; com `cur.page` aninhado em profundidade `d`, `d + k`), com um teto que deixa ao menos 1 frame sem pin por cursor aberto na área. **Garantia de memória:** a pré-leitura não causa `BufferFullError` enquanto `pins simultâneos fora dos cursores ≤ capacidade − cursores × (1 + k)` (com `DATA = 128`, `k = 8` e 1 cursor: 119). Com um cursor aberto, `free_block`, `drop_file`, `close_file` e `clear` levantam `RuntimeError` numa pré-lida ainda não usada, porque ela está fixada. Com prefetch, `bp.hits` inclui as pré-lidas que o cursor assumiu; olhe `bp.prefetched` junto. O parâmetro `seq=True` de `pin`/`page` continua aceito, mas **não pré-lê** fora de um cursor. **Contrato estrito:** como o `FileManager` não grava `PageType` no disco, P3 não deve chamar `allow_prefetch` em arquivos mistos (`INDEX` + `DATA`, como Árvore B+).
 - **`toss=True`** no `unpin`: se `cfg.toss_immediate` estiver ligado, o frame vira a próxima vítima (toss-immediate). Scans devem passar `toss=True`; a configuração decide se tem efeito.
 - **Áreas fixas por tipo de página.** Cada `PageType` tem frames próprios e sua própria instância da política. Uma página de `INDEX` nunca expulsa uma de `DATA`. Isso dá retenção preferencial de índice e catálogo sem precisar de prioridade dinâmica.
 - **Fechamento e remoção de arquivos.** Como o `FileManager` fica abaixo do `BufferPool`, ao fechar um arquivo permanente chame `bp.close_file(fid)` (ou `bp.flush_file(fid)` + `bp.drop_file(fid)` + `fm.close(fid)`), e ao remover um arquivo temporário chame `bp.drop_file(fid)` antes de `fm.delete(fid)`. Internamente na Camada 4, `BufferPool` também registra callbacks via `fm.register_hooks(...)` para manter o cache coerente caso `fm.close/free/delete` sejam chamados diretamente.
@@ -284,7 +295,7 @@ class BufferConfig:
     areas: dict[PageType, int] = field(default_factory=_default_areas)
     policy: Policy = Policy.LRU
     toss_immediate: bool = False          # unpin(toss=True) torna o frame a próxima vítima
-    prefetch: int = 0                     # blocos lidos à frente num miss com seq=True; 0 = desligado
+    prefetch: int = 0                     # blocos lidos à frente num miss dentro de bp.seq_scan; 0 = desligado
 
 
 # ------------------------------------------------------------------ contadores
@@ -441,7 +452,7 @@ class TempFile(Protocol):
     """Arquivo temporário (runs, partições) em páginas WORK."""
     def append(self, rec: Record) -> None: ...   # mantém 1 página de saída fixada
     def finish(self) -> None: ...                # desafixa a página de saída (chamar antes de scan)
-    def scan(self) -> Iterator[Record]: ...      # 1 página fixada por vez, seq=True, toss=True
+    def scan(self) -> Iterator[Record]: ...      # 1 página fixada por vez, toss=True (área WORK: sem prefetch, D-P1-12)
     def n_blocks(self) -> int: ...
     def n_records(self) -> int: ...
     def drop(self) -> None: ...                  # bp.drop_file + fm.delete; idempotente
@@ -780,6 +791,7 @@ Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) s
 **Protocolo de medição (`flush` × `snapshot()` e `LRU` × `MRU`):**
 - **Operações de leitura (`SELECT` / `JOIN`):** chamar `eng.cold()` antes; usar `bp.drop_file(fid)` para `TempFile`s; chamar `eng.snapshot()` diretamente ao fim da consulta (sem `flush_all()`).
 - **Operações de escrita/manutenção (`INSERT`, `DELETE`, `bulk_load`):** se a medição contabiliza o custo total persistido em disco, chamar `bp.flush_all()` **antes** de `eng.snapshot()`; caso contrário, `snapshot()` medirá apenas `dirty_evictions` + `forced_writes` ocorridos durante a operação.
+- **Identidade das gravações (D-P1-05, revista em 22/11):** toda gravação física sai do `BufferPool` por uma de três causas: expulsão de página suja (`bp.dirty_evictions`), `force` (`bp.forced_writes`) ou `flush_file`/`flush_all`/`close_file`/`clear`, que não têm contador próprio. Por isso, **gravações de flush = `io.writes − bp.dirty_evictions − bp.forced_writes`**. A conta é exata enquanto só o `BufferPool` chamar `fm.write` (regra 1). Nas consultas medidas sem flush, essa parcela é 0.
 - **Comparação `LRU × MRU`:** executar com `BufferConfig(toss_immediate=False)`, pois a fila `area.tossed` tem prioridade sobre a política e igualaria `LRU` e `MRU` em varreduras que passam `toss=True`.
 
 ### 8.2 Parâmetros que a bancada pode variar (o que "pode mudar" em cada módulo)
