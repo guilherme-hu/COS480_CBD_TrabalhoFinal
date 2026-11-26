@@ -102,7 +102,29 @@
   - **Decisões:** Vivian escolheu S2 (um salto solta as pré-lidas restantes) e T0 (documentar a condição exata da garantia de memória).
   - **Correções:** cursor fechado, erros de E/S no lote e testes novos (8 unitários e 1 estresse com dois cursores). Registros em `review.md` 23 a 28 e no adendo do cartão D-P1-12.
 
-## Prompt 9 — Revisão do PR #97 e achado de P2 no prefetch (26/11/2026)
+## Prompt 9 — Fechamento da parte P1 (#45) (23/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> vamos para o fechamento da #45
+
+- **Resultado:**
+  - **Revisor de confirmação:** rodou sobre o código final do prefetch (cerca de 92 mil falhas injetadas, sem defeito crítico, alto ou médio) e achou dois pontos baixos (achado 29): S2 soltava as pré-lidas num hit, e o limite "1 + k" não vale com aninhamento. Corrigido no PR #97 (`0dac349`) e na arquitetura, PR #96 (`df45ef8`), com o ok da integrante.
+  - **Documentos atualizados:** o resumo das decisões e "como se combinam" em `docs/decisoes/P1.md` (com D0 e C0 nas linhas de D-P1-03 e D-P1-05), `ai/P1/ESTADO.md` (com a tabela de requisitos), `ai/P1/stress.md`, `ai/P1/post_mortem.md` (18 defeitos e estimado × medido; as seções de opinião ficaram como rascunho para a integrante) e `docs/estudo/P1.md` §1.3 e §2.
+
+## Prompt 10 — Revisão dos PRs da P2 e prefetch no heap (25/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> revise o pr 91 (mais antigo de guilherme) · agora veja a 93 pr · veja o 99 · mas e comparado com a minha pr que muda o buffer pool? · tem certeza que o prefetch nao economiza blocos na medição? veja o meu codigo
+
+- **Resultado:**
+  - **Revisões:** PRs #91, #93 e #99 da P2 revisados (testes, fuzz contra oráculo, leitura linha a linha) e aprovados pela integrante, com comentários publicados por ela.
+  - **Interação com o #97:** o `HeapFile.scan` usa `pin(seq=True)`, que no #97 não pré-lê; medido 30 misses e 0 pré-lidas, contra 4 e 26 via `seq_scan`. Fica para a #83.
+  - **Erro da IA corrigido na conversa:** a IA afirmou que o prefetch não mudava leituras nem seeks; a integrante questionou e a leitura do código mais a medição mostraram que os seeks caem (80 → 10 em scans intercalados) e as leituras não. A IA também tinha afirmado que área DATA pequena daria `BufferFullError` pelo prefetch, o que o teto de `_prefetch_victims` impede.
+  - **Decisão:** pré-leitura além dos blocos do chamador (páginas do mapa do heap, 1 102 × 1 100): opção A, aceitar e documentar, por Vivian. Adendo de 25/11 na D-P1-12.
+
+## Prompt 11 — Revisão do PR #97 e achado de P2 no prefetch (26/11/2026)
 
 - **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
 
