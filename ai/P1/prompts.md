@@ -111,3 +111,17 @@
 - **Resultado:**
   - **Revisor de confirmação:** rodou sobre o código final do prefetch (cerca de 92 mil falhas injetadas, sem defeito crítico, alto ou médio) e achou dois pontos baixos (achado 29): S2 soltava as pré-lidas num hit, e o limite "1 + k" não vale com aninhamento. Corrigido no PR #97 (`0dac349`) e na arquitetura, PR #96 (`df45ef8`), com o ok da integrante.
   - **Documentos atualizados:** o resumo das decisões e "como se combinam" em `docs/decisoes/P1.md` (com D0 e C0 nas linhas de D-P1-03 e D-P1-05), `ai/P1/ESTADO.md` (com a tabela de requisitos), `ai/P1/stress.md`, `ai/P1/post_mortem.md` (18 defeitos e estimado × medido; as seções de opinião ficaram como rascunho para a integrante) e `docs/estudo/P1.md` §1.3 e §2.
+
+## Prompt 10 — Revisão do PR #97 e achado de P2 no prefetch (26/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> revise a pr 97
+>
+> o bug procede ou nao?
+>
+> pode corrigir na p1/42
+
+- **Resultado:**
+  - **Revisão:** a IA conferiu o head do PR (162 passed, 3 skipped; estresse 3 passed; `grep` limpos) e confirmou o achado de Guilherme (P2): o `except ValueError` de `_prefetch_read` escondia erro de leitura. Sem outro defeito no código.
+  - **Correção:** `except ValueError` removido; teste reescrito para esperar o erro sem perder frame nem vazar pin. Registro em `review.md` 30.

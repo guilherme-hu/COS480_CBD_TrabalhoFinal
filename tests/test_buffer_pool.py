@@ -1385,11 +1385,16 @@ def test_falha_de_leitura_no_lote_propaga_sem_vazar(tmp_path):
     fm.close_all()
 
 
-def test_lote_para_no_fim_fisico_sem_perder_frame(tmp_path):
-    """Bloco alocado mas nunca gravado (fm.read levanta ValueError) encerra o lote sem erro.
+def test_bloco_alem_do_fim_fisico_no_lote_propaga_sem_perder_frame(tmp_path):
+    """Bloco alocado mas nunca gravado no lote: o ValueError de fm.read propaga (achado 30).
 
-    DATA = 4, k = 4, arquivo com 5 blocos alocados e só 1 e 2 gravados. cur.page(1): o teto deixa
-    o lote em 2 blocos (2 e 3); o 3 está além do fim físico -> 1 pré-lida, e o frame dele volta.
+    A 1ª fase já conferiu is_valid_block, então esse ValueError só aparece por bug de quem chamou
+    (aqui, fm.allocate direto sem gravar) e não pode ser tratado como fim normal do lote.
+    DATA = 4, k = 4, arquivo com 5 blocos alocados e só 1 e 2 gravados. cur.page(1): vítima do
+    bloco 1 = 1 frame; o teto (frames sem pin − 1 >= cursores = 1) deixa o lote em 2 e 3 (3 − 1 = 2,
+    2 − 1 = 1; no 4, 1 − 1 = 0 < 1). Lê 1 e 2 (1 pré-lida); o 3 levanta ValueError: o frame dele
+    volta a free, o pin do bloco 1 sai e o cursor solta a pré-lida 2 ao terminar. Fica: 0 pins e os
+    4 frames utilizáveis.
     """
     fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
     fid = fm.create("t")
@@ -1400,10 +1405,12 @@ def test_lote_para_no_fim_fisico_sem_perder_frame(tmp_path):
     outro = _arquivo(fm, "outro", 4)
     pool = BufferPool(fm, BufferConfig(areas={PageType.DATA: 4, PageType.WORK: 1}, prefetch=4))
     pool.allow_prefetch(fid, PageType.DATA)
-    with pool.seq_scan(fid, PageType.DATA) as cur:
-        with cur.page(1):
-            pass
+    with pytest.raises(ValueError):
+        with pool.seq_scan(fid, PageType.DATA) as cur:
+            with cur.page(1):
+                pass
     assert pool.stats.prefetched == 1
+    assert pool.pinned() == 0
     assert _frames_utilizaveis(pool, PageType.DATA) == 4
     fixadas = [pool.pin(outro, blk, PageType.DATA) for blk in (1, 2, 3, 4)]
     for p in fixadas:
