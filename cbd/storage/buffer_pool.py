@@ -431,17 +431,16 @@ class BufferPool:
         O pin pertence ao cursor que pediu o prefetch (D-P1-12, revista em 23/11): cada página
         instalada entra em `held` (o `_held` do cursor) na hora, para que um erro no meio do lote
         não deixe pin sem dono. Custo de I/O: len(batch) leituras sequenciais.
-        Levanta: qualquer erro de fm.read que não seja o fim físico do arquivo (achado 26).
+        Levanta: qualquer erro de fm.read, inclusive o ValueError de bloco além do fim físico
+        (achados 26 e 30).
         """
         for i, (b, fr) in enumerate(batch):
             try:
                 raw = self.fm.read(fid, b)
-            except ValueError:
-                # Bloco alocado mas nunca gravado (além do fim físico): fim normal do lote. Devolve
-                # este frame e os que sobraram para `free`.
-                area.free.extend(f for _, f in batch[i:])
-                return
             except Exception:
+                # Achado 30: nenhum erro aqui é fim normal do lote. A 1ª fase já conferiu
+                # is_valid_block, então até o ValueError de bloco além do fim físico é bug de quem
+                # chamou. Devolve este frame e os que sobraram para `free` e propaga.
                 area.free.extend(f for _, f in batch[i:])
                 raise
             fr.data[:] = raw

@@ -101,3 +101,17 @@
   - **Revisores:** 4 revisores independentes (corretude, contratos, contagem de I/O, qualidade dos testes) revisaram o prefetch com cursor. A IA principal reproduziu as 10 sondas que falharam e as mutações M19 e M16.
   - **Decisões:** Vivian escolheu S2 (um salto solta as pré-lidas restantes) e T0 (documentar a condição exata da garantia de memória).
   - **Correções:** cursor fechado, erros de E/S no lote e testes novos (8 unitários e 1 estresse com dois cursores). Registros em `review.md` 23 a 28 e no adendo do cartão D-P1-12.
+
+## Prompt 9 — Revisão do PR #97 e achado de P2 no prefetch (26/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> revise a pr 97
+>
+> o bug procede ou nao?
+>
+> pode corrigir na p1/42
+
+- **Resultado:**
+  - **Revisão:** a IA conferiu o head do PR (162 passed, 3 skipped; estresse 3 passed; `grep` limpos) e confirmou o achado de Guilherme (P2): o `except ValueError` de `_prefetch_read` escondia erro de leitura. Sem outro defeito no código.
+  - **Correção:** `except ValueError` removido; teste reescrito para esperar o erro sem perder frame nem vazar pin. Registro em `review.md` 30.

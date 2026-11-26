@@ -354,3 +354,16 @@ Este documento registra os defeitos identificados no código gerado por IA e as 
   - **Correção:** textos ajustados no código, no cartão e na arquitetura.
   - **Teste:** `tests/test_buffer_pool.py::test_cursor_aninhado_segura_k_pre_lidas_mais_paginas_em_uso`.
 - **(c) Observação mínima, sem correção:** se a gravação de um candidato vindo da fila `tossed` falha, a página continua residente e correta, mas sai da fila e perde a prioridade de descarte (D-P1-09). Não afeta corretude, pins nem contagem.
+
+---
+
+## 30. `_prefetch_read` escondia erro de leitura tratando `ValueError` como fim do lote — Baixo
+
+- **Arquivo / Local:** `cbd/storage/buffer_pool.py`, `_prefetch_read` (`except ValueError`).
+- **Categoria:** Erro silenciado (contraria o próprio `FileManager.read`, que levanta em vez de "esconder bugs").
+- **Defeito:** a correção do achado 26 tratou o `ValueError` de `fm.read` como fim normal do lote. Mas a 1ª fase (`_prefetch_victims`) já confere `is_valid_block` para cada bloco do lote, então o único `ValueError` que sobra é o de bloco alocado e nunca gravado (além do fim físico). Pela API do buffer esse estado não ocorre: `new_page` é o único que chama `fm.allocate`, e a página fica residente e suja até ser gravada, o que já para o lote em `(fid, b) in self._table`. Chegar ao `except` exige um bug de quem chama (`fm.allocate` direto sem gravar, ou uso do arquivo depois de `drop_file`). O lote parava em silêncio e o scan seguia com menos pré-lidas (`prefetched` menor), sem aviso.
+- **Cenário:** arquivo com 5 blocos alocados e só 1 e 2 gravados; `cur.page(1)` com DATA = 4, k = 4. Antes: 1 pré-lida, sem erro. Esperado: `ValueError` propagado.
+- **Detecção:** revisão do PR #97 por P2 (Guilherme), em 26/11/2026; reproduzida pela IA principal removendo o `except` numa cópia da branch: só falhou o teste que fixava a tolerância.
+- **Gravidade:** baixa. Não muda nenhuma contagem da matriz; se o scan chegasse ao bloco, o pin normal levantaria o mesmo erro.
+- **Correção:** removido o `except ValueError`. O `except Exception` seguinte já devolve os frames restantes a `free`, deixa as pré-lidas instaladas com o cursor (que as solta ao terminar), solta o pin do bloco pedido em `_pin` e propaga o erro.
+- **Teste:** `tests/test_buffer_pool.py::test_lote_para_no_fim_fisico_sem_perder_frame` foi reescrito como `::test_bloco_alem_do_fim_fisico_no_lote_propaga_sem_perder_frame`: espera `ValueError` e confere 0 pins, 4 frames utilizáveis e a pré-lida do bloco 2 solta.
