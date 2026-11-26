@@ -1,0 +1,14 @@
+# Prompts — P2 (Guilherme)
+| Data | Ferramenta/modelo | Pedido |
+| :-- | :-- | :-- |
+| 19/11 | Claude Code (Opus 5.5) | Gerar dois materiais de estudo a partir do SKS e do E&N: (1) tudo do gerente de armazenamento para a P2; (2) transações, concorrência e recuperação, ligados à P2. Didáticos, em português, com diagramas. Resultado: `docs/estudo/P2_armazenamento.html` e `docs/estudo/P2_transacoes.html`. |
+| 22/11 | Claude Code (Opus 5.5) | Seguir uma issue por vez, debatendo cada decisão com prós e contras, padrão dos dados e trade-offs de transações/concorrência/recuperação. Conferir o enunciado (PDF × md). |
+| 22/11 | Claude Code (Opus 5.5) | D-P2-01: explicar melhor as opções A (diretório, SKS) e C (prefixo de tamanho, E&N). Escolha: C. Pedir ao P6, por issue, a troca de 4 para 2 B no estimador. |
+| 22/11 | Claude Code (Opus 5.5) | D-P2-02: debater nulos, campos comuns e opcionais e o null bitmap, com as opções medidas na base. Escolha: S (sentinela, sem bitmap). Criar o PR da parte inicial. |
+| 22/11 | Claude Code (Opus 5.5) | D-P2-03: debater o campo multivalorado (LIST), com as opções dos livros medidas na base. Escolha: C (itens com tamanho em 1 B, sem contagem). Dividir o site de estudo em uma página por decisão. |
+| 22/11 | Claude Code (Opus 5.5) | D-P2-04: debater campos estruturados e derivados com os livros e a base. Escolha: E1 + V1 (endereço como string única, derivado calculado). |
+| 23/11 | Claude Code (Opus 5.5) | D-P2-05 (chaves): por que comparar bytes e não valores; conferir a intuição sobre a B+; criar a seção "Apoio" do site com uma página por organização primária (heap, B+, hash) e simuladores; CPF como INT furaria a chave de 4 bytes? |
+| 23/11 | Claude Code (Opus 5.5) | Commitar o codec e atualizar o PR #91 para `Closes #39`. Explicar o que foi implementado, de quem é, quem depende e se pode ser mergeado. Explicar o `block_size`. D-P2-06: escolha B (o codec não conhece o bloco; o heap/hash levanta `RecordTooLarge`). |
+| 23/11 | Claude Code (Opus 5.5) | Revisar o PR #91 com `/ponytail:ponytail-review` (bugs, otimizações, se implementa o que propõe). Depois: corrigir os cortes de over-engineering e os bugs B1–B3 achados. |
+| 23/11 | Claude Code (Opus 5.5) | 2ª revisão do PR #91 com `/ponytail:ponytail-review` (bugs, otimizações, aderência). Depois: corrigir os defeitos A (−0,0 aceito no `decode_key`) e B (int > 2⁵³ em FLOAT). |
+| 23/11 | Claude Code (Opus 5.5) | (1) Onde o prefetch toca as organizações da P2 (o P1 vai mudar a interface). (2) Implementar o INT de 4 B no registro e na chave (opção B de um debate feito em outra sessão), sem cartão novo: revisão do D-P2-05. (3) Auditar a arquitetura por escolhas sem justificativa. |
