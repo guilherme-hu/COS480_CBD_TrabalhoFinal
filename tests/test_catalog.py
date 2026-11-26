@@ -5,6 +5,7 @@ N1/N2: pilha real (FileManager + BufferPool + HeapFile); os índices secundário
 então um dublê em memória (`FakeIndex`) entra no lugar da fábrica de índices.
 N3: o adaptador do P6 (`bench.build.load_physical`) carregando uma base minúscula.
 """
+import math
 from datetime import date
 from types import SimpleNamespace
 
@@ -388,6 +389,40 @@ def test_load_physical_tiny_base_heap_variants(engine):
     assert e.catalog.tables() == sorted(p["name"] for p in plan)
     t = e.catalog.table("aluno__heap")
     assert sorted(r for _, r in t.data.scan()) == sorted(ds.records("aluno"))
+
+
+def test_load_physical_tiny_base_hash_variants(engine):
+    # #48: as variantes hash do plano do P6 (seed, load, distinct; os pares _eq_ com buckets forçado) carregam
+    # pelo catálogo e voltam iguais depois de reabrir. Sem índices: HashIndex (#52) e a B+ (P3) ainda não existem.
+    from bench.build import load_physical, physical_plan
+    from bench.generator import Dataset
+    from bench.schema import ACCESS_COLUMNS, SCHEMAS
+    ds = Dataset(scale=0.002)
+    stats = {t: {"n": ds.counts[t], "estimated_bfr": 10.0,
+                 "distinct": {c: len({r[SCHEMAS[t].idx(c)] for r in ds.records(t)}) for c in cols}}
+             for t, cols in ACCESS_COLUMNS.items()}
+    plan = [dict(item, indexes=[]) for item in physical_plan(stats) if item["org"]["org"] == Org.HASH]
+    assert len(plan) == 6 + 6          # 6 colunas de acesso (__hs_<col>) + 3 joins × 2 lados (_eq_)
+    e = engine()
+    load_physical(e, SimpleNamespace(records=ds.records), plan)
+    before = {p["name"]: e.catalog.table(p["name"]).data.stats() for p in plan}
+    e = reopen(e, engine)
+    for p in plan:
+        t = e.catalog.table(p["name"])
+        assert t.data.stats() == before[p["name"]]
+        params = p["org"]["params"]
+        assert t.data.seed == params["seed"]
+        if "buckets" in params:
+            assert t.data.n_buckets == params["buckets"]
+        else:                                          # load e distinct chegaram do plano ao HashFile (D-P2-16)
+            n = math.ceil(params["expected_records"] / (t.data._bfr * params["load"]))
+            assert t.data.n_buckets == min(n, params.get("distinct", n))
+        recs = list(ds.records(p["source"]))
+        assert sorted(r for _, r in t.data.scan()) == sorted(map(tuple, recs))
+        k = SCHEMAS[p["source"]].idx(p["org"]["key"])
+        v = recs[0][k]
+        assert sorted(r for _, r in t.data.search(v)) == sorted(tuple(r) for r in recs if r[k] == v)
+        assert t.stats().n_blocks == before[p["name"]]["blocks"] - 1    # analyze: blocos menos o meta
 
 
 # ---------- 1ª revisão (25/11): testes do revisor de qualidade que matam os mutantes sobreviventes ----------

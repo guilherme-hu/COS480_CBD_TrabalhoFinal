@@ -224,13 +224,13 @@ Nomes únicos: `f"__tmp_{os.getpid()}_{contador}"`. As páginas de temporário s
 | Endereçamento | o bucket `i` está no bno `2 + i` (pré-alocados em sequência no `create`); sem diretório |
 | Função | INT: `(key + seed) % N`; outros tipos: `hash_value(key, seed) % N` (D-P2-14), com `seed = params.get("seed", 0)` salva no meta. O P5 precisa forçar N e seed iguais em duas tabelas para o *bucket-join* |
 | Colisão (overflow) | encadeamento de blocos de overflow, alocados sob demanda; inserção no primeiro bloco da cadeia com espaço |
-| Skew | NOT UNIQUE de baixa cardinalidade concentra registros num bucket (todos os iguais caem juntos, independentemente de N). **Caso real da nossa matriz:** `aluno` organizado por hash em `curso` (50 valores, ~1 000 alunos por curso). Com o N padrão (~2 500 buckets) sobrariam ~2 450 buckets vazios que o `scan` lê à toa. Recomendação: em NOT UNIQUE, `N = min(N_padrão, V(A))`, com `V(A)` de `params["distinct"]` (a bancada passa). Relate em `stats()` `max_chain` e `avg_chain` |
+| Skew | NOT UNIQUE de baixa cardinalidade concentra registros num bucket (todos os iguais caem juntos, independentemente de N). **Caso real da nossa matriz:** `aluno` organizado por hash em `curso` (50 valores, ~1 000 alunos por curso). Com o N padrão (~2 500 buckets) sobrariam ~2 450 buckets vazios que o `scan` lê à toa. Recomendação: em NOT UNIQUE, `N = min(N_padrão, V(A))`, com `V(A)` de `params["distinct"]` (a bancada passa). Relate em `stats()` `max_chain` e `avg_chain_x1000` |
 | Fator de carga | `stats()["load_x1000"] = 1000·n_records / (N·bfr_est)`. `reorganize()` refaz o hash com N recalculado para o n atual, **só por comando** (D-P2-17: a reorganização automática não faz parte do escopo, como no heap, D-P2-11) |
 
 ### 6.2 `HashFile` (organização primária)
 
 ```
-bno 1        : meta (N, seed, key_idx, unique, n_records, n_overflow, bfr_est)
+bno 1        : meta (N, seed, n_records, n_overflow, bfr_est, max_chain, key_idx, unique); open recusa outro spec
 bno 2..N+1   : buckets primários
 bno > N+1    : overflow
 ```
@@ -241,10 +241,10 @@ bno > N+1    : overflow
 | `insert(rec)` | `RecordTooLarge` se `len > max_record(B)` (D-P2-06); se `unique`: `search` antes (`DuplicateKey`); percorre a cadeia buscando espaço; se nenhum bloco servir, `new_page` de overflow ligado ao **último** da cadeia |
 | `delete(rid)` | slot apagado no bloco do RID (pode ser overflow). Não desfaz a cadeia |
 | `fetch(rid)` | 1 bloco |
-| `scan()` | bucket 0..N−1, cada um com sua cadeia (`seq=True` no primário) |
-| `scan_bucket(i)` / `bucket_of(k)` | para o P5 (geral §5.2) |
+| `scan()` | em ordem física: blocos 2 até o último (primários, depois o overflow), 1 seek; a ordem por bucket é do `scan_bucket` (ver D-P2-17) |
+| `scan_bucket(i)` / `bucket_of(k)` | para o P5 (geral §5.2); `scan_bucket` sem `seq=True` (o bloco seguinte ao primário é de outro bucket) |
 | `range` | `NotApplicable` |
-| `bulk_load(recs)` | recebe os registros já ordenados por `bucket_of` (o `load_table` ordena, D-P2-17) e enche cada cadeia em sequência: a cadeia de cada bucket fica contígua no disco (tempo de carga, não medido) |
+| `bulk_load(recs)` | ordena os registros por `bucket_of` em memória (D-P2-17; o N só existe depois de ver os registros) e enche cada cadeia em sequência: a cadeia de cada bucket fica contígua no disco (tempo de carga, não medido) |
 
 ### 6.3 `HashIndex` (índice secundário; geral §5.3: campo UNIQUE de heap)
 
@@ -318,7 +318,7 @@ Nomes dos arquivos: tabela `"<tabela>"`, índice `"<tabela>__<coluna>"`.
 | Método | Faz |
 | :--- | :--- |
 | `create_table(schema, spec)` | valida `spec.key` no esquema; `cls.create(...)`; registra; persiste |
-| `load_table(name, recs, bulk=True)` | BTREE + bulk: `sorted(recs, key=chave)` e então `data.bulk_load`. HEAP: `bulk_load`. HASH: `sorted(recs, key=bucket_of da chave)` e então `bulk_load` (D-P2-17). Com `bulk=False`: `table.insert` um a um (é o que mede a "carga de manutenção"). No fim reconstrói os índices existentes e roda `analyze` |
+| `load_table(name, recs, bulk=True)` | BTREE + bulk: `sorted(recs, key=chave)` e então `data.bulk_load`. HEAP: `bulk_load`. HASH: `bulk_load`, que ordena por bucket (D-P2-17). Com `bulk=False`: `table.insert` um a um (é o que mede a "carga de manutenção"). No fim reconstrói os índices existentes e roda `analyze` |
 | `create_index(spec)` | `cls.create(bp, f"{t}__{c}", spec, schema.get(c), table.data)`; preenche com `bulk_load(sorted((k, ptr) for ptr, rec in data.scan()))`, ignorando as chaves `None`; registra; persiste |
 | `analyze(name)` | um `scan`: `n_records`, `distinct` (com `set` Python: é tempo de preparação, não medido), `min`/`max` dos INT/FLOAT/DATE/CHAR, `record_size` = média de `len(codec.encode(rec))`. `n_blocks` = `stats["leaf_blocks"]` se BTREE, senão `stats["blocks"] − stats["meta_blocks"]`; `bfr = n_records / n_blocks` |
 | `temp(schema)` | `TempHeap(bp, nome_único, schema)`; não entra no catálogo |
