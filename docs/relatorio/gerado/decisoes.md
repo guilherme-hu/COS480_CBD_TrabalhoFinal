@@ -6,9 +6,9 @@ Gerado de `docs/decisoes/`: 29 cartões, 0 provisórios. A última coluna diz em
 | :--- | :--- | :--- | :--- |
 | D-P1-01 | Tamanho do bloco de disco e fator de blocagem | decidida | Tamanhos de bloco; Blocagem |
 | D-P1-02 | Técnica de alocação de blocos nos arquivos | decidida | Estruturas dos arquivos e dos cabeçalhos |
-| D-P1-03 | Estrutura do cabeçalho do arquivo (Descritor no Bloco 0) | decidida | Estruturas dos arquivos e dos cabeçalhos |
+| D-P1-03 | Estrutura do cabeçalho do arquivo (Descritor no Bloco 0) | decidida (revista) | Estruturas dos arquivos e dos cabeçalhos |
 | D-P1-04 | Gerência de blocos livres e coerência no `free_block` / `fm.free` | decidida (revista) | Estruturas dos arquivos e dos cabeçalhos |
-| D-P1-05 | Contadores físicos de leitura/gravação e cabeça de disco global (`_head`) | decidida | Configurações da gerência do buffer pool |
+| D-P1-05 | Contadores físicos de leitura/gravação e cabeça de disco global (`_head`) | decidida (revista) | Configurações da gerência do buffer pool |
 | D-P1-06 | Tamanho do Buffer Pool e número de blocos por página | decidida | Tamanhos de bloco; Configurações da gerência do buffer pool |
 | D-P1-07 | Repartição do Buffer Pool e Áreas Fixas vs. Autoajustáveis vs. Compartilhadas | decidida | Configurações da gerência do buffer pool |
 | D-P1-08 | Políticas de substituição de página (`LRU` vs. `MRU`) e escolha para os testes | decidida | Configurações da gerência do buffer pool |

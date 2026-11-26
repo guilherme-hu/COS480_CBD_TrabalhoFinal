@@ -57,3 +57,61 @@
 > quero que voce cheque falhas ou casos de borda no codigo
 > quero que voce garanta que está tudo documentado
 
+
+---
+
+## Prompt 6 — Fechamento: triagem das issues #38/#42/#45 e revisores independentes (22/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> analise o diretorio, veja as issues abertas ligadas a mim (mssvivian) no github e veja o que ainda precisa ser feito
+>
+> pode começar pelos passos 1 e 2, me passe os textos
+
+- **Resultado:** a IA notou que 4 testes obrigatórios do guia §4 não tinham contagens nem o cálculo no comentário. O caso mais sério: `test_lru_vs_mru_victims` conferia só o conjunto final de residentes, e um LRU que expulsasse na ordem errada (1 e depois 3) passaria. Os testes foram reforçados na branch `p1/42-contagens-explicadas`. Também foram lançados 4 revisores independentes (corretude, contratos, contagem de I/O, qualidade dos testes) sobre `cbd/storage/` (AGENTS §8.2).
+
+## Prompt 7 — Prefetch fixado pelo cursor dono, seguindo o SKS §13.5.1.2 (23/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> antes de ir para H, quero discutir o prefetch junto as politicas. o professor falou sobre a transação colocar o pin no prefecth e quando acabar, retirar. Nesse sentido, quero saaber quem que chama o pin e o unpin na arquitetura e o que seria possivel
+>
+> o professor quis dizer que se uma transação fez o prefetch, ela da pin em todo o prefetch e quando acaba, tira o pin. no caso de mais de 1 transação colocar o pin, aí todas precisam remover, ou seja, acabarem
+>
+> mas soltar o que usar faz algum sentido?
+>
+> vamos entao seguir o livro, é necessário documentar tudo o que for necessário
+
+- **Resultado:**
+  - **Opções:** a IA mapeou quem chama `pin`/`unpin` em cada camada e comparou a segunda chance (S0), o pin até o fim do cursor (S1, impossível num scan completo: 1 962 blocos em 128 frames), o pin do dono solto no uso mais o resto no fim (S2, o livro) e um `end_scan` explícito (S3).
+  - **Implementação:** a integrante escolheu S2. Entraram `bp.seq_scan` e `SeqScan`, a pré-leitura fixada, o teto por cursor e o prefetch restrito a DATA e INDEX; as políticas voltaram a LRU/MRU puros. Primeira versão em `ai/P1/raw/buffer_pool_seq_scan_v1.py` e `ai/P1/raw/policies_puras_v1.py`.
+  - **Testes e registros:** os testes de prefetch foram reescritos para o cursor e houve testes novos. Registros: D-P1-12 (revisão de 23/11), `review.md` 21 e 22.
+
+## Prompt 8 — Revisores independentes do cursor e decisões S2/T0 (23/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> quero focar agora em 1, 2 e 3
+>
+> s1 é melhor que s2? nao entendi bem a gravidade de T
+>
+> s2 e t0
+
+- **Resultado:**
+  - **Revisores:** 4 revisores independentes (corretude, contratos, contagem de I/O, qualidade dos testes) revisaram o prefetch com cursor. A IA principal reproduziu as 10 sondas que falharam e as mutações M19 e M16.
+  - **Decisões:** Vivian escolheu S2 (um salto solta as pré-lidas restantes) e T0 (documentar a condição exata da garantia de memória).
+  - **Correções:** cursor fechado, erros de E/S no lote e testes novos (8 unitários e 1 estresse com dois cursores). Registros em `review.md` 23 a 28 e no adendo do cartão D-P1-12.
+
+## Prompt 9 — Revisão do PR #97 e achado de P2 no prefetch (26/11/2026)
+
+- **Ferramenta / Modelo:** Claude Code (Claude Opus 5.5)
+
+> revise a pr 97
+>
+> o bug procede ou nao?
+>
+> pode corrigir na p1/42
+
+- **Resultado:**
+  - **Revisão:** a IA conferiu o head do PR (162 passed, 3 skipped; estresse 3 passed; `grep` limpos) e confirmou o achado de Guilherme (P2): o `except ValueError` de `_prefetch_read` escondia erro de leitura. Sem outro defeito no código.
+  - **Correção:** `except ValueError` removido; teste reescrito para esperar o erro sem perder frame nem vazar pin. Registro em `review.md` 30.

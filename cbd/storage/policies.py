@@ -1,7 +1,9 @@
 """Políticas de substituição de página do Buffer Pool (Camada 4, dono: P1 — Vivian).
 
 Implementa: ReplacementPolicy, LRUPolicy, MRUPolicy, make_policy. Usa: cbd/contracts.py.
-Decisões: D-P1-08 (implementação de LRU e MRU; preterição de FIFO e CLOCK). Ver docs/decisoes/P1.md.
+Decisões: D-P1-08 (implementação de LRU e MRU; preterição de FIFO e CLOCK); D-P1-12 (revista em
+23/11: as páginas pré-lidas ficam fixadas pelo cursor dono, então as políticas não precisam de nenhuma
+regra especial para elas e são LRU/MRU puros). Ver docs/decisoes/P1.md.
 Invariantes: frames fixados (pin_count > 0) nunca são escolhidos como vítimas.
 Custo esperado: O(1) para loaded/accessed/removed; O(k) no pior caso em victim() se houver k frames fixados.
 """
@@ -20,6 +22,7 @@ class ReplacementPolicy(Protocol):
     def removed(self, f: Any) -> None: ...
     def victim(self) -> Any | None: ...
     def reset(self) -> None: ...
+
 
 
 class LRUPolicy:
@@ -55,17 +58,13 @@ class LRUPolicy:
 
     def victim(self) -> Any | None:
         """Retorna o frame não fixado (pin_count == 0) acessado há mais tempo, ou None. Custo de I/O: 0 blocos."""
-        # D-P1-08, D-P1-10, D-P1-12: percorre do início para o fim (do mais antigo para o mais novo),
-        # preferindo frames já referenciados (prefetched=False) para que o prefetch de um cursor não
-        # seja bloqueado por um único bloco prefetched=True na ponta mais antiga da fila.
-        fallback = None
+        # D-P1-08: percorre do início (mais antigo) para o fim (mais recente) e devolve o primeiro
+        # frame sem pin. Páginas pré-lidas ainda não usadas estão fixadas pelo cursor dono
+        # (D-P1-12, revista em 23/11) e por isso são puladas como qualquer página fixada.
         for f in self._order.values():
             if f.pin_count == 0:
-                if not getattr(f, "prefetched", False):
-                    return f
-                if fallback is None:
-                    fallback = f
-        return fallback
+                return f
+        return None
 
     def reset(self) -> None:
         """Limpa a fila de controle da política. Custo de I/O: 0 blocos."""
@@ -102,17 +101,12 @@ class MRUPolicy:
 
     def victim(self) -> Any | None:
         """Retorna o frame não fixado (pin_count == 0) acessado mais recentemente, ou None. Custo de I/O: 0 blocos."""
-        # D-P1-08, D-P1-10, D-P1-12: percorre do mais recente para o mais antigo,
-        # preferindo frames já referenciados (prefetched=False) para que o MRU não
-        # expulse blocos pré-lidos antes do primeiro pin().
-        fallback = None
+        # D-P1-08: percorre do fim (mais recente) para o início (mais antigo) e devolve o primeiro
+        # frame sem pin. Pré-lidas não usadas estão fixadas (D-P1-12, revista em 23/11) e são puladas.
         for f in reversed(self._order.values()):
             if f.pin_count == 0:
-                if not getattr(f, "prefetched", False):
-                    return f
-                if fallback is None:
-                    fallback = f
-        return fallback
+                return f
+        return None
 
     def reset(self) -> None:
         """Limpa a fila de controle da política. Custo de I/O: 0 blocos."""

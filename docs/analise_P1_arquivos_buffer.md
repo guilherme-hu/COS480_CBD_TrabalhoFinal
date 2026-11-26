@@ -228,12 +228,11 @@ O módulo `cbd/storage/policies.py` implementa exclusivamente as **duas polític
 ### 3.9 Leitura Antecipada — *Prefetching* de Blocos (Item 2.2.9)
 
 - **Decisão Adotada:** **Sim**, controlada por `BufferConfig.prefetch = k` (padrão $k = 0$ na configuração-base; testado com $k = 8$ nos experimentos de varredura).
-- **Funcionamento e Justificativa:**
-  - Quando uma camada superior solicita uma página em modo sequencial (`pin(fid, bno, ptype, seq=True)`) e ocorre um **miss**, após carregar o bloco `bno`, se `cfg.prefetch = k > 0`, o `BufferPool` dispara `_prefetch(area, fid, bno + 1, k)`:
-  - Para cada bloco $b \in [bno + 1,\, bno + k]$, enquanto $b \le \text{high\_water}$, $b$ ainda não estiver residente no buffer e houver vítima livre (`pin_count == 0`) na área:
-    1. Lê o bloco $b$ do `FileManager` (`fm.read(fid, b)`).
-    2. Instala no frame com **`pin_count = 0`** e `dirty = False` (para não vazar `pin` caso o cursor pare antes do fim).
-    3. Incrementa `prefetched += 1` (sem contar como `request` nem `miss` até que o cursor efetivamente peça o bloco).
+- **Funcionamento e Justificativa (D-P1-12, revista em 23/11; ver `docs/decisoes/P1.md`):**
+  - O prefetch só acontece dentro de um cursor `with bp.seq_scan(fid, ptype) as cur:`, em arquivo declarado monotipado com `bp.allow_prefetch(fid, ptype)` e só nas áreas `DATA` e `INDEX`. `pin(..., seq=True)` fora de cursor não pré-lê.
+  - Num **miss** em `cur.page(bno)`, o `BufferPool` expulsa antes as vítimas do bloco pedido e do lote (gravando as sujas) e depois lê `bno` e os blocos $b \in [bno + 1,\, bno + k]$ em sequência. O lote para no primeiro bloco já residente, fora do arquivo, sem vítima ou no teto (a área nunca fica com menos frames sem pin do que cursores abertos nela).
+  - Cada bloco pré-lido entra com **`pin_count = 1` em nome do cursor** (SKS §13.5.1.2) e conta `prefetched += 1`. Quando o cursor chega nele, assume esse pin (1 *request* e 1 *hit*, 0 leituras) e o solta ao terminar a página. Um pedido fora das pré-lidas solta as restantes, e a saída do cursor (fim, `break` ou exceção) solta as não usadas: no máximo $1 + k$ páginas fixadas por cursor.
+  - Garantia de memória: a pré-leitura não causa `BufferFullError` enquanto os pins simultâneos fora dos cursores forem $\le$ capacidade $-$ cursores $\times (1 + k)$.
   - **Ganho físico sobre a nossa base:** Como o `FileManager` usa alocação contígua, ler `bno` seguido imediatamente de `bno + 1 ... bno + k` movimenta a cabeça do disco `_head` em blocos consecutivos (`seq_reads`). Quando há duas varreduras concorrentes (ex.: intercalando duas tabelas ou duas *runs* no *Sort-Merge*), ler blocos de $1$ em $1$ causaria $1$ *seek* a cada bloco alternado; com `prefetch = 8`, o número de *seeks* cai em até $8\times$!
 
 ---
@@ -252,10 +251,10 @@ A tabela a seguir resume todos os indicadores coletados por `Engine.snapshot()` 
 | `bp.requests` | `BufferPool` | Número total de chamadas a `pin()` (solicitações de páginas feitas pelas camadas superiores). |
 | `bp.hits` | `BufferPool` | Solicitações `pin()` em que a página `(fid, bno)` já estava residente no `BufferPool`. |
 | `bp.misses` | `BufferPool` | Faltas de página em `pin()` (cada *miss* resulta em 1 leitura física `fm.read`). |
-| `bp.hit_rate` | `BufferPool` | Taxa de acerto do buffer: $\frac{\text{bp.hits}}{\text{bp.requests}}$ ($0,0$ se `requests == 0`). |
+| `bp.hit_rate` | `BufferPool` | Taxa de acerto do buffer: $\frac{\text{bp.hits}}{\text{bp.requests}}$ ($0,0$ se `requests == 0`). Com prefetch, inclui as pré-lidas que o cursor assumiu: olhe `bp.prefetched` junto (D-P1-12). |
 | `bp.dirty_evictions` | `BufferPool` | Páginas modificadas (`dirty == True`) gravadas no disco ao serem expulsas por `_victim()`. |
 | `bp.forced_writes` | `BufferPool` | Gravações forçadas imediatas disparadas por `bp.force(page)`. |
-| `bp.prefetched` | `BufferPool` | Blocos carregados antecipadamente pelo mecanismo de *prefetching* em `pin(..., seq=True)`. |
+| `bp.prefetched` | `BufferPool` | Blocos carregados antecipadamente pelo *prefetching* dentro de um cursor `bp.seq_scan` (D-P1-12). `io.reads == misses + prefetched`. |
 | `bp.<AREA>.requests/hits/misses` | `BufferPool` | Contadores desagregados para cada área (`CATALOG`, `INDEX`, `DATA`, `WORK`). |
 
 ---

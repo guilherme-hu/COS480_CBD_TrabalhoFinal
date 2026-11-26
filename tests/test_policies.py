@@ -34,6 +34,12 @@ def test_lru_vs_mru_victims(tmp_path):
         Policy.LRU: {2, 4, 5},  # expulsou 3, depois 1
         Policy.MRU: {1, 3, 5},  # expulsou 2, depois 4
     }
+    # A ORDEM das vítimas também é conferida: só o conjunto final não basta,
+    # porque um LRU que expulsasse 1 e depois 3 terminaria no mesmo {2, 4, 5}.
+    expected_victims = {
+        Policy.LRU: [3, 1],
+        Policy.MRU: [2, 4],
+    }
 
     for pol, expected_set in expected_residents_after.items():
         fm = FileManager(StorageConfig(root_dir=str(tmp_path / pol.value), block_size=4096))
@@ -44,14 +50,24 @@ def test_lru_vs_mru_victims(tmp_path):
         )
         pool = BufferPool(fm, bcfg)
 
+        def residents() -> set[int]:
+            return {f.bno for f in pool._areas[PageType.DATA].frames if f.fid == fid}
+
+        victims: list[int] = []
         for bno in (1, 2, 3, 1, 2, 4, 5):
+            before = residents()
             with pool.page(fid, bno, PageType.DATA):
                 pass
+            victims.extend(before - residents())  # no máximo 1 vítima por acesso
 
-        resident_bnos = {
-            f.bno for f in pool._areas[PageType.DATA].frames if f.fid == fid
-        }
+        resident_bnos = residents()
         assert resident_bnos == expected_set, f"Falha na política {pol}: {resident_bnos} != {expected_set}"
+        assert victims == expected_victims[pol], f"Falha na política {pol}: vítimas {victims}"
+        # Contagem: 7 pedidos; 1, 2, 3, 4 e 5 são frios (5 misses); as 2ª referências a 1 e 2 são hits.
+        # A mesma nas duas políticas, porque a diferença entre elas só aparece em quem sai, não em quanto se lê.
+        # Cada miss é 1 leitura física (1 página = 1 bloco, D-P1-06): io.reads == 5.
+        assert (pool.stats.requests, pool.stats.hits, pool.stats.misses) == (7, 2, 5)
+        assert fm.io.reads == 5
         pool.flush_all()
         fm.close_all()
 

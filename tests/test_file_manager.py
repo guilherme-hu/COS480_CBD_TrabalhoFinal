@@ -223,3 +223,29 @@ def test_cold_resets_head_counts_seek(tmp_path):
     assert fm.io.seq_reads == 0
     assert fm.io.seeks == 1
     fm.close_all()
+
+
+def test_cabecalho_de_outro_arquivo_nao_move_cabeca(tmp_path):
+    """D-P1-03 (revista em 22/11, D0): o cabeçalho (bloco 0) fica fora das duas medidas,
+    transferências e seeks, como no modelo de custo do SKS §15.2, que conta só os acessos
+    aos blocos de dados pedidos pelo algoritmo.
+
+    Cálculo à mão: lê X1 (cabeça zerada: rand), cria e fecha Y (gravações do bloco 0 de Y,
+    fora de io e sem mover a cabeça), lê X2 (logo depois de X1: seq).
+    Resultado: 1 rand_read + 1 seq_read = 1 seek; io.writes = 0.
+    Se um dia a decisão mudar para D1 (cabeçalho invalida a cabeça), X2 vira rand e este
+    teste tem de ser atualizado junto com o cartão.
+    """
+    fm = FileManager(StorageConfig(root_dir=str(tmp_path), block_size=4096))
+    x = fm.create("x")
+    for blk in (1, 2):
+        fm.write(x, fm.allocate(x), bytes([blk]) * 4096)
+    fm.reset_stats()
+
+    fm.read(x, 1)
+    y = fm.create("y")
+    fm.close(y)
+    fm.read(x, 2)
+
+    assert (fm.io.rand_reads, fm.io.seq_reads, fm.io.seeks, fm.io.writes) == (1, 1, 1, 0)
+    fm.close_all()
