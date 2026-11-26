@@ -531,7 +531,7 @@ class SlottedPage:
     def max_record(block_size: int) -> int             # maior registro que cabe num bloco vazio
 
 # cbd/records/hashing.py
-def hash_value(v: Any, seed: int = 0) -> int           # 64 bits, determinístico entre execuções; int, float, str, date, tuple
+def hash_value(v: Any, seed: int = 0) -> int           # 64 bits, determinístico entre execuções; int, float, str, date, None, tuple
 ```
 
 ### 5.2 Arquivos e tabela — P2 (`cbd/files/`)
@@ -556,7 +556,7 @@ Extras do `HashFile` (usados por P5 no hash join, §7.3):
 class HashFile(DataFile):
     n_buckets: int
     seed: int
-    def bucket_of(self, key: Any) -> int          # hash_value(key, self.seed) % n_buckets
+    def bucket_of(self, key: Any) -> int          # INT: (key + seed) % n_buckets; outros tipos: hash_value(key, seed) % n_buckets (D-P2-14)
     def scan_bucket(self, i: int) -> Iterator[tuple[Ptr, Record]]   # bucket i + cadeia de overflow
 ```
 

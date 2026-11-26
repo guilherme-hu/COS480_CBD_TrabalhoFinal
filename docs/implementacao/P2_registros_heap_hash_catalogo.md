@@ -134,7 +134,8 @@ _FNV_OFFSET, _FNV_PRIME = 0xCBF29CE484222325, 0x100000001B3
 
 def _bytes_of(v) -> bytes:
     # int -> b"i" + 8 bytes; float -> b"f" + '<d' (normalize -0.0 para 0.0);
-    # str -> b"s" + utf-8; date -> b"d" + ordinal; None -> b"n"; tuple -> concat de cada item com b"\x1f"
+    # str -> b"s" + tamanho u32 + utf-8; date -> b"d" + ordinal; None -> b"n";
+    # tuple -> b"t" + nº de itens u32 + itens (cada item se delimita sozinho: codificação injetiva, #41)
     ...
 
 def hash_value(v, seed: int = 0) -> int:
@@ -148,8 +149,8 @@ def hash_value(v, seed: int = 0) -> int:
 ```
 
 - **Nunca** `hash()` do Python: para `str` ele muda a cada processo (PYTHONHASHSEED). Teste obrigatório: rodar `hash_value("abc")` em dois subprocessos dá o mesmo valor.
-- Seeds diferentes dão funções independentes. O P5 usa `seed=1, 2, ...` nos níveis de particionamento, diferentes da seed do arquivo hash.
-- **Escolha da função (enunciado §3.5.3):** meça a dispersão. Teste `test_dispersion` com qui-quadrado dos tamanhos de bucket para as chaves de hash que a bancada usa: `aluno.dre` e `curso.codigo` (inteiros sequenciais, UNIQUE), `inscricao.dre` (~10 por chave) e `aluno.curso`/`disciplina.curso` (50 valores, NOT UNIQUE). Coloque os números no relatório. Como **todas** as nossas chaves de hash são inteiras, `k mod N` é uma alternativa real: dispersa perfeitamente inteiros sequenciais e é mais simples de explicar. É uma decisão a debater, comparando as duas funções no mesmo teste.
+- Seeds diferentes dão funções independentes. O P5 usa `seed = 100 + nível` nos níveis de particionamento (guia P5 §4), diferentes da seed do arquivo hash.
+- **Escolha da função (enunciado §3.5.3): D-P2-14.** O `bucket_of` do hash usa `(k + seed) % N` para chave INT (chaves densas: n/N por bucket, sem overflow por azar) e o `hash_value` para os outros tipos. O `hash_value` continua nas partições do hash join (P5) e no checksum (P6), onde o mod não serve. Testes em `tests/test_hashing.py`.
 
 ---
 
@@ -221,7 +222,7 @@ Nomes únicos: `f"__tmp_{os.getpid()}_{contador}"`. As páginas de temporário s
 | Nº de buckets N | `params["buckets"]` se dado; senão `ceil(params["expected_records"] / (bfr_est · load))` com `load = params.get("load", 0.8)` e `bfr_est = max_record(B) // (avg + 4)`, em que `avg` é o tamanho médio dos primeiros 100 registros codificados (`load_table` passa os registros) |
 | Bucket | **1 bloco primário** (slotted page) + **cadeia de overflow** pelo campo `next` |
 | Endereçamento | o bucket `i` está no bno `2 + i` (pré-alocados em sequência no `create`); sem diretório |
-| Função | `hash_value(key, seed) % N`, com `seed = params.get("seed", 0)` salva no meta. O P5 precisa forçar N e seed iguais em duas tabelas para o *bucket-join* |
+| Função | INT: `(key + seed) % N`; outros tipos: `hash_value(key, seed) % N` (D-P2-14), com `seed = params.get("seed", 0)` salva no meta. O P5 precisa forçar N e seed iguais em duas tabelas para o *bucket-join* |
 | Colisão (overflow) | encadeamento de blocos de overflow, alocados sob demanda; inserção no primeiro bloco da cadeia com espaço |
 | Skew | NOT UNIQUE de baixa cardinalidade concentra registros num bucket (todos os iguais caem juntos, independentemente de N). **Caso real da nossa matriz:** `aluno` organizado por hash em `curso` (50 valores, ~1 000 alunos por curso). Com o N padrão (~2 500 buckets) sobrariam ~2 450 buckets vazios que o `scan` lê à toa. Recomendação: em NOT UNIQUE, `N = min(N_padrão, V(A))`, com `V(A)` de `params["distinct"]` (a bancada passa). Relate em `stats()` `max_chain` e `avg_chain` |
 | Fator de carga | `stats()["load_x1000"] = 1000·n_records / (N·bfr_est)`. `reorganize()` refaz o hash com N recalculado para o n atual |

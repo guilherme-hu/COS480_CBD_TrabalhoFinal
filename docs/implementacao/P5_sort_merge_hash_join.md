@@ -153,7 +153,7 @@ O `_Overflow` precisa ser tratado **antes** de qualquer `yield` daquela partiç�
 
 ### 4.3 Aproveitando o hash primário (`prepartitioned` e `bucket-join`)
 
-O `HashFile` já divide os dados por `bucket_of(k) = hash_value(k, seed) % N`. Agrupe os buckets em `n_h` partições: **partição `j` = buckets `{i : i % n_h == j}`**.
+O `HashFile` já divide os dados por `bucket_of(k)` (`(k + seed) % N` para chave INT, `hash_value(k, seed) % N` para as outras, D-P2-14 do P2). Agrupe os buckets em `n_h` partições: **partição `j` = buckets `{i : i % n_h == j}`**.
 
 - O lado HASH **não é particionado**: a partição `j` dele é lida com `scan_bucket(i)` para cada `i ≡ j (mod n_h)`. Economiza `2·b` (gravar e reler as partições desse lado).
 - O outro lado é particionado com a **mesma** regra: `hf.bucket_of(rec[k]) % n_h`, usando o `bucket_of` do arquivo hash e não o `hash_value` com seed própria.
