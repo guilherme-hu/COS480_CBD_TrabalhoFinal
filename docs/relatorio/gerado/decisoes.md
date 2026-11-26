@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 37 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 39 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
@@ -30,6 +30,8 @@ Gerado de `docs/decisoes/`: 37 cartões, 0 provisórios. A última coluna diz em
 | D-P2-12 | Catálogo: formato e onde guardar | decidida | Estruturas dos arquivos e dos cabeçalhos |
 | D-P2-13 | Catálogo: quando gravar e forçar | decidida | Estruturas dos arquivos e dos cabeçalhos |
 | D-P2-14 | Hash: a função que escolhe o bucket | decidida | Funções de hash |
+| D-P2-15 | Hash: estrutura e tamanho do bucket | decidida | Estruturas dos arquivos e dos cabeçalhos |
+| D-P2-16 | Hash: número de buckets N e fator de carga | decidida | Funções de hash |
 | D-P6-01 | Número de buckets comum nos pares hash do bucket-join | decidida | Funções de hash |
 | D-P6-02 | Memória do buffer constante em bytes no experimento de tamanho de bloco | decidida | Tamanhos de bloco; Descrição da base, dos campos e das chaves |
 | D-P6-03 | Seeds por tabela e distribuições dos dados | decidida | Descrição da base, dos campos e das chaves |
