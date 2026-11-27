@@ -4,7 +4,7 @@ Implementa: DataFile (HeapFile) e TempFile (TempHeap) de cbd/contracts.py.
 Usa: BufferPool (P1), SlottedPage e RecordCodec (P2).
 Decisões: D-P2-06 (RecordTooLarge no insert, antes de tocar em página), D-P2-07 e D-P2-08 (slotted page,
 compactação preguiçosa), D-P2-09 (mapa de espaço livre com 1 byte por bloco), D-P2-10 (RID de 6 B), D-P2-11
-(reorganize só por comando).
+(reorganize só por comando), D-P2-19 (prefetch só no scan do HeapFile; o TempHeap, em WORK, não tem).
 Ver docs/decisoes/P2.md. A carga em massa enche os blocos na ordem de chegada (guia P2 §5.3).
 
 Layout do arquivo do heap:
@@ -16,7 +16,7 @@ Layout do arquivo do heap:
                bloco); o byte vale livre·256 // B, arredondado para baixo (D-P2-09). Páginas além da 1ª
                são criadas quando o arquivo passa de P blocos
 
-Invariantes: no máximo 1 página fixada por iterador; a entrada do mapa da cauda não é mantida (a cauda é
+Invariantes: no máximo 1 página fixada por iterador, ou 1 + k no scan com cfg.prefetch = k (D-P2-19); a entrada do mapa da cauda não é mantida (a cauda é
 tentada primeiro); o mapa é uma dica: uma entrada errada é corrigida quando o bloco é pinado.
 n_deleted = slots apagados que ainda existem (o insert que reaproveita um deles desconta). A meta é
 regravada a cada mudança: ela fica no buffer, então custa 1 pin e nenhum I/O até sair dele.
@@ -60,6 +60,65 @@ def _fresh_page(bp, fid, ptype, data):
     return page, sp
 
 
+def _allow_prefetch(df):
+    """D-P2-19: declara df.fid apto ao prefetch do P1 (D-P1-12), que só pré-lê dentro de bp.seq_scan.
+
+    Só em DATA e INDEX: o P1 recusa CATALOG (o heap do catálogo) e WORK (o TempHeap). O arquivo inteiro (meta,
+    mapa e dados) mora na área df.ptype, como o P1 exige. Chamado a cada fid novo (abrir, criar, reorganize).
+    """
+    if df.ptype in (PageType.DATA, PageType.INDEX):
+        df.bp.allow_prefetch(df.fid, df.ptype)
+
+
+def _view(sp, slot):
+    """Bytes do slot, ou None se o slot não existe ou está apagado."""
+    return sp.get(slot) if 0 <= slot < sp.n_slots() else None
+
+
+def _rebuild(df, reload):
+    """Miolo do reorganize do heap e do hash: copia os vivos de df para um temporário, recria o arquivo vazio
+    com o mesmo nome e chama reload(registros do temporário). Os RIDs mudam.
+
+    Falha na cópia (ou página de df fixada, que o drop_file recusa antes de descartar nada): o original fica
+    inteiro e o temporário é apagado. Falha depois de apagar o original: o temporário é a única cópia, então fica
+    no disco (gravado) e a exceção ganha uma nota com o nome dele; df fica apontando para um arquivo parcial e os
+    índices da tabela não são refeitos, até alguém restaurar a partir do temporário (um 2º reorganize antes
+    disso copiaria o arquivo parcial para um __reorg1 e deixaria o __reorg0 completo de lado).
+    LIMITAÇÃO: não é atômico; o FileManager não tem rename, e renomear o .dat por fora dele furaria a camada 4.
+    """
+    k = 0
+    while df.bp.fm.exists(f"{df.name}__reorg{k}"):          # fm.create recriaria outro arquivo
+        k += 1
+    tmp = TempHeap(df.bp, f"{df.name}__reorg{k}", df.schema)
+    try:
+        for _, rec in df.scan():
+            tmp.append(rec)
+        tmp.finish()
+        df.bp.drop_file(df.fid)                          # ou falha sem mudar nada, ou o original deixa de existir
+    except BaseException:
+        tmp.drop()
+        raise
+    try:
+        df.bp.fm.delete(df.fid)
+        df.fid = df.bp.fm.create(df.name)
+        _allow_prefetch(df)                              # D-P2-19: o fid mudou
+        df._reset()
+        df._new_meta()
+        rows = tmp.scan()
+        try:
+            reload(rows)
+        finally:
+            rows.close()                                 # solta a página WORK se a recarga falhar
+    except BaseException as e:
+        e.add_note(f"{df.name}: o reorganize falhou depois de apagar o original; os registros estão em {tmp.name}")
+        try:
+            df.bp.close_file(tmp.fid)                    # grava a cópia: é a única que sobrou
+        except Exception as e2:
+            e.add_note(f"e gravar {tmp.name} também falhou: {e2!r}")
+        raise
+    tmp.drop()
+
+
 class HeapFile:
     """Arquivo heap: registros em qualquer bloco com espaço, achado pelo mapa depois de remoções."""
 
@@ -72,6 +131,7 @@ class HeapFile:
         self._b = bp.block_size
         self._max = SlottedPage.max_record(self._b)
         self._per = self._FSM_PER_PAGE or self._b
+        _allow_prefetch(self)
         self._reset()
 
     def _reset(self):
@@ -117,10 +177,12 @@ class HeapFile:
     def force(self, blocks=()):
         """Gravação forçada (D-P2-13; enunciado §2.2.7): bp.force nas páginas sujas entre `blocks`, a meta e o mapa.
 
-        `blocks` são os blocos de dados que quem chama alterou (os dos RIDs que inseriu ou apagou). Página limpa
+        `blocks` são os blocos de dados que quem chama alterou (os dos RIDs que inseriu ou apagou). Ordem da D-P2-13
+        (detalhes primeiro, "ponteiro" por último): os dados, depois o mapa, por último a meta. Página limpa
         não é gravada. Custo: 1 gravação forçada por página suja; uma página do mapa fora do buffer custa 1 leitura.
         """
-        for bno in sorted({1, *self._fsm, *blocks}):
+        control = [*self._fsm, 1]
+        for bno in [*sorted(set(blocks) - set(control)), *control]:
             with self.bp.page(self.fid, bno, self.ptype) as p:
                 if p.dirty:
                     self.bp.force(p)
@@ -256,7 +318,7 @@ class HeapFile:
         bno, slot = self._locate(ptr)
         with self.bp.page(self.fid, bno, self.ptype) as page:
             sp = SlottedPage(page.data)
-            if not 0 <= slot < sp.n_slots() or sp.get(slot) is None:
+            if _view(sp, slot) is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
             sp.delete(slot)
             free = sp.free_space()
@@ -271,25 +333,35 @@ class HeapFile:
         """Registro do RID. KeyError se o slot não existir ou estiver apagado. Custo: 1 bloco."""
         bno, slot = self._locate(ptr)
         with self.bp.page(self.fid, bno, self.ptype) as page:
-            sp = SlottedPage(page.data)
-            view = sp.get(slot) if 0 <= slot < sp.n_slots() else None
+            view = _view(SlottedPage(page.data), slot)
             if view is None:
                 raise KeyError(f"{self.name}: {ptr} não existe")
             return self.codec.decode(view)
 
     def scan(self):
-        """Todos os registros, (RID, registro), bloco a bloco. 1 página fixada por vez. Custo: b leituras."""
-        for a, z in list(self._ranges):
-            for bno in range(a, z + 1):
-                page = self.bp.pin(self.fid, bno, self.ptype, seq=True)
-                try:
-                    sp = SlottedPage(page.data)
-                    for slot in range(sp.n_slots()):
-                        view = sp.get(slot)
-                        if view is not None:
-                            yield RID(bno, slot), self.codec.decode(view)
-                finally:
-                    self.bp.unpin(page, toss=True)
+        """Todos os registros, (RID, registro), bloco a bloco. Custo: b leituras, as mesmas com ou sem prefetch.
+
+        D-P2-19: lê pelo cursor bp.seq_scan, então com cfg.prefetch = k cada miss traz também os k blocos
+        seguintes (misses ≈ ⌈b / (k + 1)⌉ quando os dados terminam no fim do arquivo). O cursor segura até
+        1 + k páginas; quem para no meio fecha o iterador.
+        """
+        k = self.bp.cfg.prefetch
+        ranges = list(self._ranges)
+        end = max([z for _, z in ranges] + self._fsm, default=0)   # último bloco do arquivo
+        with self.bp.seq_scan(self.fid, self.ptype) as cur:
+            for a, z in ranges:
+                # D-P2-19: o P1 pré-lê os k blocos seguintes do arquivo, sejam de dados ou do mapa. Numa faixa
+                # seguida por outro bloco (uma página do mapa), os últimos k blocos vêm sem cursor, para nenhuma
+                # pré-leitura passar de z (ai/P2/review.md, revisão da #83).
+                last_cur = z if z == end else z - k
+                for bno in range(a, z + 1):
+                    with (cur.page(bno, toss=True) if bno <= last_cur
+                          else self.bp.page(self.fid, bno, self.ptype, toss=True)) as page:
+                        sp = SlottedPage(page.data)
+                        for slot in range(sp.n_slots()):
+                            view = sp.get(slot)
+                            if view is not None:
+                                yield RID(bno, slot), self.codec.decode(view)
 
     def search(self, key):
         raise NotApplicable("heap não tem chave de organização: use scan ou um índice")
@@ -331,31 +403,11 @@ class HeapFile:
     def reorganize(self):
         """Reescreve o heap só com os registros vivos (os RIDs mudam). Custo: b + 3·b' blocos.
 
-        Copia os vivos para um temporário, recria o arquivo com o mesmo nome e recarrega com bulk_load.
+        Copia os vivos para um temporário, recria o arquivo com o mesmo nome e recarrega com bulk_load (_rebuild:
+        o que acontece numa falha e a LIMITAÇÃO de não ser atômico). O guia previa <nome>__new + rename (2·b).
         D-P2-11: só por comando; quem chama decide olhando stats()['deleted'] (revisitar se o estresse precisar).
-        LIMITAÇÃO: não é atômico (uma falha entre apagar e recarregar perde os dados); o FileManager não tem
-        rename, e renomear o .dat por fora dele furaria a camada 4. O guia previa <nome>__new + rename (2·b).
         """
-        k = 0
-        while self.bp.fm.exists(f"{self.name}__reorg{k}"):          # fm.create recriaria outro arquivo
-            k += 1
-        tmp = TempHeap(self.bp, f"{self.name}__reorg{k}", self.schema)
-        try:
-            for _, rec in self.scan():
-                tmp.append(rec)
-            tmp.finish()
-            self.bp.drop_file(self.fid)
-            self.bp.fm.delete(self.fid)
-            self.fid = self.bp.fm.create(self.name)
-            self._reset()
-            self._new_meta()
-            rows = tmp.scan()
-            try:
-                self.bulk_load(rows)
-            finally:
-                rows.close()                             # solta a página WORK se o bulk_load falhar
-        finally:
-            tmp.drop()
+        _rebuild(self, self.bulk_load)
 
     def encode_ptr(self, ptr):
         try:
@@ -385,8 +437,7 @@ class TempHeap:
         self.codec = RecordCodec(schema)
         self._max = SlottedPage.max_record(bp.block_size)
         self._out = self._sp = None
-        self._bnos = []
-        self._n = 0
+        self._blocks = self._n = 0                       # arquivo novo: os blocos são 1, 2, ..., _blocks
 
     def append(self, rec):
         """Acrescenta um registro, mantendo uma página de saída fixada."""
@@ -396,7 +447,7 @@ class TempHeap:
                 self.bp.unpin(self._out, dirty=True)
                 self._out = self._sp = None              # já solta: drop/finish não podem soltá-la de novo
             self._out, self._sp = _fresh_page(self.bp, self.fid, PageType.WORK, data)
-            self._bnos.append(self._out.bno)
+            self._blocks += 1
         self._n += 1
 
     def finish(self):
@@ -406,10 +457,10 @@ class TempHeap:
             self._out = self._sp = None
 
     def scan(self):
-        """Os registros na ordem do append; 1 página fixada por vez, seq=True, toss=True."""
+        """Os registros na ordem do append; 1 página fixada por vez, toss=True. Sem prefetch: o P1 não o permite em WORK."""
         if self._out is not None:
             raise RuntimeError(f"{self.name}: chame finish() antes do scan")
-        for bno in self._bnos:
+        for bno in range(1, self._blocks + 1):
             page = self.bp.pin(self.fid, bno, PageType.WORK, seq=True)
             try:
                 sp = SlottedPage(page.data)
@@ -419,7 +470,7 @@ class TempHeap:
                 self.bp.unpin(page, toss=True)
 
     def n_blocks(self):
-        return len(self._bnos)
+        return self._blocks
 
     def n_records(self):
         return self._n

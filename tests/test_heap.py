@@ -3,6 +3,7 @@
 N1/N2: o heap sobre o buffer pool real (fixture `bp` ou um pool com outro tamanho de bloco).
 N3: a base do gerador. N4: contagens de blocos com cache frio. N5: operações aleatórias contra um dict.
 """
+import math
 import random
 
 import pytest
@@ -17,6 +18,20 @@ from cbd.storage.file_manager import FileManager
 
 S = Schema("t", (Field("k", FType.INT), Field("v", FType.VARCHAR, 3000)))
 SPEC = OrgSpec(Org.HEAP)
+
+
+def read_temp_after_crash(root, name, schema):
+    # "Queda": outro FileManager e outro BufferPool leem só o que está no disco (pelo buffer, nunca fm.read).
+    fm = FileManager(StorageConfig(root_dir=str(root)))
+    pool = BufferPool(fm, BufferConfig())
+    fid, codec, out = fm.open(name), RecordCodec(schema), []
+    for bno in range(1, fm.n_blocks(fid) + 1):
+        with pool.page(fid, bno, PageType.WORK) as p:
+            sp = SlottedPage(p.data)
+            out += [codec.decode(sp.get(s)) for s in range(sp.n_slots())]
+    pool.close_file(fid)
+    fm.close_all()
+    return sorted(out)
 
 
 def rec(i, n=100):
@@ -636,7 +651,7 @@ def test_open_of_non_heap_closes_the_file(bp):
     assert {f for f in range(1, 100) if bp.fm.is_open(f)} == before
 
 
-def test_reorganize_failure_cleans_up(bp, monkeypatch):
+def test_reorganize_failure_after_delete_keeps_the_temp(bp, tmp_path, monkeypatch):
     h = HeapFile.create(bp, "h", S, SPEC)
     for i in range(300):
         h.insert(rec(i, 300))
@@ -648,10 +663,36 @@ def test_reorganize_failure_cleans_up(bp, monkeypatch):
             raise OSError("disco cheio")
         return real(fid, ptype)
     monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError) as err:
+        h.reorganize()
+    monkeypatch.undo()
+    # Revisto no /code-review do PR #102 (26/11): a falha vem na recarga, depois de apagar o original, e o
+    # temporário é a única cópia dos 300 registros. Antes ele era apagado aqui (perda de dados); agora fica no
+    # disco (lido por outro FileManager, como depois de uma queda) e a exceção diz o nome. Antes este teste se
+    # chamava test_reorganize_failure_cleans_up; o que ele pegava (página WORK fixada, review.md) continua coberto.
+    assert bp.pinned() == 0
+    assert any("h__reorg0" in note for note in err.value.__notes__)
+    assert read_temp_after_crash(tmp_path, "h__reorg0", S) == sorted(rec(i, 300) for i in range(300))
+
+
+def test_reorganize_failure_during_the_copy_cleans_up(bp, monkeypatch):
+    # Falha antes de apagar o original (na cópia para o temporário): o original fica inteiro, o temporário some.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    for i in range(300):
+        h.insert(rec(i, 300))
+    real, calls = bp.new_page, []
+
+    def flaky(fid, ptype=PageType.DATA):
+        calls.append(1)
+        if ptype is PageType.WORK and len(calls) > 3:
+            raise OSError("disco cheio")
+        return real(fid, ptype)
+    monkeypatch.setattr(bp, "new_page", flaky)
     with pytest.raises(OSError):
         h.reorganize()
     monkeypatch.undo()
     assert bp.pinned() == 0 and not bp.fm.exists("h__reorg0")
+    assert sorted(r for _, r in h.scan()) == [rec(i, 300) for i in range(300)]
 
 
 # ---------- 2ª revisão independente ----------
@@ -737,3 +778,245 @@ def test_force_includes_the_free_space_map(bp):
     h.force([rids[0].block])
     assert bp.stats.forced_writes - f0 == 3                  # o bloco, a meta e o mapa
     h.close()
+
+
+def test_reorganize_with_an_open_iterator_changes_nothing(bp):
+    # Revisor de corretude da revisão do PR #102 (26/11): com uma página do heap fixada, o drop_file recusa
+    # antes de descartar nada. O original está inteiro, então o temporário não pode ficar no disco, e a nota
+    # "falhou depois de apagar o original" seria falsa.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    for i in range(50):
+        h.insert(rec(i, 300))
+    it = h.scan()
+    next(it)                                               # página de dados fixada
+    with pytest.raises(RuntimeError) as err:
+        h.reorganize()
+    it.close()
+    assert not bp.fm.exists("h__reorg0")
+    assert not getattr(err.value, "__notes__", None)
+    assert sorted(r for _, r in h.scan()) == [rec(i, 300) for i in range(50)]
+
+
+def test_heap_fetch_and_delete_at_the_slot_boundaries(bp):
+    # Revisor de testes (26/11): slots -1 e 1 com n_slots = 1, vizinhos da faixa válida do _view: KeyError.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    p = h.insert(rec(1, 10))
+    for bad in (RID(p.block, -1), RID(p.block, 1)):
+        with pytest.raises(KeyError):
+            h.fetch(bad)
+        with pytest.raises(KeyError):
+            h.delete(bad)
+    assert h.fetch(p) == rec(1, 10)
+
+
+# ---------- issue #105 (revisão do P6 dos PRs #99 a #102) ----------
+
+def test_force_writes_the_data_before_the_map_and_the_meta(bp, monkeypatch):
+    # #105, item 2 (D-P2-13: detalhes primeiro, ponteiro por último): os blocos de dados vão para o disco antes
+    # do mapa (bloco 2) e da meta (bloco 1). A versão anterior gravava em ordem crescente: 1, 2, 3.
+    h = HeapFile.create(bp, "h", S, SPEC)
+    rid = h.insert(rec(1))
+    order = []
+    real = bp.force
+    monkeypatch.setattr(bp, "force", lambda p: (order.append(p.bno), real(p))[1])
+    h.force([rid.block])
+    assert order == [3, 2, 1]
+
+
+def test_temp_keeps_no_list_that_grows_with_the_blocks(bp):
+    # #105, item 3: o temporário guardava um int por bloco (sempre 1, 2, ..., n), memória Python fora das
+    # M páginas (AGENTS §0, regra 6). Agora é um contador: nenhum atributo é uma coleção.
+    t = TempHeap(bp, "tmp", S)
+    for i in range(200):
+        t.append(rec(i, 900))                                  # 4 por bloco: 50 blocos
+    t.finish()
+    assert t.n_blocks() == 50
+    assert not any(isinstance(v, (list, set, dict, tuple)) for v in vars(t).values())
+    assert [r[0] for r in t.scan()] == list(range(200))
+    t.drop()
+
+
+# ---------- #83, D-P2-19: prefetch só nos scans completos ----------
+
+def prefetch_pool(root, k=8):
+    fm = FileManager(StorageConfig(root_dir=str(root)))
+    return BufferPool(fm, BufferConfig(prefetch=k))
+
+
+def close_pool(p):
+    assert p.pinned() == 0, "pin sem unpin"
+    p.flush_all()
+    p.fm.close_all()
+
+
+def test_scan_prefetch_keeps_reads_and_cuts_misses(tmp_path):
+    # Critério da #83: com prefetch = 8, o scan lê os mesmos b blocos (1 seek) que com prefetch = 0, mas
+    # cada miss traz o bloco pedido e os 8 seguintes: misses = ceil(b / 9) e prefetched = b − misses.
+    # Os dados vão do bloco 3 ao último bloco do arquivo (b < 4096: o mapa é só o bloco 2), então o
+    # prefetch nunca lê além do que o scan pede.
+    out = {}
+    for k in (0, 8):
+        p = prefetch_pool(tmp_path / str(k), k)
+        h = HeapFile.create(p, "h", S, SPEC)
+        h.bulk_load([rec(i, 200) for i in range(3000)])
+        b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+        cold(p)
+        assert sum(1 for _ in h.scan()) == 3000
+        out[k] = (p.fm.io.reads, p.fm.io.seeks, p.stats.misses, p.stats.prefetched)
+        close_pool(p)
+    assert b > 128
+    assert out[0] == (b, 1, b, 0)
+    m = math.ceil(b / 9)
+    assert out[8] == (b, 1, m, b - m)
+
+
+def test_reopened_heap_also_prefetches(tmp_path):
+    # O allow_prefetch fica no construtor: vale para create e para open.
+    p = prefetch_pool(tmp_path)
+    h = HeapFile.create(p, "h", S, SPEC)
+    h.bulk_load([rec(i, 200) for i in range(300)])
+    h.close()
+    h = HeapFile.open(p, "h", S, SPEC)
+    cold(p)
+    assert sum(1 for _ in h.scan()) == 300
+    b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+    m = math.ceil(b / 9)
+    assert b > 9 and (p.fm.io.reads, p.stats.misses, p.stats.prefetched) == (b, m, b - m)
+    h.close()
+    close_pool(p)
+
+
+def test_prefetch_cuts_seeks_when_another_file_reads_in_between(tmp_path):
+    # O efeito que o P6 mede no INL (D-P6-10): entre dois blocos do scan, 1 leitura de outro arquivo.
+    # O outro arquivo é lido de trás para frente, para nenhuma das leituras dele ser sequencial.
+    # k = 0: cada leitura muda de arquivo = 1 seek: 2b seeks. k = 8: o scan só faz seek nos seus
+    # ceil(b / 9) misses (os 8 blocos pré-lidos vêm em sequência), mais os b do outro arquivo.
+    seeks = {}
+    for k in (0, 8):
+        p = prefetch_pool(tmp_path / str(k), k)
+        h = HeapFile.create(p, "h", S, SPEC)
+        h.bulk_load([rec(i, 200) for i in range(3000)])
+        o = HeapFile.create(p, "o", S, SPEC)
+        o.bulk_load([rec(i, 200) for i in range(3000)])
+        first = {}
+        for rid, _ in o.scan():
+            first.setdefault(rid.block, rid)
+        far = [first[bno] for bno in sorted(first, reverse=True)]
+        b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+        cold(p)
+        last = None
+        for rid, _ in h.scan():
+            if rid.block != last:
+                last = rid.block
+                o.fetch(far.pop(0))
+        seeks[k] = p.fm.io.seeks
+        assert p.fm.io.reads == 2 * b
+        close_pool(p)
+    assert seeks == {0: 2 * b, 8: math.ceil(b / 9) + b}
+
+
+def test_scan_stopped_halfway_releases_the_prefetched_pages(tmp_path):
+    # O cursor segura até 1 + k páginas; um scan largado no meio (break ou close) solta todas.
+    p = prefetch_pool(tmp_path)
+    h = HeapFile.create(p, "h", S, SPEC)
+    h.bulk_load([rec(i, 200) for i in range(300)])
+    cold(p)
+    g = h.scan()
+    next(g)
+    assert p.pinned() == 9                                  # a página atual + as 8 pré-lidas
+    g.close()
+    assert p.pinned() == 0
+    for _ in h.scan():
+        break
+    close_pool(p)
+
+
+def test_fetch_and_temp_do_not_prefetch(tmp_path):
+    # Regressão: fetch é 1 bloco (pin fora de cursor nunca pré-lê); o TempHeap mora na área WORK, onde o P1
+    # proíbe prefetch (um allow_prefetch em WORK levantaria ValueError antes da asserção).
+    p = prefetch_pool(tmp_path)
+    h = HeapFile.create(p, "h", S, SPEC)
+    rids = [h.insert(rec(i, 200)) for i in range(300)]
+    t = TempHeap(p, "__tmp_pf", S)
+    for i in range(300):
+        t.append(rec(i, 200))
+    t.finish()
+    cold(p)
+    assert h.fetch(rids[150]) == rec(150, 200)
+    assert [r[0] for r in t.scan()] == list(range(300))
+    assert p.stats.prefetched == 0 and p.fm.io.reads == 1 + t.n_blocks()
+    t.drop()
+    close_pool(p)
+
+
+def test_reorganized_heap_still_prefetches(tmp_path):
+    # O reorganize recria o arquivo com outro fid (D-P2-11): o allow_prefetch precisa ser refeito nele.
+    p = prefetch_pool(tmp_path)
+    h = HeapFile.create(p, "h", S, SPEC)
+    rids = [h.insert(rec(i, 200)) for i in range(1200)]
+    for r in rids[::2]:
+        h.delete(r)
+    old = h.fid
+    h.reorganize()
+    assert h.fid != old
+    cold(p)
+    assert sum(1 for _ in h.scan()) == 600
+    b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+    m = math.ceil(b / 9)
+    assert b > 9 and (p.fm.io.reads, p.stats.misses, p.stats.prefetched) == (b, m, b - m)
+    close_pool(p)
+
+
+# ---------- revisão independente da #83 (26/11) ----------
+
+class SmallMapHeap(HeapFile):
+    _FSM_PER_PAGE = 8                                       # 1 página do mapa a cada 8 blocos: mapa entre os dados
+
+
+def test_prefetch_does_not_read_the_map_pages(tmp_path):
+    # Defeito: o P1 pré-lê os k blocos seguintes do arquivo, sejam de dados ou do mapa. Com o mapa entre as
+    # faixas (carga por insert) ou depois dos dados (bulk_load acima de P blocos), o scan lia páginas do mapa
+    # que ninguém pediu (32 blocos de dados: 36 leituras). Correção: os últimos k blocos de uma faixa seguida
+    # por outro bloco do arquivo são lidos sem prefetch, então nenhuma pré-leitura passa do fim da faixa.
+    for how in ("bulk", "insert"):
+        out = {}
+        for k in (0, 8):
+            p = prefetch_pool(tmp_path / f"{how}{k}", k)
+            h = SmallMapHeap.create(p, "h", S, SPEC)
+            recs = [rec(i, 200) for i in range(600)]
+            if how == "bulk":
+                h.bulk_load(recs)
+            else:
+                for r in recs:
+                    h.insert(r)
+            b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+            assert len(h._fsm) > 1
+            cold(p)
+            assert sum(1 for _ in h.scan()) == 600
+            out[k] = (p.fm.io.reads, p.stats.misses + p.stats.prefetched)
+            close_pool(p)
+        assert out[0] == (b, b) and out[8] == (b, b), (how, out)
+
+
+def test_failed_reorganize_releases_the_scan_cursor(tmp_path, monkeypatch):
+    # Guarda (achado descartado da revisão da #83): uma falha ao copiar para o temporário poderia deixar o
+    # iterador do scan aberto enquanto o traceback existisse, com até 1 + k = 9 páginas fixadas. Não acontece:
+    # ao sair do for pela exceção, o CPython tira o iterador da pilha do frame e o gerador fecha na hora. Se
+    # alguém mudar o _rebuild para guardar o iterador numa variável, este teste pega.
+    p = prefetch_pool(tmp_path)
+    h = HeapFile.create(p, "h", S, SPEC)
+    h.bulk_load([rec(i, 200) for i in range(300)])
+    cold(p)
+    calls = []
+
+    def boom(self, r):
+        calls.append(r)
+        if len(calls) == 50:
+            raise OSError("disco cheio")
+    monkeypatch.setattr(TempHeap, "append", boom)
+    with pytest.raises(OSError) as info:
+        h.reorganize()
+    assert p.pinned() == 0, info
+    monkeypatch.undo()
+    assert sum(1 for _ in h.scan()) == 300
+    close_pool(p)

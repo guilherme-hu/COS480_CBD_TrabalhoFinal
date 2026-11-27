@@ -40,6 +40,24 @@ def keys_of(rows):
     return sorted(r[0] for _, r in rows)
 
 
+def read_temp_after_crash(root, name, schema):
+    # "Queda": outro FileManager e outro BufferPool leem só o que está no disco (pelo buffer, nunca fm.read).
+    from cbd.contracts import BufferConfig, StorageConfig
+    from cbd.records.codec import RecordCodec
+    from cbd.storage.buffer_pool import BufferPool
+    from cbd.storage.file_manager import FileManager
+    fm = FileManager(StorageConfig(root_dir=str(root)))
+    pool = BufferPool(fm, BufferConfig())
+    fid, codec, out = fm.open(name), RecordCodec(schema), []
+    for bno in range(1, fm.n_blocks(fid) + 1):
+        with pool.page(fid, bno, PageType.WORK) as p:
+            sp = SlottedPage(p.data)
+            out += [codec.decode(sp.get(s)) for s in range(sp.n_slots())]
+    pool.close_file(fid)
+    fm.close_all()
+    return sorted(out)
+
+
 def chain_bnos(h, i):
     # Blocos do bucket i na ordem da cadeia, tirados dos Ptrs do scan_bucket (sem repetir).
     out = []
@@ -446,8 +464,7 @@ def test_scan_bucket_does_not_prefetch_other_buckets(tmp_path):
     fm = FileManager(StorageConfig(root_dir=str(tmp_path)))
     pool = BufferPool(fm, BufferConfig(prefetch=8))
     h = HashFile.create(pool, "h", S, spec(buckets=64))
-    h.bulk_load([rec(i, 100) for i in range(640)])
-    pool.allow_prefetch(h.fid, PageType.DATA)
+    h.bulk_load([rec(i, 100) for i in range(640)])         # o construtor já declarou o prefetch (D-P2-19)
     cold(pool)
     assert keys_of(h.scan_bucket(3)) == list(range(3, 640, 64))
     assert pool.fm.io.reads == 1
@@ -611,3 +628,208 @@ def test_random_ops_unique_with_cold_cache(bp, seed):
         if rng.random() < 0.05:
             cold(bp)
     assert sorted(h.scan()) == sorted(live.values())
+
+
+# ---------- /code-review e /ponytail-review do PR #102 (26/11) ----------
+
+def test_failed_reorganize_keeps_the_temp_copy(bp, tmp_path, monkeypatch):
+    # Defeito: uma falha depois de apagar o arquivo original apagava também o temporário, a única cópia que
+    # restava (o hash ficava com 0 registros). Agora o temporário fica no disco e a exceção diz o nome dele.
+    # 30 registros de 1 006 B, 4 por bloco: o temporário tem ceil(30 / 4) = 8 blocos WORK.
+    h = HashFile.create(bp, "h", S, spec(buckets=3))
+    h.bulk_load([rec(i) for i in range(30)])
+    real = bp.new_page
+
+    def flaky(fid, ptype=PageType.DATA):
+        if ptype is PageType.DATA:                         # a recarga: meta e buckets do arquivo novo
+            raise OSError("disco cheio")
+        return real(fid, ptype)
+    monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError) as err:
+        h.reorganize()
+    monkeypatch.undo()
+    assert bp.pinned() == 0
+    assert any("h__reorg0" in note for note in err.value.__notes__)
+    # Revisor de testes (26/11): n_blocks vem do contador em memória e não prova que o temporário foi gravado;
+    # lido por outro FileManager, como depois de uma queda, ele tem de ter os 30 registros.
+    assert read_temp_after_crash(tmp_path, "h__reorg0", S) == [rec(i) for i in range(30)]
+
+
+def test_failure_during_the_reorganize_copy_cleans_up(bp, monkeypatch):
+    # Se a falha vem antes de apagar o original (na cópia para o temporário), o original fica inteiro e o
+    # temporário some.
+    h = HashFile.create(bp, "h", S, spec(buckets=3))
+    h.bulk_load([rec(i) for i in range(30)])
+    real, calls = bp.new_page, []
+
+    def flaky(fid, ptype=PageType.DATA):
+        calls.append(1)
+        if ptype is PageType.WORK and len(calls) > 3:
+            raise OSError("disco cheio")
+        return real(fid, ptype)
+    monkeypatch.setattr(bp, "new_page", flaky)
+    with pytest.raises(OSError):
+        h.reorganize()
+    monkeypatch.undo()
+    assert bp.pinned() == 0 and not bp.fm.exists("h__reorg0")
+    assert keys_of(h.scan()) == list(range(30))
+
+
+def test_scan_bucket_rejects_a_float_index(bp):
+    # Defeito: scan_bucket(1.0) era aceito e devolvia RID(block=3.0, ...), que fetch e encode_ptr recusam.
+    h = HashFile.create(bp, "h", S, spec(buckets=4))
+    h.bulk_load([rec(i, 10) for i in range(8)])
+    with pytest.raises(IndexError):
+        list(h.scan_bucket(1.0))
+
+
+def test_failure_to_save_the_temp_keeps_the_original_error(bp, monkeypatch):
+    # Revisor de testes (26/11): se gravar o temporário também falhar, a exceção que sai é a da recarga, com as
+    # duas notas (onde estão os registros e que a gravação falhou).
+    h = HashFile.create(bp, "h", S, spec(buckets=3))
+    h.bulk_load([rec(i) for i in range(30)])
+    real_new = bp.new_page
+
+    def flaky(fid, ptype=PageType.DATA):
+        if ptype is PageType.DATA:
+            raise OSError("disco cheio")
+        return real_new(fid, ptype)
+
+    def bad_close(fid):
+        raise OSError("de novo")
+    monkeypatch.setattr(bp, "new_page", flaky)
+    monkeypatch.setattr(bp, "close_file", bad_close)
+    with pytest.raises(OSError, match="disco cheio") as err:
+        h.reorganize()
+    monkeypatch.undo()
+    assert any("h__reorg0" in n for n in err.value.__notes__)
+    assert any("também falhou" in n for n in err.value.__notes__)
+
+
+def test_fetch_and_delete_at_the_slot_boundaries(bp):
+    # Revisor de testes (26/11): os RIDs ruins dos outros testes ficam longe das bordas do _view. Com n_slots = 1,
+    # os slots -1 e 1 são os vizinhos da faixa válida e precisam dar KeyError (contrato), não AssertionError.
+    h = HashFile.create(bp, "h", S, spec(buckets=2))
+    p = h.insert(rec(1, 10))
+    for bad in (RID(p.block, -1), RID(p.block, 1)):
+        with pytest.raises(KeyError):
+            h.fetch(bad)
+        with pytest.raises(KeyError):
+            h.delete(bad)
+    assert h.fetch(p) == rec(1, 10)
+
+
+# ---------- issue #105 (revisão do P6 dos PRs #99 a #102) ----------
+
+def test_int_column_with_a_float_that_is_not_an_integer(bp):
+    # #105, item 4: numa coluna INT, search(inf) dava OverflowError e search(nan), ValueError (int(...)).
+    # Agora só float inteiro (5.0) vai para o ramo do mod; os outros vão para o hash_value e não acham nada.
+    h = HashFile.create(bp, "h", S, spec(buckets=7))
+    h.insert(rec(5, 10))
+    for k in (float("inf"), float("-inf"), float("nan"), 5.5):
+        assert list(h.search(k)) == []
+    assert len(list(h.search(5.0))) == 1
+
+
+def test_date_column_with_a_datetime_raises_type_error(bp):
+    # #105, item 4: datetime fica fora do domínio do hash_value (perderia a hora, D-P2-14): TypeError, como diz
+    # a docstring do bucket_of.
+    from datetime import date, datetime
+    d = HashFile.create(bp, "d", Schema("d", (Field("k", FType.DATE), Field("v", FType.INT))), spec(buckets=3))
+    d.insert((date(2026, 1, 1), 1))
+    with pytest.raises(TypeError):
+        list(d.search(datetime(2026, 1, 1, 10)))
+
+
+# ---------- #83, D-P2-19: prefetch só no scan completo ----------
+
+def prefetch_pool(root, k=8):
+    from cbd.contracts import BufferConfig, StorageConfig
+    from cbd.storage.buffer_pool import BufferPool
+    from cbd.storage.file_manager import FileManager
+    return BufferPool(FileManager(StorageConfig(root_dir=str(root))), BufferConfig(prefetch=k))
+
+
+def close_pool(p):
+    assert p.pinned() == 0, "pin sem unpin"
+    p.flush_all()
+    p.fm.close_all()
+
+
+def test_hash_scan_prefetch_keeps_reads_and_cuts_misses(tmp_path):
+    # O scan lê os blocos 2..último em ordem física (D-P2-17): b leituras e 1 seek com ou sem prefetch;
+    # com k = 8, misses = ceil(b / 9) e prefetched = b − misses. Vale também depois de fechar e abrir.
+    out = {}
+    for k in (0, 8):
+        p = prefetch_pool(tmp_path / str(k), k)
+        h = HashFile.create(p, "h", S, spec(buckets=64))
+        h.bulk_load([rec(i, 200) for i in range(3000)])
+        h.close()
+        h = HashFile.open(p, "h", S, spec(buckets=64))
+        st = h.stats()
+        b = st["blocks"] - st["meta_blocks"]
+        cold(p)
+        assert keys_of(h.scan()) == list(range(3000))
+        out[k] = (p.fm.io.reads, p.fm.io.seeks, p.stats.misses, p.stats.prefetched)
+        h.close()
+        close_pool(p)
+    assert st["overflow_blocks"] > 0 and b > 128
+    assert out[0] == (b, 1, b, 0)
+    m = math.ceil(b / 9)
+    assert out[8] == (b, 1, m, b - m)
+
+
+def test_search_and_scan_bucket_do_not_prefetch(tmp_path):
+    # Acessos a um bucket só: o bloco seguinte ao primário 2 + i é de outro bucket (D-P2-19, opção B
+    # preterida). N = 64, 1 bloco por bucket: cada um custa 1 leitura e nada é pré-lido.
+    p = prefetch_pool(tmp_path)
+    h = HashFile.create(p, "h", S, spec(buckets=64))
+    h.bulk_load([rec(i, 100) for i in range(640)])
+    cold(p)
+    assert keys_of(h.search(70)) == [70]
+    assert keys_of(h.scan_bucket(3)) == list(range(3, 640, 64))
+    assert (p.fm.io.reads, p.stats.prefetched) == (2, 0)
+    close_pool(p)
+
+
+def test_hash_scan_uses_toss_and_releases_the_cursor(tmp_path, monkeypatch):
+    # Revisão da #83: todo unpin do scan passa toss=True (o mutante sem toss sobrevivia), e um scan parado
+    # no meio solta a página atual e as 8 pré-lidas (1 + k = 9 fixadas enquanto ele está aberto).
+    p = prefetch_pool(tmp_path)
+    h = HashFile.create(p, "h", S, spec(buckets=16))
+    h.bulk_load([rec(i, 200) for i in range(600)])
+    cold(p)
+    g = h.scan()
+    next(g)
+    assert p.pinned() == 9
+    g.close()
+    assert p.pinned() == 0
+    tosses, unpin = [], p.unpin
+
+    def spy(page, dirty=False, toss=False):
+        tosses.append(toss)
+        return unpin(page, dirty=dirty, toss=toss)
+    cold(p)
+    monkeypatch.setattr(p, "unpin", spy)
+    assert len(keys_of(h.scan())) == 600
+    monkeypatch.undo()
+    b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+    assert tosses.count(True) == b                          # 1 unpin com toss por bloco lido pelo scan
+    close_pool(p)
+
+
+def test_reorganized_hash_still_prefetches(tmp_path):
+    # O reorganize do hash também troca o fid (_rebuild): o prefetch é refeito no arquivo novo.
+    p = prefetch_pool(tmp_path)
+    h = HashFile.create(p, "h", S, spec(buckets=16))
+    ptrs = [h.insert(rec(i, 200)) for i in range(600)]
+    for ptr in ptrs[::2]:
+        h.delete(ptr)
+    old = h.fid
+    h.reorganize()
+    b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+    cold(p)
+    assert h.fid != old and len(keys_of(h.scan())) == 300
+    m = math.ceil(b / 9)
+    assert b > 9 and (p.fm.io.reads, p.stats.misses, p.stats.prefetched) == (b, m, b - m)
+    close_pool(p)
