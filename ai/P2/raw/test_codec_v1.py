@@ -1,0 +1,279 @@
+"""Testes do codec de registros e das chaves que preservam a ordem (P2, issue #39).
+
+Decisões testadas: D-P2-01 (prefixo u16), D-P2-02 (sentinelas), D-P2-03 (LIST sem contagem),
+D-P2-04 (endereço como string), D-P2-05 (chaves em bytes). Ver docs/decisoes/P2.md.
+"""
+from datetime import date
+import math
+import random
+import struct
+
+import pytest
+
+from bench.generator import BASE_COUNTS, Dataset
+from bench.schema import SCHEMAS
+from cbd.contracts import Field, FType, RecordTooLarge, Schema
+from cbd.records.codec import MAX_LIST, RecordCodec, decode_key, encode_key, key_size
+
+ALL = Schema("t", (
+    Field("i", FType.INT), Field("f", FType.FLOAT), Field("d", FType.DATE), Field("c", FType.CHAR, 4),
+    Field("v", FType.VARCHAR, 10), Field("l", FType.LIST, 5),
+    Field("ni", FType.INT, nullable=True), Field("nf", FType.FLOAT, nullable=True),
+    Field("nd", FType.DATE, nullable=True), Field("nc", FType.CHAR, 3, nullable=True),
+    Field("nv", FType.VARCHAR, 10, nullable=True), Field("nl", FType.LIST, 5, nullable=True),
+))
+ROW = (7, -1.5, date(2001, 2, 3), "ab", "olá", ("x", "yy"), 1, 2.0, date(1999, 1, 1), "z", "", ())
+
+
+# ------------------------------------------------------------------ layout (N1)
+def test_layout_fixed_part_first_then_length_prefixed_variables():
+    # D-P2-01/02/03: fixos em ordem (INT 8, FLOAT 8, DATE 4, CHAR size), sem bitmap; depois cada
+    # variável com u16 de tamanho; LIST = u16 total + itens (u8 len, bytes), sem contagem.
+    s = Schema("s", (Field("a", FType.INT), Field("n", FType.VARCHAR, 9), Field("c", FType.CHAR, 3),
+                     Field("l", FType.LIST, 4)))
+    b = RecordCodec(s).encode((5, "ab", "x", ("p", "qq")))
+    expected = (struct.pack("<q", 5) + b"x\x00\x00"          # parte fixa: a, c
+                + struct.pack("<H", 2) + b"ab"                # n
+                + struct.pack("<H", 5) + b"\x01p\x02qq")      # l: 1+1 + 1+2 = 5 bytes
+    assert b == expected
+
+
+def test_null_sentinels_take_the_field_space():
+    # D-P2-02: NULL ocupa o espaço do campo; trocar NULL por valor não muda o tamanho dos fixos.
+    s = Schema("s", (Field("i", FType.INT, nullable=True), Field("f", FType.FLOAT, nullable=True),
+                     Field("d", FType.DATE, nullable=True), Field("c", FType.CHAR, 2, nullable=True),
+                     Field("v", FType.VARCHAR, 5, nullable=True)))
+    c = RecordCodec(s)
+    b = c.encode((None, None, None, None, None))
+    assert b[:8] == struct.pack("<q", -2**63)
+    assert math.isnan(struct.unpack("<d", b[8:16])[0])
+    assert b[16:20] == struct.pack("<i", 0)
+    assert b[20] == 0xFF
+    assert b[22:] == b"\xff\xff"                     # VARCHAR NULL: só o u16 0xFFFF
+    assert len(b) == len(c.encode((1, 1.0, date.today(), "a", ""))) == 24
+
+
+# ------------------------------------------------------------------ roundtrip (N1)
+def test_codec_roundtrip():
+    c = RecordCodec(ALL)
+    assert c.decode(c.encode(ROW)) == ROW
+    nulls = ROW[:6] + (None,) * 6
+    assert c.decode(c.encode(nulls)) == nulls
+    # LIST vazia e VARCHAR vazio não são NULL; LIST cheia (MAX_LIST itens de `size`); limites
+    edge = (2**63 - 1, float("inf"), date.max, "ãé", "x" * 10, ("abcde",) * MAX_LIST,
+            -2**63 + 1, -0.0, date.min, "", "1234567890", ())
+    got = c.decode(c.encode(edge))
+    assert got == edge and math.copysign(1, got[7]) == -1.0      # −0,0 preservado no registro
+    assert len(c.encode(edge)) <= c.max_size
+    # memoryview também é aceito
+    assert c.decode(memoryview(c.encode(ROW))) == ROW
+    # LIST pode chegar como list; volta como tuple
+    assert c.decode(c.encode(ROW[:5] + (["x", "yy"],) + ROW[6:]))[5] == ("x", "yy")
+
+
+def test_max_size_is_the_largest_possible_record():
+    c = RecordCodec(ALL)
+    biggest = (1, 1.0, date.today(), "abcd", "x" * 10, ("y" * 5,) * MAX_LIST,
+               1, 1.0, date.today(), "abc", "x" * 10, ("y" * 5,) * MAX_LIST)
+    # fixos: 8+8+4+4 + 8+8+4+3 = 47; VARCHAR 2+10 (×2); LIST 2 + 16·(1+5) = 98 (×2)
+    assert c.max_size == len(c.encode(biggest)) == 47 + 2 * 12 + 2 * 98
+
+
+def test_record_too_large_for_the_block():
+    s = Schema("s", (Field("v", FType.VARCHAR, 5000),))
+    assert len(RecordCodec(s).encode(("x" * 5000,))) == 5002      # sem limite de bloco: só o formato
+    c = RecordCodec(s, block_size=4096)
+    c.encode(("x" * (4096 - 32 - 2),))                              # exatamente max_record(4096) = 4064
+    with pytest.raises(RecordTooLarge):
+        c.encode(("x" * (4096 - 32 - 1),))
+
+
+@pytest.mark.parametrize("bad", [
+    (None,) + ROW[1:],                                 # None em campo obrigatório
+    (-2**63,) + ROW[1:],                               # sentinela de INT como dado
+    (2**63,) + ROW[1:],                                # fora de 64 bits
+    ROW[:1] + (math.nan,) + ROW[2:],                   # NaN é a sentinela de FLOAT
+    ROW[:3] + ("abcde",) + ROW[4:],                    # CHAR maior que size
+    ROW[:3] + ("éé€",) + ROW[4:],                      # CHAR: 7 bytes utf-8 > 4
+    ROW[:3] + ("a\x00",) + ROW[4:],                    # CHAR com \x00 (seria cortado no decode)
+    ROW[:4] + ("x" * 11,) + ROW[5:],                   # VARCHAR maior que size
+    ROW[:5] + (("x",) * (MAX_LIST + 1),) + ROW[6:],    # LIST com itens demais
+    ROW[:5] + (("abcdef",),) + ROW[6:],                # item maior que size
+    ROW[:5] + ("abc",) + ROW[6:],                      # LIST que não é sequência de str
+    ROW[:-1],                                          # aridade errada
+])
+def test_encode_rejects_invalid_values(bad):
+    with pytest.raises(ValueError):
+        RecordCodec(ALL).encode(bad)
+
+
+def test_schema_limits_are_checked_once():
+    with pytest.raises(ValueError):
+        RecordCodec(Schema("s", (Field("l", FType.LIST, 256),)))       # item com u8 de tamanho
+    with pytest.raises(ValueError):
+        RecordCodec(Schema("s", (Field("c", FType.CHAR, 0),)))
+    with pytest.raises(ValueError):
+        RecordCodec(Schema("s", (Field("v", FType.VARCHAR, 0xFFFF),)))  # 0xFFFF é o NULL
+
+
+# ------------------------------------------------------------------ dados corrompidos (N1)
+def test_codec_corrupt():
+    c = RecordCodec(ALL)
+    good = c.encode(ROW)
+    cases = [good[:n] for n in range(len(good))]             # todo truncamento
+    cases.append(good + b"\x00")                              # byte sobrando
+    fixed = 8 + 8 + 4 + 4 + 8 + 8 + 4 + 3                     # início do 1º variável (v)
+    cases.append(good[:fixed] + struct.pack("<H", 11) + good[fixed + 2:])     # VARCHAR > size
+    cases.append(good[:fixed] + struct.pack("<H", 900) + good[fixed + 2:])    # tamanho fora do registro
+    lpos = fixed + 2 + len("olá".encode())                    # LIST l: u16 total, 1+1, 1+2
+    cases.append(good[:lpos] + struct.pack("<H", 5) + b"\x09x\x02yy" + good[lpos + 7:])   # item passa do campo
+    cases.append(good[:lpos] + struct.pack("<H", 5) + b"\x01x\x06yy" + good[lpos + 7:])   # idem
+    cases.append(good[:fixed] + b"\x02\x00\xff\xfe" + good[fixed + 4:])       # utf-8 inválido
+    cases.append(struct.pack("<q", -2**63) + good[8:])        # NULL em INT obrigatório
+    cases.append(good[:20] + b"\xff" + good[21:])             # NULL em CHAR obrigatório
+    for bad in cases:
+        with pytest.raises(ValueError):
+            c.decode(bad)
+    many = Schema("s", (Field("l", FType.LIST, 1),))
+    over = struct.pack("<H", 2 * (MAX_LIST + 1)) + b"\x01a" * (MAX_LIST + 1)
+    with pytest.raises(ValueError):
+        RecordCodec(many).decode(over)                        # mais de MAX_LIST itens
+
+
+def test_random_records_roundtrip():
+    # N5 leve: 3 000 registros aleatórios (seed fixa) com todos os tipos e nulos
+    rng = random.Random(39)
+    c = RecordCodec(ALL)
+    alphabet = "aé€𝄞z|0 "
+
+    def text(n):
+        s = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, n)))
+        while len(s.encode()) > n:
+            s = s[:-1]
+        return s
+
+    def value(f):
+        if f.nullable and rng.random() < 0.2:
+            return None
+        if f.ftype is FType.INT:
+            return rng.randint(-2**63 + 1, 2**63 - 1)
+        if f.ftype is FType.FLOAT:
+            x = struct.unpack("<d", rng.getrandbits(64).to_bytes(8, "little"))[0]
+            return 0.5 if math.isnan(x) else x
+        if f.ftype is FType.DATE:
+            return date.fromordinal(rng.randint(1, date.max.toordinal()))
+        if f.ftype is FType.LIST:
+            return tuple(text(f.size) for _ in range(rng.randint(0, MAX_LIST)))
+        return text(f.size).rstrip("\x00")
+
+    for _ in range(3000):
+        rec = tuple(value(f) for f in ALL.fields)
+        assert c.decode(c.encode(rec)) == rec
+
+
+# ------------------------------------------------------------------ base real (N3)
+@pytest.mark.parametrize("table", sorted(BASE_COUNTS))
+def test_generated_base_roundtrips(table):
+    # Todas as tabelas do gerador, escala 0,01: cada registro volta igual, cabe em max_size e
+    # cabe no menor bloco da matriz (2048 − 32 = 2016 bytes).
+    c = RecordCodec(SCHEMAS[table], block_size=2048)
+    for rec in Dataset(scale=0.01).records(table):
+        b = c.encode(rec)
+        assert len(b) <= c.max_size
+        assert c.decode(b) == tuple(rec)
+
+
+# ------------------------------------------------------------------ chaves (D-P2-05)
+def test_key_size():
+    assert [key_size(Field("x", t, 7)) for t in (FType.INT, FType.FLOAT, FType.DATE, FType.CHAR,
+                                                  FType.VARCHAR)] == [8, 8, 4, 7, 7]
+    with pytest.raises(TypeError):
+        key_size(Field("l", FType.LIST, 5))
+
+
+def _cmp(a, b):
+    return (a > b) - (a < b)
+
+
+def _rand_float(rng):
+    special = [0.0, -0.0, math.inf, -math.inf, 5e-324, -5e-324, 1.0, -1.0, 6.57, -6.57]
+    if rng.random() < 0.2:
+        return rng.choice(special)
+    x = struct.unpack("<d", rng.getrandbits(64).to_bytes(8, "little"))[0]
+    return rng.uniform(-10, 10) if math.isnan(x) else x
+
+
+def _rand_int(rng):
+    return rng.choice([-2**63 + 1, 2**63 - 1, -1, 0, 1, 255, 256, rng.randint(-2**63 + 1, 2**63 - 1),
+                       rng.randint(-1000, 1000)])
+
+
+def _rand_text(rng):
+    return "".join(rng.choice("abAé€\x01z") for _ in range(rng.randint(0, 3)))
+
+
+@pytest.mark.parametrize("ftype,gen", [
+    (FType.INT, _rand_int), (FType.FLOAT, _rand_float),
+    (FType.DATE, lambda r: date.fromordinal(r.randint(1, date.max.toordinal()))),
+    (FType.CHAR, _rand_text), (FType.VARCHAR, _rand_text),
+])
+def test_key_order(ftype, gen):
+    # a < b ⇔ encode_key(a) < encode_key(b) (e a = b ⇔ bytes iguais) em 10 mil pares, seed fixa.
+    # Para texto, a ordem esperada é a dos code points, que é a ordem dos bytes utf-8.
+    f = Field("k", ftype, 9)
+    rng = random.Random(5)
+    for _ in range(10_000):
+        a, b = gen(rng), gen(rng)
+        ka, kb = encode_key(f, a), encode_key(f, b)
+        assert len(ka) == len(kb) == key_size(f)
+        assert _cmp(ka, kb) == _cmp(a, b), (a, b, ka.hex(), kb.hex())
+
+
+def test_key_order_known_traps():
+    i, fl = Field("k", FType.INT), Field("k", FType.FLOAT)
+    assert encode_key(i, -1) < encode_key(i, 0) < encode_key(i, 1) < encode_key(i, 256)
+    assert encode_key(fl, -math.inf) < encode_key(fl, -2.5) < encode_key(fl, -0.0) \
+        == encode_key(fl, 0.0) < encode_key(fl, 5e-324) < encode_key(fl, 6.57) < encode_key(fl, math.inf)
+    c = Field("k", FType.CHAR, 3)
+    assert encode_key(c, "a") < encode_key(c, "ab") < encode_key(c, "b") < encode_key(c, "é")
+
+
+def test_composite_key_with_seq_keeps_order():
+    # Uso do P3: encode_key(k) + seq em 8 bytes big-endian = ordem lexicográfica de (k, seq).
+    f = Field("k", FType.FLOAT)
+    pairs = [(-1.0, 9), (-1.0, 10), (0.0, 0), (0.0, 2**40), (6.5, 1), (6.57, 0)]
+    keys = [encode_key(f, k) + s.to_bytes(8, "big") for k, s in pairs]
+    assert keys == sorted(keys)
+
+
+@pytest.mark.parametrize("ftype,values", [
+    (FType.INT, [-2**63 + 1, -1, 0, 50_000, 2**63 - 1]),
+    (FType.FLOAT, [-math.inf, -6.57, 5e-324, 0.0, 9.99, math.inf]),
+    (FType.DATE, [date.min, date(2026, 11, 23), date.max]),
+    (FType.CHAR, ["", "a", "ab€", "abcdefghi"]),
+    (FType.VARCHAR, ["", "zé"]),
+])
+def test_decode_key_roundtrip(ftype, values):
+    f = Field("k", ftype, 9)
+    for v in values:
+        assert decode_key(f, encode_key(f, v)) == v
+        assert decode_key(f, memoryview(encode_key(f, v))) == v
+    assert decode_key(Field("k", FType.FLOAT), encode_key(Field("k", FType.FLOAT), -0.0)) == 0.0
+
+
+@pytest.mark.parametrize("ftype,v", [
+    (FType.INT, None), (FType.INT, -2**63), (FType.INT, 2**63), (FType.FLOAT, math.nan),
+    (FType.FLOAT, None), (FType.DATE, None), (FType.CHAR, None), (FType.CHAR, "a\x00"),
+    (FType.CHAR, "x" * 10),
+])
+def test_encode_key_rejects_null_sentinels_and_bad_values(ftype, v):
+    # D-P2-05 (N1): chave nunca é NULL; sentinelas e valores fora do tipo levantam ValueError
+    with pytest.raises(ValueError):
+        encode_key(Field("k", ftype, 9), v)
+
+
+def test_decode_key_rejects_wrong_length():
+    with pytest.raises(ValueError):
+        decode_key(Field("k", FType.INT), b"\x00" * 7)
+    with pytest.raises(TypeError):
+        encode_key(Field("l", FType.LIST, 5), ("a",))

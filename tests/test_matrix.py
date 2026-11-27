@@ -1,5 +1,6 @@
 """Testes da matriz de experimentos (P6 §4, issues #9 e #10)."""
 from collections import Counter
+from dataclasses import asdict
 
 import pytest
 
@@ -7,7 +8,7 @@ from bench.build import physical_plan
 from bench.matrix import JOIN_ALGORITHMS, join_configs, join_experiments
 from bench.schema import ACCESS_COLUMNS, SCHEMAS
 from bench.workload import JOINS
-from cbd.contracts import Path
+from cbd.contracts import PageType, Path
 
 
 @pytest.fixture(scope='module')
@@ -149,3 +150,105 @@ def test_select_values_come_from_workload(workload, plan_by_name):
             if side.org != 'HEAP':
                 # Sobre B+/hash primário, só B+ NOT UNIQUE (arquitetura §5.3).
                 assert (index['kind'], index['unique']) == ('BTREE', False)
+
+
+def test_block_size_keeps_buffer_bytes_constant():
+    # D-P6-02: no experimento de bloco a memória em BYTES é a mesma; só o número
+    # de páginas de cada área muda (DATA = 512 KiB: 256/128/64 páginas).
+    from bench.matrix import BASE_AREAS, areas_for_block
+    assert areas_for_block(4096) == BASE_AREAS
+    for b in (2048, 4096, 8192):
+        areas = areas_for_block(b)
+        assert {k: v * b for k, v in areas.items()} == {k: v * 4096 for k, v in BASE_AREAS.items()}
+    assert areas_for_block(8192)[PageType.WORK] == 32 and areas_for_block(2048)[PageType.DATA] == 256
+    # WORK passado em páginas de 4096: 16 em B = 4096, 128 em B = 8192 (256 × 4096 B).
+    assert areas_for_block(4096, work=16)[PageType.WORK] == 16
+    assert areas_for_block(8192, work=256)[PageType.WORK] == 128
+    # Bloco que zeraria uma área ou não divide a memória: erro, não arredondamento.
+    for bad in (65536, 3000):
+        with pytest.raises(ValueError):
+            areas_for_block(bad)
+
+
+# ---- Experimentos de fator único (P6 §4.4, issue #19) ----
+
+def _base_config(exp):
+    """Configuração de buffer/bloco de uma linha, para comparar com a base (P6 §4.1)."""
+    return dict(block_size=exp.block_size, areas=dict(exp.areas), toss=exp.toss,
+                prefetch=exp.prefetch, policy=exp.policy)
+
+
+def test_factor_matrix_counts(workload):
+    from bench.matrix import factor_experiments
+    exps = factor_experiments(workload)
+    by_factor = Counter(e.exp_id.split('.')[1].rsplit('_', 1)[0] for e in exps)
+    # bloco: 3 tamanhos de bloco × 3 combinações × (a, c_btree) × 3 algoritmos = 54;
+    # toss: 2 níveis × (2 scans de seleção + BNL maior ⋈ maior) = 6;
+    # prefetch: 2 níveis × (2 scans de controle + INL maior ⋈ maior) = 6 (D-P6-10);
+    # WORK: 3 níveis × (SMJ, HJ) = 6.
+    assert by_factor == {'block': 54, 'toss': 6, 'prefetch': 6, 'work': 6}
+    assert len({e.exp_id for e in exps}) == len(exps)
+    from bench.matrix import join_experiments, select_experiments
+    main_ids = {e.exp_id for e in join_experiments() + select_experiments(workload)}
+    assert not main_ids & {e.exp_id for e in exps}
+
+
+def test_each_factor_row_changes_only_its_factor(workload):
+    # Enunciado §6: um fator por vez. Cada linha é igual à mesma consulta da matriz
+    # principal, exceto no campo do seu fator.
+    from bench.matrix import BASE_AREAS, BASE_BLOCK_SIZE, areas_for_block, factor_experiments
+    base = dict(block_size=BASE_BLOCK_SIZE, areas=dict(BASE_AREAS), toss=False, prefetch=0)
+    for exp in factor_experiments(workload):
+        factor, level = exp.exp_id.split('.')[1].rsplit('_', 1)
+        cfg = _base_config(exp)
+        expected = dict(base, policy=exp.policy)
+        if factor == 'block':
+            expected.update(block_size=int(level), areas=areas_for_block(int(level)))
+        elif factor == 'toss':
+            expected['toss'] = level == 'on'
+        elif factor == 'prefetch':
+            expected['prefetch'] = int(level)
+        else:
+            # Literal, não areas_for_block: o teste não pode herdar um defeito dela.
+            expected['areas'] = dict(BASE_AREAS, **{PageType.WORK: int(level)})
+        assert cfg == expected, exp.exp_id
+
+
+def test_factor_rows_reuse_main_matrix_queries(workload):
+    # O resto da linha (operador, lados, args, consulta esperada) vem da matriz principal.
+    from bench.matrix import factor_experiments, join_experiments, select_experiments
+    main = {e.exp_id: e for e in join_experiments() + select_experiments(workload)}
+    for exp in factor_experiments(workload):
+        origin = main[exp.exp_id.split('.', 2)[2]]   # factor.<fator>_<nível>.<exp_id da matriz>
+        # Todos os campos iguais aos da linha de origem, exceto o id e o do fator
+        # (e a política, que segue a da origem).
+        factor = exp.exp_id.split('.')[1].rsplit('_', 1)[0]
+        changed = {'block': ('block_size', 'areas'), 'toss': ('toss',),
+                   'prefetch': ('prefetch',), 'work': ('areas',)}[factor]
+        mine, theirs = asdict(exp), asdict(origin)
+        for name in ('exp_id', *changed):
+            mine.pop(name), theirs.pop(name)
+        assert mine == theirs, exp.exp_id
+    work = [e for e in factor_experiments(workload) if '.work_' in e.exp_id]
+    assert {e.algorithm for e in work} == {'sort_merge_join', 'hash_join'}
+    assert {e.size_combo for e in work} == {'large_large'}
+    scans = [e for e in factor_experiments(workload) if e.kind == 'select']
+    assert {e.path for e in scans} == {'SCAN'} and {e.sel_type for e in scans} == {'range_nonunique'}
+
+
+def test_factor_rows_are_the_queries_of_the_guide(workload):
+    # P6 §4.4: quais linhas da matriz cada fator repete (e não outras).
+    from bench.matrix import factor_experiments
+    rows = {}
+    for e in factor_experiments(workload):
+        factor = e.exp_id.split('.')[1].rsplit('_', 1)[0]
+        # Rótulo da config vem do exp_id de origem (c_btree); o campo `config` só tem a letra.
+        label = e.exp_id.split('.')[4] if e.kind == 'join' else e.config
+        rows.setdefault(factor, set()).add((e.kind, e.size_combo, label, e.algorithm, e.sel_type))
+    combos = ('small_small', 'small_large', 'large_large')
+    algs = ('nl_join', 'sort_merge_join', 'hash_join')
+    assert rows['block'] == {('join', c, cfg, a, '') for c in combos for cfg in ('a', 'c_btree') for a in algs}
+    scans = {('select', '', 'a', 'select_range', 'range_nonunique')}
+    assert rows['toss'] == scans | {('join', 'large_large', 'a', 'nl_join', '')}
+    assert rows['prefetch'] == scans | {('join', 'large_large', 'b_s_btree', 'nl_join', '')}
+    assert rows['work'] == {('join', 'large_large', 'a', a, '') for a in ('sort_merge_join', 'hash_join')}

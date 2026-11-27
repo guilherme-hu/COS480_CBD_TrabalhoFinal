@@ -20,7 +20,7 @@
 - **Medição:** cache frio, consumir o resultado inteiro e anotar os contadores. **Validação:** o mesmo resultado tem que sair no SQLite.
 - **Estimado × medido:** você **não escreve** as fórmulas, que vêm do P4/P5. Você coloca a fórmula ao lado da medida e explica as diferenças.
 - **Saídas:** CSVs, gráficos e o relatório técnico com as recomendações finais ("para tal carga, use tal configuração").
-- **Ambiguidade do enunciado a perguntar ao professor:** o que é "índice secundário clustering" (geral §5.3).
+- **Ambiguidade do enunciado:** o que é "índice secundário clustering" (geral §5.3). Sem canal com o professor, decidido na D-P6-09.
 
 ---
 
@@ -64,7 +64,7 @@ Calibre com `B = 4096` e `M = 64`. A tabela **pequena** cabe em `M − 2 = 62` b
 | inscricao | 500 000 | `dre` uniforme em alunos (≈ 10/aluno); `turma` uniforme |
 | detalhes | 50 000 | `cpf` = cpf dos alunos (embaralhado); LIST com 0–8 itens |
 
-Para cada tabela, **imprima e grave** `n`, `b` (blocos), `bfr` e `V(A)` das colunas usadas (`results/base_stats.csv`) e confira os tamanhos: pequena ≤ 62 blocos, grande ≥ 1 280. Ajuste os volumes se o `bfr` real fugir muito do esperado. `turma` e `detalhes` não entram nos experimentos (geral §0). O `--rows turma=100000` do código atual existia para o join tipo 3 e não é mais necessário.
+Para cada tabela, **imprima e grave** `n`, `b` (blocos), `bfr` e `V(A)` das colunas usadas (`results/base_stats.csv`) e confira os tamanhos: pequena ≤ 62 blocos, grande ≥ 1 280. Ajuste os volumes se o `bfr` real fugir muito do esperado. `turma` e `detalhes` não entram nos experimentos (geral §0). O `--rows turma=100000` da versão anterior existia para o join tipo 3 e foi retirado (#6). Nos outros tamanhos de bloco o critério usa as áreas daquele bloco, com a mesma memória em bytes (D-P6-02): com `scale = 1`, `aluno` em B = 8192 tem ~968 blocos para um limite de 10 × 64 = 640.
 
 Comece com `--scale 0.1` para desenvolver. Meça o tempo de 1 join grande e escolha a escala final para que a matriz inteira rode em **≤ 4 h** (§6.4).
 
@@ -160,9 +160,9 @@ O relatório tem de justificar **todas** as escolhas comparando com as preterida
 | Fator | Níveis | Experimentos |
 | :--- | :--- | :--- |
 | **política de substituição** (obrigatório) | as implementadas pelo P1 (LRU e MRU; Clock e FIFO ficaram de fora pela D-P1-08, PR #2) | cada algoritmo (BNL, INL, SMJ, HJ, seleção por scan e por índice) em maior ⋈ maior (ou seleção a 50%), config a e b, mais o BNL com `b_inner` um pouco maior que `capacity(DATA)` (ex.: `DATA = b_inner − 4`, P4 §6.2). A política com menos I/O vira a da matriz para aquele algoritmo; a tabela vai para o relatório como justificativa |
-| tamanho de bloco | 2048, 4096, 8192 | joins tipo 1 (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
+| tamanho de bloco | 2048, 4096, 8192, com as áreas escaladas para a **mesma memória em bytes** (`areas_for_block`, D-P6-02) | joins (os 3 tamanhos) × 3 algoritmos, config a e c(BTREE) |
 | toss-immediate | off/on | os scans e o BNL |
-| prefetch | 0, 8 | os scans (o efeito aparece em `io.seeks`) |
+| prefetch | 0, 8 | os scans de faixa como controle (um arquivo só: o prefetch não muda `io.reads` nem `io.seeks`) e o INL maior ⋈ maior com o externo em heap, em que o scan do externo se intercala com as buscas no índice e o efeito aparece em `io.seeks` (D-P6-10) |
 | memória (`WORK`) | 16, 64, 256 | sort-merge e hash join grandes (passadas, recursão) |
 | bulk × incremental | `bulk=True/False` | ocupação e altura da B+ e tempo de carga (indicador §6.1.1) |
 | carga de manutenção (obrigatório, indicador §6.1.1) | +10% inserts, −10% deletes aleatórios via `Table` | `stats()` de dados e índices antes e depois (indicador §6.1.1) |

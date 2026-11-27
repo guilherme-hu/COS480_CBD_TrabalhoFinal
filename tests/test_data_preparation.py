@@ -135,6 +135,30 @@ def test_all_workload_results_against_python(prepared):
             assert ref.conn.execute('SELECT COUNT(*) FROM (' + sql + ')', params).fetchone()[0] == len(output)
 
 
+def test_heap_order_is_not_key_order(prepared):
+    # D-P6-04/D-P6-06: a ordem exportada do SQLite (que vira a ordem física do heap)
+    # não pode ser agrupada pela chave, nem crescente nem decrescente; senão todo
+    # índice secundário na chave vira clustering. Numa permutação aleatória, cerca de
+    # metade dos pares vizinhos é crescente; ordenada dá ~1 (ou ~0 se decrescente).
+    with SQLiteReference(prepared / 'ref.sqlite') as ref:
+        for table, column in (('aluno', 'dre'), ('inscricao', 'dre')):
+            keys = [row[SCHEMAS[table].idx(column)] for row in ref.records(table)]
+            rising = sum(b > a for a, b in zip(keys, keys[1:])) / (len(keys) - 1)
+            assert .35 < rising < .65, (table, rising)
+
+
+def test_checksum_is_a_sum_so_it_sees_multiplicity(prepared):
+    # D-P6-05: [r1, r1] e [r2, r2] têm a mesma contagem e o mesmo XOR (zero), mas
+    # somas diferentes. O teste falha se o checksum virar XOR.
+    workload = json.loads((prepared / 'workload.json').read_text())
+    query = next(q for q in workload if q.get('sel_type') == 'range_nonunique')
+    with SQLiteReference(prepared / 'ref.sqlite') as ref:
+        r1, r2 = list(ref.records('aluno'))[:2]
+    assert output_signature(query, [r1, r1]) != output_signature(query, [r2, r2])
+    # Trocar uma tupla por outra também muda o checksum com a mesma contagem.
+    assert output_signature(query, [r1, r2])[1] != output_signature(query, [r1, r1])[1]
+
+
 def test_null_join_and_duplicate_multiplicity():
     with SQLiteReference(':memory:') as ref:
         ref.create_schema()
@@ -243,3 +267,20 @@ def test_row_override():
     assert dataset.counts['detalhes'] == dataset.counts['aluno'] == 100
     with pytest.raises(ValueError):
         Dataset(1, (('detalhes', 2),))
+
+
+def test_size_checks_use_areas_of_each_block_size():
+    # D-P6-02: o critério acompanha as áreas do bloco (memória constante em bytes).
+    from bench.build import size_checks_for_block
+    stats = {'curso': dict(estimated_blocks=1), 'disciplina': dict(estimated_blocks=14),
+             'aluno': dict(estimated_blocks=968), 'inscricao': dict(estimated_blocks=2273)}
+    assert all(c['status'] == 'ok' for c in size_checks_for_block(stats, 8192))
+    # Com as áreas fixas em páginas (DATA = 128) o mesmo aluno seria "pequeno demais".
+    assert any(c['status'] == 'inadequate' for c in size_checks(stats))
+    # O lado "menor" usa o WORK do próprio bloco: disciplina com 40 blocos cabe em
+    # M − 2 = 126 (B = 2048), mas não em M − 2 = 30 (B = 8192).
+    big = dict(stats, disciplina=dict(estimated_blocks=40), aluno=dict(estimated_blocks=4037),
+               inscricao=dict(estimated_blocks=9260))
+    small_small = lambda b: next(c for c in size_checks_for_block(big, b) if c['size_combo'] == 'small_small')
+    assert small_small(2048)['status'] == 'ok'
+    assert small_small(8192)['problems'] == ['disciplina: 40 blocos, esperado <= 30']

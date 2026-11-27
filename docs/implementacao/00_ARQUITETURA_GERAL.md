@@ -83,7 +83,7 @@ Consequências práticas:
 ┌──────────────▼──────────────────────────────────────────────────────┐
 │ Camada 4 — Gerente de Arquivos + Gerente de Buffer Pool (P1)        │
 │ disco simulado em blocos · contadores seq/aleatório · áreas do      │  cbd/storage/
-│ buffer · LRU, Clock, MRU · pin/dirty · forced output · prefetch     │
+│ buffer · LRU, MRU (D-P1-08) · pin/dirty · forced output · prefetch  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -110,9 +110,9 @@ Consequências práticas:
 | Página × bloco | **1 página = 1 bloco.** O tamanho do bloco é configurável: 2048, 4096 (padrão) ou 8192. |
 | Endereço de bloco | `(fid, bno)`: `fid` é um `int` dado pelo `FileManager`; `bno` vai de **1** em diante. O bloco físico 0 de cada arquivo é o cabeçalho, e só o P1 mexe nele. |
 | Registro em memória | `tuple` Python na ordem do esquema (§4). Nulo = `None`. Campo multivalorado = `tuple[str, ...]`. Data = `datetime.date`. |
-| Ponteiro para registro | **Opaco** (`Ptr`). Heap e Hash usam `RID(block, slot)`. Arquivo B+ usa `(chave, seq)`. Quem guarda ponteiro (índices) usa `DataFile.encode_ptr/decode_ptr`, com tamanho fixo `ptr_size`. |
+| Ponteiro para registro | **Opaco** (`Ptr`). Heap e Hash usam `RID(block, slot)`. Arquivo B+ usa `(chave, seq)`. Quem guarda ponteiro (índices) usa `DataFile.encode_ptr/decode_ptr`, com tamanho fixo `ptr_size`; a exceção é o `HashIndex`, que só existe sobre heap e guarda o `RID` em dois campos INT (D-P2-18). |
 | Hashing | **Proibido usar `hash()` do Python** em qualquer coisa que vá para o disco ou que defina partição: o hash de `str` muda a cada execução. Use `cbd.records.hashing.hash_value(v, seed)` (§5.1). |
-| Blocagem | **Não estendida (unspanned).** Um registro maior que o espaço útil do bloco gera `RecordTooLarge`. |
+| Blocagem | **Não estendida (unspanned).** Um registro maior que o espaço útil do bloco gera `RecordTooLarge`, levantado por quem insere na página (`DataFile.insert`, `bulk_load`), não pelo codec (D-P2-06). |
 | Saída dos operadores | Iteradores Python (`yield`). O resultado **não** é gravado em disco, nem contado, como nos livros-texto. |
 | Memória dos operadores | Limitada à área `WORK` do buffer (M páginas). Estrutura Python (lista, dict) que guarde registros só pode crescer até o que cabe nas páginas reservadas (§3.4). |
 | Determinismo | Toda aleatoriedade usa `random.Random(seed)` com seed explícita. |
@@ -176,14 +176,26 @@ class BufferPool:
                                                              # use em vez de fm.free (ex.: merge da B+), senão fica frame velho no buffer
 
     @contextmanager
-    def page(self, fid: int, bno: int, ptype: PageType, seq: bool = False) -> Iterator[Page]
-        # pin no __enter__, unpin no __exit__ (mesmo com exceção). Use SEMPRE que der.
+    def page(self, fid: int, bno: int, ptype: PageType, seq: bool = False, toss: bool = False) -> Iterator[Page]
+        # pin no __enter__, unpin(toss=toss) no __exit__ (mesmo com exceção). Use SEMPRE que der.
+
+    def allow_prefetch(self, fid: int, ptype: PageType = PageType.DATA) -> None   # monotipado; só DATA ou INDEX
+    @contextmanager
+    def seq_scan(self, fid: int, ptype: PageType = PageType.DATA) -> Iterator[SeqScan]
+        # cursor dono das pré-lidas (D-P1-12, revista em 23/11); ao sair, solta as que não usou
+
+class SeqScan:                                   # criado só por bp.seq_scan
+    @contextmanager
+    def page(self, bno: int, toss: bool = False) -> Iterator[Page]
+        # como bp.page; assume o pin de uma pré-lida deste cursor (1 request, 1 hit, 0 leituras);
+        # um pedido fora das pré-lidas solta as restantes; RuntimeError depois do fim do with
 
     def force(self, page: Page) -> None          # forced output: grava já; conta forced_writes
     def flush_file(self, fid: int) -> None       # grava os sujos do arquivo
     def flush_all(self) -> None
     def drop_file(self, fid: int) -> None        # descarta os frames do arquivo SEM gravar (temporário que será apagado)
-    def clear(self) -> None                      # flush_all + esvazia todos os frames (cache frio)
+    def close_file(self, fid: int) -> None       # flush_file(fid) + drop_file(fid) + fm.close(fid)
+    def clear(self) -> None                      # flush_all + esvazia todos os frames não reservados (cache frio)
 
     def capacity(self, ptype: PageType) -> int   # nº de frames da área
     def pinned(self, ptype: PageType | None = None) -> int
@@ -200,9 +212,10 @@ Semântica que todos precisam saber:
 - **Contagem.** Cada `pin` é 1 *request*. Se a página está no buffer é *hit*; se não está é *miss*, que gera 1 leitura física. `new_page` não conta request nem leitura.
 - **Dirty.** Quem altera `page.data` **tem que** chamar `page.mark_dirty()` ou `unpin(page, dirty=True)`. Página suja expulsa é gravada (`dirty_evictions`).
 - **Pin.** Todo `pin` precisa do `unpin` correspondente. Prefira `with bp.page(...) as p:`. Se não houver frame livre nem frame não fixado na área, `pin` levanta `BufferFullError`.
-- **`seq=True`** indica leitura sequencial (scan). Com `cfg.prefetch = k > 0`, um *miss* com `seq=True` lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`).
+- **Prefetch: use `bp.seq_scan`.** Com `cfg.prefetch = k > 0`, um *miss* dentro de `with bp.seq_scan(fid, ptype) as cur:` (via `cur.page(bno)`) lê também os próximos `k` blocos do arquivo (contados como leituras sequenciais e em `prefetched`), **desde que** o arquivo tenha sido declarado monotipado via `bp.allow_prefetch(fid, ptype)` e `ptype` seja `DATA` ou `INDEX` (D-P1-12, revista em 23/11). As pré-lidas ficam **fixadas em nome do cursor** (SKS §13.5.1.2): `cur.page` assume esse pin quando chega nelas, e a saída do `with` solta as não usadas, inclusive em `break` e exceção. Por isso um cursor segura no máximo `k` pré-lidas mais as páginas em uso por ele, isto é, `1 + k` frames num scan simples (um *miss* fora das pré-lidas solta as restantes; com `cur.page` aninhado em profundidade `d`, `d + k`), com um teto que deixa ao menos 1 frame sem pin por cursor aberto na área. **Garantia de memória:** a pré-leitura não causa `BufferFullError` enquanto `pins simultâneos fora dos cursores ≤ capacidade − cursores × (1 + k)` (com `DATA = 128`, `k = 8` e 1 cursor: 119). Com um cursor aberto, `free_block`, `drop_file`, `close_file` e `clear` levantam `RuntimeError` numa pré-lida ainda não usada, porque ela está fixada. Com prefetch, `bp.hits` inclui as pré-lidas que o cursor assumiu; olhe `bp.prefetched` junto. O parâmetro `seq=True` de `pin`/`page` continua aceito, mas **não pré-lê** fora de um cursor. **Contrato estrito:** como o `FileManager` não grava `PageType` no disco, P3 não deve chamar `allow_prefetch` em arquivos mistos (`INDEX` + `DATA`, como Árvore B+).
 - **`toss=True`** no `unpin`: se `cfg.toss_immediate` estiver ligado, o frame vira a próxima vítima (toss-immediate). Scans devem passar `toss=True`; a configuração decide se tem efeito.
 - **Áreas fixas por tipo de página.** Cada `PageType` tem frames próprios e sua própria instância da política. Uma página de `INDEX` nunca expulsa uma de `DATA`. Isso dá retenção preferencial de índice e catálogo sem precisar de prioridade dinâmica.
+- **Fechamento e remoção de arquivos.** Como o `FileManager` fica abaixo do `BufferPool`, ao fechar um arquivo permanente chame `bp.close_file(fid)` (ou `bp.flush_file(fid)` + `bp.drop_file(fid)` + `fm.close(fid)`), e ao remover um arquivo temporário chame `bp.drop_file(fid)` antes de `fm.delete(fid)`. Internamente na Camada 4, `BufferPool` também registra callbacks via `fm.register_hooks(...)` para manter o cache coerente caso `fm.close/free/delete` sejam chamados diretamente.
 
 ### 3.3 Que `PageType` usar
 
@@ -282,7 +295,7 @@ class BufferConfig:
     areas: dict[PageType, int] = field(default_factory=_default_areas)
     policy: Policy = Policy.LRU
     toss_immediate: bool = False          # unpin(toss=True) torna o frame a próxima vítima
-    prefetch: int = 0                     # blocos lidos à frente num miss com seq=True; 0 = desligado
+    prefetch: int = 0                     # blocos lidos à frente num miss dentro de bp.seq_scan; 0 = desligado
 
 
 # ------------------------------------------------------------------ contadores
@@ -316,7 +329,7 @@ class BufferCounters:
 
 # ------------------------------------------------------------------ esquema e registros
 class FType(str, Enum):
-    INT = "INT"          # int (64 bits com sinal)
+    INT = "INT"          # int (32 bits com sinal; E&N §16.4.1, revisão do D-P2-05)
     FLOAT = "FLOAT"      # float (64 bits)
     DATE = "DATE"        # datetime.date
     CHAR = "CHAR"        # str de tamanho fixo `size` bytes (utf-8, preenchido)
@@ -439,7 +452,7 @@ class TempFile(Protocol):
     """Arquivo temporário (runs, partições) em páginas WORK."""
     def append(self, rec: Record) -> None: ...   # mantém 1 página de saída fixada
     def finish(self) -> None: ...                # desafixa a página de saída (chamar antes de scan)
-    def scan(self) -> Iterator[Record]: ...      # 1 página fixada por vez, seq=True, toss=True
+    def scan(self) -> Iterator[Record]: ...      # 1 página fixada por vez, toss=True (área WORK: sem prefetch, D-P1-12)
     def n_blocks(self) -> int: ...
     def n_records(self) -> int: ...
     def drop(self) -> None: ...                  # bp.drop_file + fm.delete; idempotente
@@ -491,7 +504,7 @@ class Cost:
 class RecordCodec:
     def __init__(self, schema: Schema): ...
     max_size: int                                      # maior registro possível em bytes
-    def encode(self, rec: Record) -> bytes             # RecordTooLarge se não couber num bloco
+    def encode(self, rec: Record) -> bytes             # não conhece o bloco: RecordTooLarge vem do insert (D-P2-06)
     def decode(self, b: bytes | memoryview) -> Record
 
 def key_size(f: Field) -> int                          # tamanho FIXO da chave codificada
@@ -502,8 +515,8 @@ def decode_key(f: Field, b: bytes | memoryview) -> Any
 # cbd/records/slotted_page.py
 class SlottedPage:
     """Opera sobre page.data (bytearray) in-place. Não faz pin/unpin nem dirty."""
-    HEADER: int                                        # bytes do cabeçalho padrão
-    USER: int = 16                                     # bytes livres no cabeçalho para quem usa (ex.: P3: is_leaf, next, prev)
+    HEADER: int                                        # bytes do cabeçalho (10: n_slots, free_end, holes, next; D-P2-07)
+    next: int                                          # propriedade: próximo bloco (overflow do hash, folha seguinte da B+); 0 = nenhum
     def __init__(self, buf: bytearray): ...
     def init(self) -> None                             # formata página vazia
     def n_slots(self) -> int
@@ -514,12 +527,11 @@ class SlottedPage:
     def remove_at(self, pos: int) -> None              # remove a entrada do diretório (desloca; para folhas B+)
     def free_space(self) -> int
     def compact(self) -> None
-    def user_header(self) -> memoryview                # USER bytes reservados
     @staticmethod
     def max_record(block_size: int) -> int             # maior registro que cabe num bloco vazio
 
 # cbd/records/hashing.py
-def hash_value(v: Any, seed: int = 0) -> int           # 64 bits, determinístico entre execuções; int, float, str, date, tuple
+def hash_value(v: Any, seed: int = 0) -> int           # 64 bits, determinístico entre execuções; int, float, str, date, None, tuple
 ```
 
 ### 5.2 Arquivos e tabela — P2 (`cbd/files/`)
@@ -529,13 +541,15 @@ Construtores padronizados. **Todos os `DataFile` e `Index` seguem esta forma**, 
 ```python
 # DataFile:  Cls.create(bp, name, schema, spec) / Cls.open(bp, name, schema, spec)
 HeapFile.create(bp, name, schema, spec, ptype=PageType.DATA)      # cbd/files/heap.py      (P2)
-HashFile.create(bp, name, schema, spec)                           # cbd/files/hash_file.py (P2)
+HashFile.create(bp, name, schema, spec, ptype=PageType.DATA)      # cbd/files/hash_file.py (P2); INDEX quando é o índice hash
 BTreeFile.create(bp, name, schema, spec)                          # cbd/files/btree_file.py (P3)
 
 # Index:     Cls.create(bp, name, spec, key_field: Field, data: DataFile) / Cls.open(...mesmos args)
 HashIndex.create(bp, name, spec, key_field, data)                 # cbd/files/hash_index.py  (P2)
 BTreeIndex.create(bp, name, spec, key_field, data)                # cbd/files/btree_index.py (P3)
-#   o índice usa data.ptr_size / data.encode_ptr / data.decode_ptr para guardar ponteiros
+#   o BTreeIndex usa data.ptr_size / data.encode_ptr / data.decode_ptr para guardar ponteiros.
+#   O HashIndex (D-P2-18) é um HashFile com páginas INDEX cujos registros são (chave, bloco INT, slot INT): só existe
+#   sobre heap (§5.3), então guarda os dois números do RID e devolve RID no search
 ```
 
 Extras do `HashFile` (usados por P5 no hash join, §7.3):
@@ -544,7 +558,7 @@ Extras do `HashFile` (usados por P5 no hash join, §7.3):
 class HashFile(DataFile):
     n_buckets: int
     seed: int
-    def bucket_of(self, key: Any) -> int          # hash_value(key, self.seed) % n_buckets
+    def bucket_of(self, key: Any) -> int          # coluna INT: (key + seed) % n_buckets; outros tipos: hash_value(key, seed) % n_buckets (D-P2-14); o ramo segue o tipo da coluna
     def scan_bucket(self, i: int) -> Iterator[tuple[Ptr, Record]]   # bucket i + cadeia de overflow
 ```
 
@@ -573,7 +587,7 @@ class Table:
 
 ```python
 class Catalog:
-    def __init__(self, bp: BufferPool): ...           # abre ou cria o arquivo "catalog" (páginas CATALOG)
+    def __init__(self, bp: BufferPool): ...           # abre ou cria as relações do catálogo (D-P2-12; páginas CATALOG)
     def create_table(self, schema: Schema, spec: OrgSpec) -> Table
     def load_table(self, name: str, recs: Iterable[Record], bulk: bool = True) -> None
         # bulk=True: BTREE ordena e usa bulk_load; HEAP/HASH inserem em lote. Depois roda analyze().
@@ -583,7 +597,7 @@ class Catalog:
     def tables(self) -> list[str]
     def drop_table(self, name: str) -> None
     def analyze(self, name: str) -> TableStats        # scan completo; grava no catálogo (forced output)
-    def temp(self, schema: Schema) -> TempFile        # HeapFile em páginas WORK, nome único, fora do catálogo
+    def temp(self, schema: Schema) -> TempFile        # TempHeap (cbd/files/heap.py) em páginas WORK, nome único, fora do catálogo
     def close(self) -> None
 ```
 
@@ -595,7 +609,7 @@ class Catalog:
 | `BTREE, unique=True` ou `False` | campo NOT UNIQUE → `BTREE, unique=False` |
 | `HASH, unique=True` ou `False` | campo NOT UNIQUE → `BTREE, unique=False` |
 
-"Índice secundário clustering" (§4.2): interpretamos como índice B+ sobre campo NOT UNIQUE em que **todos os ponteiros de uma mesma chave ficam agrupados** num só bloco ou lista de ponteiros (a chave aparece uma vez na folha). **Confirmar com o professor** e registrar no relatório.
+"Índice secundário clustering" (§4.2): interpretamos como índice B+ sobre campo NOT UNIQUE em que **todos os ponteiros de uma mesma chave ficam agrupados** num só bloco ou lista de ponteiros (a chave aparece uma vez na folha). **Confirmar com o professor** e registrar no relatório. Alternativas e texto da pergunta: D-P6-09 em `docs/decisoes/P6.md`.
 
 Pela tabela, todo índice B+ secundário é NOT UNIQUE e todo índice secundário UNIQUE é hash (só sobre heap). Por isso o `BTreeIndex` **não precisa** de modo UNIQUE. Se algum dia for preciso, o formato NOT UNIQUE com 1 ponteiro por chave já atende.
 
@@ -603,8 +617,8 @@ Pela tabela, todo índice B+ secundário é NOT UNIQUE e todo índice secundári
 
 | Organização | `Ptr` | `ptr_size` | Custo de `fetch(ptr)` |
 | :--- | :--- | :--- | :--- |
-| HEAP | `RID(block, slot)` | 8 | 1 bloco |
-| HASH | `RID(block, slot)` (o bloco pode ser de overflow) | 8 | 1 bloco |
+| HEAP | `RID(block, slot)` | 6 (bloco u32 + slot u16, D-P2-10) | 1 bloco |
+| HASH | `RID(block, slot)` (o bloco pode ser de overflow) | 6 | 1 bloco |
 | BTREE | `(chave, seq)`, em que `seq` é um inteiro oculto e crescente por arquivo, que torna a chave única | `key_size + 8` | `height` blocos (desce a árvore) |
 
 O ponteiro lógico do B+ existe porque registros mudam de folha nos splits. Um RID quebraria os índices secundários.
@@ -623,11 +637,12 @@ Todo iterador da camada 3 fixa **no máximo uma página por vez** e a desafixa a
 | :--- | :--- |
 | `HeapFile.scan()` | `b_r` |
 | `HashFile.search(k)` | 1 + overflow do bucket |
+| `HashFile.scan()` | todos os blocos de dados, em ordem física (primários, depois o overflow): 1 seek (D-P2-17) |
 | `HashFile.scan_bucket(i)` | blocos do bucket i |
 | `BTreeFile.search(k)` | `height` + folhas extras com a mesma chave |
 | `BTreeFile.range(lo, hi)` | `height` + folhas na faixa |
 | `BTreeIndex.search(k)` (não-unique) | `height` + blocos da lista de ponteiros da chave |
-| `HashIndex.search(k)` | 1 + overflow |
+| `HashIndex.search(k)` | 1 + overflow, na área INDEX; mais 1 bloco do heap no `fetch` (D-P2-18) |
 | `DataFile.fetch(ptr)` | ver §5.4 |
 
 ### 6.3 Chaves de `stats()` (para o indicador 6.1.1 do enunciado)
@@ -775,13 +790,19 @@ class Engine:
 
 Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) sem ser gerada de novo. Já mudar o `block_size` exige gerar a base de novo, num `root_dir` separado por tamanho de bloco (ex.: `data/db_4k`).
 
+**Protocolo de medição (`flush` × `snapshot()` e `LRU` × `MRU`):**
+- **Operações de leitura (`SELECT` / `JOIN`):** chamar `eng.cold()` antes; usar `bp.drop_file(fid)` para `TempFile`s; chamar `eng.snapshot()` diretamente ao fim da consulta (sem `flush_all()`).
+- **Operações de escrita/manutenção (`INSERT`, `DELETE`, `bulk_load`):** se a medição contabiliza o custo total persistido em disco, chamar `bp.flush_all()` **antes** de `eng.snapshot()`; caso contrário, `snapshot()` medirá apenas `dirty_evictions` + `forced_writes` ocorridos durante a operação.
+- **Identidade das gravações (D-P1-05, revista em 22/11):** toda gravação física sai do `BufferPool` por uma de três causas: expulsão de página suja (`bp.dirty_evictions`), `force` (`bp.forced_writes`) ou `flush_file`/`flush_all`/`close_file`/`clear`, que não têm contador próprio. Por isso, **gravações de flush = `io.writes − bp.dirty_evictions − bp.forced_writes`**. A conta é exata enquanto só o `BufferPool` chamar `fm.write` (regra 1). Nas consultas medidas sem flush, essa parcela é 0.
+- **Comparação `LRU × MRU`:** executar com `BufferConfig(toss_immediate=False)`, pois a fila `area.tossed` tem prioridade sobre a política e igualaria `LRU` e `MRU` em varreduras que passam `toss=True`.
+
 ### 8.2 Parâmetros que a bancada pode variar (o que "pode mudar" em cada módulo)
 
 | Dono | Onde | Parâmetro | Valores |
 | :--- | :--- | :--- | :--- |
 | P1 | `StorageConfig.block_size` | tamanho do bloco | 2048, **4096**, 8192 |
 | P1 | `BufferConfig.areas` | frames por área | ex.: `CATALOG 8, INDEX 64, DATA 128, WORK 64` |
-| P1 | `BufferConfig.policy` | política de substituição | LRU, MRU, CLOCK, FIFO. **Escolhida por tipo de operação** num experimento curto (P6 §4.4), não variada em toda a matriz |
+| P1 | `BufferConfig.policy` | política de substituição | `LRU`, `MRU` (`D-P1-08`: `CLOCK` e `FIFO` preteridas). **Escolhida por tipo de operação** num experimento curto (P6 §4.4), não variada em toda a matriz |
 | P1 | `BufferConfig.toss_immediate` | toss-immediate | `False`/`True` |
 | P1 | `BufferConfig.prefetch` | leitura antecipada | 0, 4, 8 |
 | P2 | `OrgSpec.params["buckets"]` (HASH) | nº de buckets | padrão: `ceil(n_r / (bfr · 0.8))`; em NOT UNIQUE, no máximo `V(A)` (P2 §6.1) |
@@ -789,7 +810,6 @@ Uma base gerada é reaberta com outra `BufferConfig` (ex.: trocar a política) s
 | P2 | `OrgSpec.params["expected_records"]` (HASH) | base para calcular N quando `buckets` não é dado | n_r da tabela |
 | P2 | `OrgSpec.params["distinct"]` (HASH NOT UNIQUE) | `V(A)` da chave, para limitar N | a bancada passa |
 | P2 | `OrgSpec.params["seed"]` (HASH) | seed da função de hash | 0; igual em duas tabelas para o *bucket-join* do P5 |
-| P2 | `OrgSpec.params["compact_at"]` (HEAP) | fração apagada que dispara reorganize | 0.2 |
 | P2 | `IndexSpec.params["buckets"]` (índice HASH) | nº de buckets | idem |
 | P3 | `OrgSpec.params["fill"]` / `IndexSpec.params["fill"]` | ocupação no bulk load | 0.7 a 1.0 (padrão 0.9) |
 | P3 | `Catalog.load_table(bulk=...)` | bulk load × inserção registro a registro | `True`/`False` |
@@ -840,11 +860,11 @@ Estes esquemas ficam em `bench/schema.py` (P6). Os demais importam de lá nos te
 
 Joins de referência (só o NATURAL mestre-detalhe, §0):
 
-| Combinação de tamanho | Junção (mestre ⋈ detalhe) | Coluna | Blocos com B = 4096 (estimativa de `results/base_stats.csv`) |
+| Combinação de tamanho | Junção (mestre ⋈ detalhe) | Coluna | Blocos de heap com B = 4096 (medidos com o codec: INT de 4 B, cabeçalho de 10 B) |
 | :--- | :--- | :--- | :--- |
-| menor ⋈ menor | curso ⋈ disciplina | `codigo` = `curso` | 2 ⋈ 27 |
-| menor ⋈ maior | curso ⋈ aluno | `codigo` = `curso` | 2 ⋈ 1 962 |
-| maior ⋈ maior | aluno ⋈ inscricao | `dre` | 1 962 ⋈ 4 588 |
+| menor ⋈ menor | curso ⋈ disciplina | `codigo` = `curso` | 2 ⋈ 21 |
+| menor ⋈ maior | curso ⋈ aluno | `codigo` = `curso` | 2 ⋈ 1 664 |
+| maior ⋈ maior | aluno ⋈ inscricao | `dre` | 1 664 ⋈ 3 449 |
 
 "Menor" = cabe em `M − 2 = 62` páginas. As tabelas reais já cobrem as três combinações, então não há subconjuntos. `turma` e `detalhes` ficam na base lógica, mas não entram nos experimentos. Seleções: igualdade em `aluno.dre` e faixa em `aluno.cr`.
 

@@ -31,11 +31,11 @@ def to_sql(schema, record):
                 not isinstance(item, str) or len(item.encode('utf-8')) > field.size for item in value
             ):
                 raise ValueError(f"{schema.name}.{field.name}: lista inválida")
-            value = json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+            value = json.dumps(value, ensure_ascii=False, separators=(',', ':'))  # D-P6-08
         elif field.ftype == FType.DATE:
             if type(value) is not date:
                 raise ValueError(f"{schema.name}.{field.name}: data inválida")
-            value = value.isoformat()
+            value = value.isoformat()  # D-P6-08
         elif field.ftype == FType.INT:
             if type(value) is not int or not -(1 << 63) <= value < (1 << 63):
                 raise ValueError(f"{schema.name}.{field.name}: inteiro inválido")
@@ -93,7 +93,7 @@ class SQLiteReference:
         for name, schema in SCHEMAS.items():
             columns = []
             for field in schema.fields:
-                # INT evita o alias INTEGER PRIMARY KEY = rowid do SQLite.
+                # D-P6-06: INT evita o alias INTEGER PRIMARY KEY = rowid do SQLite.
                 # Precisamos preservar a ordem de inserção embaralhada no export para heap.
                 sql_type = {FType.INT: 'INT', FType.FLOAT: 'REAL'}.get(field.ftype, 'TEXT')
                 column = f'{quote(field.name)} {sql_type}'
@@ -192,6 +192,7 @@ def query_sql(query, keys_only=False):
 
 def output_signature(query, records):
     """Assinatura da saída real P4/P5 (r_rec + s_rec), sem depender da ordem."""
+    # D-P6-05: soma mod 2^64 (não XOR) para contar duplicatas; só a PK lógica.
     n = checksum = 0
     r = query['r_table']
     width = len(SCHEMAS[r].fields)

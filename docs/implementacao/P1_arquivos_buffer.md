@@ -29,7 +29,7 @@
 | `cbd/contracts.py` | **cópia exata** do §4 do documento geral |
 | `cbd/storage/file_manager.py` | `FileManager` |
 | `cbd/storage/buffer_pool.py` | `Page`/`Frame`, `BufferPool`, áreas |
-| `cbd/storage/policies.py` | `LRU`, `MRU`, `Clock`, `FIFO` |
+| `cbd/storage/policies.py` | `LRU`, `MRU` (`D-P1-08`: Clock e FIFO preteridas e justificadas em `docs/decisoes/P1.md`) |
 | `tests/conftest.py` | fixture `eng` (geral §11) + fixture `bp` só da camada 4 (abaixo) |
 | `tests/test_file_manager.py`, `tests/test_buffer_pool.py`, `tests/test_policies.py` | testes da sua camada |
 | `tests/stress/` | testes de estresse do sistema (§6) |
@@ -62,7 +62,7 @@ def bp(tmp_path):
 | Tamanho do bloco | configurável (2048/4096/8192), padrão 4096 | é fator do experimento |
 | Alocação | **contígua por extensão do arquivo** (append). Blocos liberados vão para uma lista de livres e são reusados antes de estender | scan de heap vira leitura sequencial de verdade; simples de contar |
 | Descritor (cabeçalho) | bloco físico 0 de cada arquivo (layout abaixo) | um lugar só; fora da contagem |
-| Blocos livres | pilha de `bno` livres guardada no cabeçalho (até `(B − 32) / 4` entradas; o excedente é esquecido e contado em `lost_free`) | sem I/O extra para alocar; limite raro de atingir |
+| Blocos livres | pilha LIFO de `bno` livres guardada no cabeçalho (até `(B − 32) / 4` entradas); o excedente é encadeado nos próprios blocos livres (`ext_bno`) ao gravar o cabeçalho (D-P1-04, revista em 12/11) | sem I/O extra para alocar; nenhum bloco livre se perde |
 | Contadores | leituras/gravações × sequencial/aleatório, por arquivo e global | o enunciado pede; o seek é derivado |
 
 ### 2.2 Arquivo no SO
@@ -80,12 +80,12 @@ offset  tam  campo
 4       4    block_size (u32)
 8       4    high_water (u32)   # maior bno já alocado
 12      4    n_free (u32)
-16      4    lost_free (u32)
+16      4    ext_bno (u32)      # 1º bloco de extensão da pilha de livres; 0 = nenhum
 20      12   reservado
 32      4·k  pilha de bnos livres (u32), k = n_free
 ```
 
-Use `struct.Struct("<4sIIII12x")`. O cabeçalho fica **em memória** (um objeto `_FileDesc`) enquanto o arquivo está aberto. Ele é gravado em `close`/`close_all` e **não entra em `io`**: é metadado do disco simulado, e não dado do experimento.
+Use `struct.Struct("<4sIIII12x")`. O cabeçalho fica **em memória** (um objeto `_FileDesc`) enquanto o arquivo está aberto. Ele é gravado em `create` e `close`/`close_all` (e lido em `open`) e **não entra em `io`** nem move a cabeça global `_head`: é metadado do disco simulado, e não dado do experimento. O modelo de custo do SKS §15.2 conta só os acessos aos blocos de dados (D-P1-03, revista em 22/11). Cada bloco de extensão da pilha de livres guarda `next_ext` (u32), `count` (u32) e os `bno`s; também fica fora de `io`.
 
 ### 2.4 Operações
 
@@ -99,8 +99,8 @@ def allocate(self, fid) -> int:
 ```
 
 - `new_page` (buffer) sempre grava o bloco antes de qualquer `read`, então não é preciso estender o arquivo no `allocate`. Mesmo assim, `read(fid, bno)` com `bno > high_water` deve dar erro.
-- `free(fid, bno)`: `bno` precisa estar em `[1, high_water]` e não estar já na pilha. Se a pilha estiver cheia, incremente `lost_free`.
-- `n_blocks(fid) = high_water − len(free) − lost_free`.
+- `free(fid, bno)`: `bno` precisa estar em `[1, high_water]` e não estar já na pilha. Se a pilha passar de `(B − 32) / 4` entradas, o excedente é encadeado em blocos de extensão no próximo `_write_header` (nada se perde).
+- `n_blocks(fid) = high_water − len(free)`.
 - `delete(fid)`: fecha e remove o arquivo do SO; o `fid` deixa de valer.
 - Os `fid`s são inteiros crescentes, nunca reutilizados durante a vida do `FileManager`.
 
@@ -132,12 +132,12 @@ def _count(self, fid, bno, write: bool):
 | 1 | Nº de páginas / blocos por página | soma de `BufferConfig.areas`; **1 bloco por página** |
 | 2 | Repartição | **por tipo de página**: `CATALOG`, `INDEX`, `DATA`, `WORK` (área de trabalho de ordenação e junção) |
 | 3 | Áreas fixas, autoajustáveis ou compartilhadas | **fixas**: medidas reproduzíveis; uma operação não rouba a área da outra |
-| 4 | Políticas | o enunciado novo pede que o grupo **escolha, por teste, a mais adequada** entre LRU, MRU, FIFO e Clock. Recomendação: implementar as quatro (MRU e FIFO têm ~15 linhas cada, Clock ~30) para que o experimento de escolha (P6 §4.4) justifique com números a política de cada operação. Alternativa mais curta: só LRU e MRU, justificando Clock (aproxima o LRU) e FIFO (ignora reuso) pela teoria |
+| 4 | Políticas | **decidido (`D-P1-08`):** implementadas **LRU** e **MRU** (FIFO e Clock preteridas e justificadas em `docs/decisoes/P1.md`; `LRU` escolhida para a bateria geral e `MRU` para o comparativo de *Nested-Loop Join*) |
 | 5 | Toss-immediate | sim, por configuração (`toss_immediate`) e dica no `unpin(toss=True)`. O enunciado só pergunta *se* haverá: "não" também vale, com justificativa |
 | 6 | Fixação (pin) | contador `pin_count` por frame; só frame com `pin_count == 0` pode ser vítima |
 | 7 | Gravação forçada | `force(page)`; usada pelo catálogo (write-through) |
 | 8 | Retenção preferencial | garantida pelas áreas fixas: índice e catálogo têm frames próprios |
-| 9 | Prefetch | sim, por configuração (`prefetch = k`), disparado por `pin(seq=True)` em *miss*. Também é "se haverá": "não" vale, com justificativa |
+| 9 | Prefetch | sim, por configuração (`prefetch = k`), disparado por um *miss* dentro de um cursor `bp.seq_scan` (D-P1-12, revista em 23/11). Também é "se haverá": "não" vale, com justificativa |
 
 > **Aviso ao grupo sobre a política:** o Clock é uma aproximação do LRU, então os números de LRU × Clock tendem a sair quase iguais. O contraste clássico dos livros é **LRU × MRU** no nested-loop: o LRU sofre *sequential flooding* e o MRU acerta. Por isso a escolha esperada é **MRU no nested-loop em blocos** (o interno é varrido várias vezes) e **LRU no resto**, mas quem decide é o experimento de escolha.
 
@@ -177,12 +177,11 @@ def pin(self, fid, bno, ptype, seq=False):
         f.pin_count += 1
         area.policy.accessed(f)
         return f
+    f = self._victim(area)                       # BufferFullError se não houver (antes de incrementar misses!)
     area.stats.misses += 1; self.stats.misses += 1
-    f = self._victim(area)                       # BufferFullError se não houver
     f.data[:] = self.fm.read(fid, bno)
     self._install(f, area, fid, bno, ptype)      # _table, pin_count=1, dirty=False, policy.loaded(f)
-    if seq and self.cfg.prefetch:
-        self._prefetch(area, fid, bno + 1, self.cfg.prefetch)
+    # prefetch: só dentro de um cursor seq_scan (ver abaixo, D-P1-12 revista em 23/11)
     return f
 ```
 
@@ -193,7 +192,31 @@ def pin(self, fid, bno, ptype, seq=False):
 4. Se a vítima está suja: `fm.write`, `dirty_evictions += 1`. Remova-a de `_table` e chame `policy.removed(f)`.
 5. Se nada sobrar, levante `BufferFullError(f"área {ptype}: {n} frames, todos fixados")`.
 
-`_prefetch(area, fid, start, k)`: para `b` em `start .. start+k-1`, pare no primeiro bloco que já está residente, que passa do `high_water` ou para o qual não há vítima sem esperar. Leia com `fm.read`, instale **sem pin** (`pin_count = 0`) e conte `prefetched += 1`. A leitura sai sequencial naturalmente.
+Prefetch com dono (`D-P1-12`, revista em 23/11, SKS §13.5.1.2). O prefetch só acontece dentro de um cursor:
+
+```python
+with bp.seq_scan(fid, PageType.DATA) as cur:   # o cursor é o dono das pré-lidas
+    for bno in range(1, n + 1):
+        with cur.page(bno, toss=True) as p:    # assume o pin pré-lido ou faz um pin normal
+            ...
+# saída do with (fim, break ou exceção): unpin de toda pré-lida não usada
+```
+
+- **Duas fases (revista em 22/11, mantida).** A 1ª fase, `_prefetch_victims(area, fid, start, k)`, roda no miss **antes de ler o bloco pedido**. Para `b` em `start .. start+k-1`, ela para no primeiro bloco que:
+  - já está residente;
+  - passa do `high_water`;
+  - não tem vítima (todos os frames fixados);
+  - deixaria a área com menos frames sem pin do que cursores abertos nela (`area.cursors`). Este é o teto: cada cursor aberto tem um frame para a página atual.
+
+  Cada vítima é expulsa já nessa fase, e as sujas são gravadas. A 2ª fase, `_prefetch_read`, lê o lote depois do bloco pedido: 1 seek + k leituras sequenciais, mesmo com vítimas sujas.
+- **Pré-lidas fixadas pelo dono.** Cada pré-lida entra com `pin_count = 1` em nome do cursor (`SeqScan._held`) e conta `prefetched += 1`. Quando o cursor chega nela, `cur.page` **assume** esse pin (conta 1 request e 1 hit, 0 leituras) e o solta na saída. Se outro leitor fixar a mesma página, o `pin_count` vai a 2 e ela só pode sair quando os dois soltarem.
+- **Salto (S2, 23/11).** Um miss fora das pré-lidas solta as restantes antes do pin (um hit, como pedir de novo a página atual, não solta). O cursor segura no máximo `k` pré-lidas mais as páginas em uso: `1 + k` num scan simples, `d + k` com `cur.page` aninhado em profundidade `d`.
+- **Garantia de memória (T0, 23/11).** A pré-leitura não causa `BufferFullError` enquanto `pins simultâneos fora dos cursores ≤ capacidade − cursores × (1 + k)`. Fora disso (área pequena), um pin comum pode falhar. Está marcado como `# LIMITAÇÃO:` no código.
+- **Cursor fechado.** `cur.page` depois do `with` levanta `RuntimeError`.
+- **Erros de E/S no lote.** Bloco alocado mas nunca gravado (`ValueError` de `fm.read`) só encerra o lote. Qualquer outro erro devolve os frames restantes a `free`, solta o pin do bloco pedido e é propagado; as pré-lidas já instaladas ficam com o cursor, que as solta ao terminar.
+- **Políticas puras.** Como a pré-lida está fixada, LRU e MRU não precisam de regra especial: só pulam frames fixados. Saíram a marca `prefetched` e a segunda chance da revisão de 22/11.
+- **Só DATA e INDEX.** `allow_prefetch` recusa WORK e CATALOG (`ValueError`). Em WORK, as pré-lidas fixadas tirariam frames do M dos operadores.
+- **`pin(seq=True)` fora de cursor não pré-lê.** O parâmetro fica no contrato por compatibilidade.
 
 ### 3.4 `unpin`, `new_page`, `force`, `flush_*`, `drop_file`, `clear`
 
@@ -218,7 +241,7 @@ def new_page(self, fid, ptype):
 ```
 
 - `force(page)`: `fm.write(page.fid, page.bno, page.data)`, `dirty = False`, `forced_writes += 1`. O frame continua fixado como estava.
-- `flush_file(fid)` / `flush_all()`: grava os sujos, **sem** contar como `dirty_evictions`.
+- `flush_file(fid)` / `flush_all()`: grava os sujos, **sem** contar como `dirty_evictions`. Não há contador próprio: a parcela de flush é `io.writes − dirty_evictions − forced_writes` (D-P1-05, revista em 22/11).
 - `drop_file(fid)`: para cada frame do arquivo, faça `assert pin_count == 0`, depois descarte **sem gravar** e devolva-o a `free`.
 - `free_block(fid, bno)`: se o bloco estiver residente, `assert pin_count == 0`, descarte o frame **sem gravar** (sai de `_table` e da política, volta a `free`); depois `fm.free(fid, bno)`. Sem isso, um `allocate` que reuse o `bno` encontraria um frame velho no buffer. Teste: `test_free_block_reuse`.
 - `clear()`: `flush_all()`, `assert self.pinned() == 0`, todos os frames voltam a `free`, `_table` e as políticas são zeradas.
@@ -281,10 +304,12 @@ O caminho do `pin` com hit roda milhões de vezes. Mantenha-o curto: uma busca n
 | `test_dirty_eviction` | área com 2 frames: suja A, carrega B e C; A é gravado (`dirty_evictions == 1`); ao reler, o conteúdo novo está lá |
 | `test_not_dirty_no_write` | página alterada **sem** `mark_dirty` é perdida. Prova que o contador não inventa gravação e serve de exemplo do bug do enunciado |
 | `test_buffer_full` | todos os frames fixados → `BufferFullError` |
-| `test_lru_mru_clock_fifo` | sequência de referência clássica com 3 frames: compare a sequência de vítimas com a calculada à mão (coloque o cálculo no comentário) |
+| `test_lru_vs_mru_victims` | sequência de referência clássica com 3 frames: compare a sequência de vítimas de LRU e MRU com a calculada à mão (coloque o cálculo no comentário) |
 | `test_sequential_flooding` | área de 4 frames; varrer 5 blocos 3×. LRU: 15 misses. MRU: bem menos. É o resultado que vai para o relatório |
 | `test_toss` | com `toss_immediate=True`, a página desafixada com `toss` é a próxima vítima |
-| `test_prefetch` | `prefetch=4`: um pin `seq` em bloco frio lê 5 blocos; os 4 pins seguintes são hits |
+| `test_prefetch` | `prefetch=4`, num cursor `seq_scan`: um miss em bloco frio lê 5 blocos (1 rand + 4 seq); as 4 pré-lidas ficam fixadas pelo cursor; os 4 pins seguintes são hits |
+| `test_prefetch_dois_donos_so_sai_quando_os_dois_soltam` | tabela de `pin_count` com dois leitores na mesma pré-lida (D-P1-12, 23/11) |
+| `test_teto_do_prefetch_garante_frame_para_outro_cursor` | o prefetch de um cursor não toma a área inteira: o outro cursor não leva `BufferFullError` |
 | `test_reserve_work` | §3.5 |
 | `test_areas_isolated` | encher `DATA` não expulsa páginas de `INDEX` |
 | `test_force` | `force` grava já e incrementa `forced_writes` |
@@ -302,7 +327,7 @@ O caminho do `pin` com hit roda milhões de vezes. Mantenha-o curto: uma busca n
 - Contagem de leitura em *hit* (ou de request em `new_page`).
 - `read` além do fim do arquivo devolvendo zeros em silêncio.
 - `reset_stats` que não zera a posição da cabeça, deixando o primeiro acesso como "sequencial".
-- Prefetch que **fixa** as páginas lidas antecipadamente: vazamento de pin.
+- Prefetch que fixa as páginas lidas antecipadamente **sem um dono que as solte**: vazamento de pin. Desde a revisão de 23/11 da D-P1-12, as pré-lidas são fixadas de propósito, mas em nome do cursor `bp.seq_scan`, que as solta ao usá-las, num salto (S2) ou ao terminar. Testes: `test_cursor_solta_pre_lidas_em_break_e_excecao`, `test_cursor_fechado_levanta_erro`.
 
 Registre cada uma que aparecer em `ai/P1/review.md`.
 

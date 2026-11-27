@@ -1,0 +1,162 @@
+"""Relatório técnico: partes geradas e montagem do PDF (P6 §9). Camada 1, dono: P6.
+
+O texto fica em `docs/relatorio/*.md`, escrito à mão. Tudo o que é número ou
+lista que já existe em outro lugar é gerado aqui, para nunca ser redigitado:
+- capa: nomes e DREs da tabela "Integrantes" do README (enunciado §7.3);
+- base: volumes, tamanho de registro, V(A), blocos e bfr estimados por tamanho
+  de bloco e a conferência dos tamanhos dos joins, lidos de `base_stats.csv`;
+- metodologia: composição da matriz contada a partir de `bench.matrix`.
+
+Uso: `python -m bench.report [--stats results/base_stats.csv] [--workload <workload.json>] [--pdf]`.
+Grava `docs/relatorio/gerado/*.md`; com `--pdf`, monta `docs/relatorio/relatorio.pdf`
+com pandoc (motor tectonic ou xelatex). Não lê nem mede nada do SGBD.
+"""
+import argparse
+from collections import Counter
+import csv
+import json
+from pathlib import Path
+import re
+import shutil
+import subprocess
+
+from bench.build import size_checks
+from bench.matrix import BASE_AREAS, BASE_BLOCK_SIZE, join_experiments, select_experiments
+from bench.schema import ACCESS_COLUMNS
+from cbd.contracts import PageType
+
+REPORT_DIR = Path('docs/relatorio')
+# Ordem dos capítulos; `gerado/` é escrito por este módulo.
+CHAPTERS = ('gerado/capa.md', '01_introducao.md', '02_opcoes_de_projeto.md', '03_base.md',
+            'gerado/base.md', '04_metodologia.md', 'gerado/matriz.md', '05_resultados.md',
+            '06_conclusao.md')
+
+
+def members(readme):
+    """(nome, DRE, parte) da tabela "Integrantes" do README, ordenados pela parte."""
+    rows = re.findall(r'^\|\s*\*\*(.+?)\*\*\s*\|\s*`(\d+)`\s*\|\s*\*?(P\d)\*?\s*\|', Path(readme).read_text(), re.M)
+    if not rows:
+        raise ValueError(f'{readme}: tabela de integrantes não encontrada')
+    return sorted(rows, key=lambda r: r[2])
+
+
+def cover(readme):
+    lines = ['---',
+             'title: "Avaliação 2 — Indexação e Processamento de Consultas"',
+             'subtitle: "COS480 Construção de Banco de Dados — Grupo 3 — UFRJ, 2026.2"',
+             'lang: pt-BR',
+             '---', '',
+             '| Integrante | DRE | Parte |', '| :--- | :---: | :---: |']
+    lines += [f'| {name} | {dre} | {part} |' for name, dre, part in members(readme)]
+    return '\n'.join(lines) + '\n\n\\newpage\n'
+
+
+def read_stats(path):
+    """base_stats.csv -> {block_size: {tabela: linha}} com números convertidos."""
+    out = {}
+    with Path(path).open(newline='') as handle:
+        for row in csv.DictReader(handle):
+            row['n'], row['block_size'] = int(row['n']), int(row['block_size'])
+            row['estimated_blocks'] = int(row['estimated_blocks'])
+            row['estimated_bfr'] = float(row['estimated_bfr'])
+            row['record_size'] = float(row['record_size'])
+            row['distinct'] = json.loads(row['distinct'] or '{}')
+            out.setdefault(row['block_size'], {})[row['table']] = row
+    return out
+
+
+def _table(header, rows):
+    out = ['| ' + ' | '.join(header) + ' |', '| ' + ' | '.join([':---'] + ['---:'] * (len(header) - 1)) + ' |']
+    out += ['| ' + ' | '.join(str(c) for c in row) + ' |' for row in rows]
+    return '\n'.join(out)
+
+
+def _int(n):
+    return f'{n:,}'.replace(',', '.')        # milhar com ponto (pt-BR)
+
+
+def base_section(stats_path):
+    by_block = read_stats(stats_path)
+    sizes = sorted(by_block)
+    any_block = by_block[sizes[0]]
+    tables = list(any_block)
+    parts = ['## Volumes e cardinalidades\n',
+             'Gerado de `results/base_stats.csv`. Tamanho médio do registro em bytes, no formato do P2. '
+             'V(A) só nas colunas usadas em junções e seleções, sem contar nulos.\n']
+    parts.append(_table(
+        ['Tabela', 'n', 'Registro (B)', 'V(A)'],
+        [(t, _int(any_block[t]['n']), f"{any_block[t]['record_size']:.1f}",
+          ', '.join(f'{c} = {_int(v)}' for c, v in sorted(any_block[t]['distinct'].items())) or '—')
+         for t in tables]))
+    parts.append('\n## Blocos e fator de blocagem estimados\n')
+    parts.append('Empacotamento heap estimado com o layout do P2 (cabeçalho de 28 bytes e slot de 4 bytes). '
+                 '**Não são medidas do SGBD**: as medidas físicas entram quando a carga pela pilha real existir (#14).\n')
+    parts.append(_table(
+        ['Tabela'] + [f'b (B = {b})' for b in sizes] + [f'bfr (B = {b})' for b in sizes],
+        [(t, *(_int(by_block[b][t]['estimated_blocks']) for b in sizes),
+          *(f"{by_block[b][t]['estimated_bfr']:.1f}" for b in sizes)) for t in tables]))
+    work, data = BASE_AREAS[PageType.WORK], BASE_AREAS[PageType.DATA]
+    parts.append(f'\n## Adequação das combinações de tamanho\n\n'
+                 f'Critério (P6 §2.3): a tabela menor cabe em M − 2 = {work - 2} blocos e a maior tem '
+                 f'pelo menos 10 × DATA = {10 * data} blocos (WORK = {work}, DATA = {data}).\n')
+    rows = []
+    for b in sizes:
+        for check in size_checks(by_block[b], work, data):
+            rows.append((check['size_combo'], b, 'ok' if not check['problems'] else '; '.join(check['problems'])))
+    parts.append(_table(['Combinação', 'B', 'Situação'], rows))
+    return '\n'.join(parts) + '\n'
+
+
+def matrix_section(workload=None):
+    joins = join_experiments()
+    regular = [e for e in joins if 'outer' not in e.args and 'build' not in e.args]
+    by_config = Counter(e.config for e in regular)
+    parts = ['## Composição da matriz\n', 'Contada a partir de `bench/matrix.py`.\n',
+             _table(['Configuração', 'Linhas de junção'], sorted(by_config.items())),
+             f'\nTotal: {len(regular)} linhas de junção (3 combinações de tamanho × 3 algoritmos × '
+             f'{len(regular) // 9} configurações físicas), mais {len(joins) - len(regular)} com o lado '
+             f'externo ou construtor forçado.']
+    if workload is not None:
+        selects = select_experiments(json.loads(Path(workload).read_text()))
+        by_type = Counter((e.sel_type, e.config) for e in selects)
+        parts += ['\n', _table(['Seleção', 'Caminho', 'Linhas'],
+                               [(t, c, n) for (t, c), n in sorted(by_type.items())]),
+                  f'\nTotal: {len(selects)} linhas de seleção.']
+    return '\n'.join(parts) + '\n'
+
+
+def generate(stats, readme='README.md', workload=None, out_dir=REPORT_DIR):
+    target = Path(out_dir) / 'gerado'
+    target.mkdir(parents=True, exist_ok=True)
+    (target / 'capa.md').write_text(cover(readme))
+    (target / 'base.md').write_text(base_section(stats))
+    (target / 'matriz.md').write_text(matrix_section(workload))
+    return target
+
+
+def build_pdf(out_dir=REPORT_DIR, output='relatorio.pdf'):
+    """pandoc + motor LaTeX. LIMITAÇÃO: precisa de pandoc e tectonic (ou xelatex) instalados."""
+    engine = next((e for e in ('tectonic', 'xelatex') if shutil.which(e)), None)
+    if not shutil.which('pandoc') or engine is None:
+        raise RuntimeError('instale pandoc e tectonic (ou xelatex) para gerar o PDF')
+    out_dir = Path(out_dir)
+    subprocess.run(['pandoc', *CHAPTERS, '-o', output, f'--pdf-engine={engine}',
+                    '-V', 'geometry:margin=2.5cm', '-V', 'mainfont=Latin Modern Roman', '--toc'],
+                   cwd=out_dir, check=True)
+    return out_dir / output
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Gera as partes automáticas do relatório e, opcionalmente, o PDF.')
+    parser.add_argument('--stats', type=Path, default=Path('results/base_stats.csv'))
+    parser.add_argument('--workload', type=Path, default=None,
+                        help='workload.json da base preparada (conta as linhas de seleção)')
+    parser.add_argument('--pdf', action='store_true', help='monta docs/relatorio/relatorio.pdf com pandoc')
+    args = parser.parse_args()
+    print('partes geradas em', generate(args.stats, workload=args.workload))
+    if args.pdf:
+        print('PDF em', build_pdf())
+
+
+if __name__ == '__main__':
+    main()

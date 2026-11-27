@@ -44,7 +44,7 @@ class BufferConfig:
     areas: dict[PageType, int] = field(default_factory=_default_areas)
     policy: Policy = Policy.LRU
     toss_immediate: bool = False          # unpin(toss=True) torna o frame a próxima vítima
-    prefetch: int = 0                     # blocos lidos à frente num miss com seq=True; 0 = desligado
+    prefetch: int = 0                     # blocos lidos à frente num miss dentro de bp.seq_scan; 0 = desligado
 
 
 # ------------------------------------------------------------------ contadores
@@ -78,7 +78,7 @@ class BufferCounters:
 
 # ------------------------------------------------------------------ esquema e registros
 class FType(str, Enum):
-    INT = "INT"          # int (64 bits com sinal)
+    INT = "INT"          # int (32 bits com sinal; E&N §16.4.1, revisão do D-P2-05)
     FLOAT = "FLOAT"      # float (64 bits)
     DATE = "DATE"        # datetime.date
     CHAR = "CHAR"        # str de tamanho fixo `size` bytes (utf-8, preenchido)
@@ -201,7 +201,7 @@ class TempFile(Protocol):
     """Arquivo temporário (runs, partições) em páginas WORK."""
     def append(self, rec: Record) -> None: ...   # mantém 1 página de saída fixada
     def finish(self) -> None: ...                # desafixa a página de saída (chamar antes de scan)
-    def scan(self) -> Iterator[Record]: ...      # 1 página fixada por vez, seq=True, toss=True
+    def scan(self) -> Iterator[Record]: ...      # 1 página fixada por vez, toss=True (área WORK: sem prefetch, D-P1-12)
     def n_blocks(self) -> int: ...
     def n_records(self) -> int: ...
     def drop(self) -> None: ...                  # bp.drop_file + fm.delete; idempotente

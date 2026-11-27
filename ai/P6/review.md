@@ -150,3 +150,227 @@ achados abaixo foram reproduzidos antes da correção (teste que falhava).
 - Correção: no resume, confere o cabeçalho contra `COLUMNS` e descarta a última
   linha incompleta; `CsvLog` troca quebras de linha por espaço (uma linha do CSV
   é sempre uma linha do arquivo).
+
+## `exp_id` de faixa com ponto quebrava a leitura das figuras (09/11, #23)
+
+- Arquivo: `bench/plots.py`, `select_series` (bruto em `ai/P6/raw/plots_v1.py`).
+- Categoria: correção (parsing).
+- Defeito: o código gerado separava o `exp_id` com `split('.')`, mas o id da
+  consulta de faixa tem ponto (`select.range_cr_0.01.a_scan`); o rótulo do caminho
+  saía errado e a seletividade virava `0`.
+- Detecção: `test_select_series_averages_the_20_dres` (KeyError em `'0.01'`).
+- Correção: separa pelo último ponto (`rsplit('.', 1)`).
+
+## Revisão independente da pilha #24/#22/#23/#6/#19/#3/#8 (12/11)
+
+Três revisores (subagentes de contexto limpo, só leitura) com focos de
+corretude, aderência ao contrato e qualidade dos testes. Cada achado abaixo foi
+reproduzido pelo agente antes de ser aceito (testes do revisor em scratchpad:
+8 falhando antes da correção; mutações aplicadas numa cópia: 18 de 21 sobreviviam).
+Código bruto: `ai/P6/raw/compare_cost_v1.py`, `plots_v1.py`, `report_v1.py`,
+`matrix_factors_v1.py`.
+
+### Linha com resultado errado entrava no estimado × medido e nas figuras (#22/#23)
+- Arquivos: `bench/compare_cost.py` (`compare`), `bench/plots.py` (`join_series`, `select_series`).
+- Categoria: corretude (validação ignorada).
+- Defeito: `summarize` grava a tentativa com `status='ok'` e `valid='False'`; os dois
+  módulos filtravam só por `status`. Uma junção errada com `io.reads = est.reads`
+  saía "dentro da tolerância" e virava barra normal no gráfico.
+- Detecção: revisores de corretude e de contrato (P6 §5: `False` bloqueia o relatório).
+- Correção: linha inválida não é comparada nem desenhada; vai para a lista de
+  pendências com motivo "resultado inválido" e aparece como "INVÁLIDO" na figura.
+
+### Motivo de uma métrica "explicava" a diferença da outra (#22)
+- Arquivo: `bench/compare_cost.py` (`explained = within or bool(why)`).
+- Categoria: corretude (regra larga demais).
+- Defeito: bastava uma regra disparar para a linha inteira contar como explicada.
+  Ex.: leituras 3× acima do estimado e gravações abaixo saíam como "páginas
+  temporárias descartadas", fora da lista de não explicadas.
+- Correção: motivos separados para leituras e gravações; a linha só é explicada se
+  cada métrica fora da tolerância tiver o próprio motivo.
+
+### Regra da faixa valia para o SCAN e a de recursão para qualquer recursão (#22)
+- Arquivo: `bench/compare_cost.py` (`reasons`).
+- Categoria: corretude (regra larga demais).
+- Defeito: "distribuição não uniforme" explicava qualquer diferença na faixa, até no
+  SCAN (custo `b_r`, que não depende da distribuição); `levels > 0` explicava toda
+  recursão como skew, inclusive a esperada com WORK = 16 (o P6 §7 diz "recursão
+  inesperada").
+- Correção: a regra da faixa só vale em caminho por índice/organização; recursão só
+  explica se o operador marcar `skew_fallback` ou `variant` com skew.
+
+### Regra "altura da B+ ≠ esperada" lia chaves que nenhum contrato define (#22)
+- Arquivo: `bench/compare_cost.py` (`info['height']`, `info['expected_height']`).
+- Categoria: contrato (aderência).
+- Defeito: nenhum operador de P4/P5 põe essas chaves em `info`; a regra nunca dispara.
+- Correção: não corrigida aqui (depende de P3/P4). Registrada como pendência da #36.
+  Enquanto isso, diferenças de B+ vão para "não explicadas" (lado conservador).
+
+### Linha 'ok' sem `io.reads` derrubava a comparação (#22)
+- Defeito: `close(None, x)` dava `TypeError`. Correção: vai para pendências como "sem medida".
+
+### Erro de operador aparecia como "N/A" e N/A sumia nas seleções (#23)
+- Arquivo: `bench/plots.py`.
+- Defeito: `'N/A' if status != 'ok'` juntava `error`/`nondeterministic` com N/A
+  legítimo; `select_series` descartava N/A e erro em silêncio (P6 §10).
+- Correção: célula com o status (`N/A`, `ERRO`, `INVÁLIDO`) nas duas figuras.
+
+### `areas_for_block` podia zerar áreas ou perder bytes (#6)
+- Arquivo: `bench/matrix.py`. Defeito: divisão inteira; com B = 65536 CATALOG = 0.
+- Correção: `ValueError` se o bloco não divide a memória da área.
+
+### Testes que não provavam o que diziam (#19, #23, #6, #3)
+- `test_each_factor_row_changes_only_its_factor` descartava a política e o teste do
+  WORK usava a própria `areas_for_block` como esperado (remover o `work` passava).
+- `test_one_command_writes_every_figure` só conferia que o PNG existe: barra com o
+  estimado no lugar do medido passava.
+- `test_size_checks_use_areas_of_each_block_size` nunca exercitava o WORK escalado.
+- **Erro do agente nesta sessão (#3):** `test_signature_detects_swapped_duplicate_with_same_count`
+  passava com XOR no lugar da soma, e `test_heap_order_is_not_key_order` aceitava
+  uma ordem decrescente (tão agrupada quanto a crescente).
+- Correção: testes reescritos com valores literais, comparação de todos os campos
+  da linha e métrica de agrupamento.
+
+### Afirmações erradas nos cartões (#3)
+- **Erro do agente nesta sessão:** a D-P6-05 dizia que o XOR "não detecta duplicata".
+  Com uma duplicata o XOR detecta; ele só ignora multiplicidade par. E, como o
+  resultado esperado é um conjunto (PKs únicas), XOR + contagem também seria
+  completo. A vantagem real da soma é valer para multiconjuntos. Cartão reescrito.
+- D-P6-03 dava valores esperados da Zipf como se fossem da base (real: 6 192 e 441);
+  D-P6-04 subestimava a lista (~18 GB com os ponteiros); D-P6-07 citava um teste que
+  não confere o CPF. Corrigidos.
+
+### Descartados
+- "matplotlib ausente, `test_plots` pulado": falso; matplotlib 3.11 está no `.venv`
+  e o teste roda (os pulados são o do Engine real e o do PDF).
+- "Fronteira da faixa sem limite de magnitude": é questão de projeto, não bug.
+  A regra agora só vale em caminho por índice; o limite de magnitude fica para
+  debate com o integrante.
+
+## Revisão independente do índice de cartões (#25, 19/11)
+
+Revisor de código e testes, com contexto limpo, sobre `decision_cards`/`decisions_section`
+(`bench/report.py`) e os testes novos. Versão bruta: `ai/P6/raw/report_decisoes_v1.py`.
+Cada achado aceito foi reproduzido com um teste que falhou antes da correção
+(8 falhas em `tests/test_report.py`).
+
+### Cartão sumia do índice em silêncio (#25)
+- **Onde:** `bench/report.py`, `_CARD` e a contagem `^### D-P\d`; glob `P*.md`.
+- **Categoria:** corretude (o objetivo da função era justamente "nenhum cartão some").
+- **Como foi achado:** revisor; `#### D-P3-01 — T` dava `[]` sem erro, e `p3.md` era ignorado.
+- **Teste:** `test_malformed_cards_raise_instead_of_vanishing[####...]`, `test_lowercase_decision_file_is_not_ignored`.
+
+### Status fora do vocabulário contava errado (#25)
+- **Onde:** normalização do status (`re.match(r'[\w-]+', ...)`).
+- **Categoria:** corretude. `_provisória_` virava o status `_provisória_` (0 provisórios),
+  `provisoria` passava, `(12/11) decidida` dava `AttributeError` sem dizer o arquivo;
+  "decidida; nada foi revisto" não marcava, mas "não revista" virava "(revista)".
+- **Teste:** `test_decision_cards_normalize_status_and_keep_file_order` e os casos de status do parametrizado.
+
+### ID duplicado ou de outra parte era aceito (#25)
+- **Categoria:** corretude. O mesmo `D-P3-01` duas vezes gerava duas linhas; `D-P5-01` em `P3.md` passava.
+- **Teste:** casos "duplicado" e "outra parte" do parametrizado.
+
+### Citação dentro de nota contava como justificativa (#25)
+- **Onde:** `decisions_section` e o teste do capítulo, que usava substring crua.
+- **Categoria:** teste fraco. Um blockquote "os cartões D-P4-01 a 03 entram depois" bastava para o cartão ficar "justificado".
+- **Teste:** `test_citation_in_a_note_does_not_count_as_justification`; o teste do capítulo passou a ler o índice gerado.
+
+### Descartados
+- Cartão-modelo dentro de bloco de código entraria no índice: o efeito é ruidoso (o teste exige citá-lo), não silencioso, e nenhum arquivo de decisões tem esse bloco.
+- `## ` dentro de bloco de código trocaria a seção: o capítulo 2 não tem blocos de código.
+
+## Revisão independente do capítulo 2 do relatório (#25, 19/11)
+
+Revisor de fidelidade às fontes, com contexto limpo, sobre `docs/relatorio/02_opcoes_de_projeto.md`.
+16 achados, todos conferidos contra a fonte citada e aceitos. Os que são erro de fato:
+
+### CPF sintético "não é válido" (D-P6-07, cartão de 12/11)
+- **Onde:** `docs/decisoes/P6.md` (D-P6-07) e a linha do CPF no capítulo 2.
+- **Categoria:** afirmação falsa em cartão gerado por IA.
+- **Como foi achado:** o revisor calculou os dígitos verificadores; conferido: `00000000191` é válido
+  e 499 dos 50 mil CPFs `f"{k:011d}"` passam no teste. A escolha continua de pé (sequencial, sem
+  origem em pessoa real, sem efeito em experimento); só o motivo estava errado.
+- **Correção:** cartão e capítulo reescritos com o número medido.
+
+### Justificativa dos 4 KB contradizia a D-P6-02 (capítulo 2)
+- O texto rejeitava 2 e 8 KB pelo critério de tamanho com áreas fixas em páginas, mas a D-P6-02
+  escala as áreas e o critério vale nos três tamanhos. Reescrito: meio-termo scan × acesso pontual,
+  página do SO, e o tamanho de bloco medido como fator.
+
+### Outros (precisão e cobertura)
+- Política "escolhida por operação pela #16" atribuída à D-P1-08, que fixa LRU geral + MRU no laço interno.
+- Função de hash descrita sem o finalizador splitmix64 e sem a preterida `k mod N` (enunciado §3.5.3).
+- Motivo do escopo da base atribuído à D-P6-02 (vem da arquitetura §0 / #5); faltava apontar o cap. 3 para campos e chaves.
+- Sort-merge sem a escolha concreta (divisão de M, pipeline); hash join sem construtor e `prepartitioned`.
+- Linhas sem preterida onde o enunciado já nomeia uma (free list §3.2.1, grupo de campos §3.4.1, hash estático exigido §3.5.1, repartição por operação §2.2.2).
+- Detalhes: desempate do INL e teto do BNL (D-P4-01/02), pilha de livres persistida no `close()`, contadores por arquivo, "b_r − 1 leituras", "~2 450 buckets vazios", "várias páginas por bloco" fora do D-P1-06, e "nenhum operador usa mais de M" forte demais.
+
+## Revisão independente da revisão das provisórias (PR #86, 19/11)
+
+Um revisor de fidelidade e consistência (contexto limpo, só leitura) leu o diff
+`origin/main...p6/revisao-provisorias`. Os 5 achados foram conferidos e aceitos.
+
+### Capítulo 2 ainda marcava 7 cartões como provisórios (alto)
+- `docs/relatorio/02_opcoes_de_projeto.md` linhas 39–42, 69, 90 e 100, e a nota da linha 16.
+  O índice gerado já dizia "1 provisório", enquanto a seção anterior mostrava 8 marcações.
+- **Causa:** a revisão atualizou os cartões e o índice gerado, mas não procurou o status
+  repetido à mão no capítulo. **Correção:** marcação removida (fica só a D-P6-09) e nota reescrita.
+
+### Status "revista com o integrante" exagerava (médio)
+- D-P6-03, 04, 06, 07 e 08 foram delegadas em bloco, sem debate. O status passou a ser
+  "escolha delegada ao agente sem debate". D-P6-05 e 10 (debatidas, depois delegadas):
+  "escolha delegada ao agente após o debate".
+
+### D-P6-01: argumento contra citava só `build_s` (baixo)
+- `bench/matrix.py` força `build_r`, `build_s`, `outer_r` e `outer_s`, todos só no par
+  `small_large` da configuração a. A regra `auto` do P5 vem do guia; `cbd/exec/` ainda
+  não está no `main`. A conclusão não muda. Texto corrigido.
+
+### Plural "1 provisórios" no índice gerado (baixo)
+- `bench/report.py`. O teste afirmava o texto errado. Corrigido no `b1a24e0`, com o teste
+  conferindo singular e plural.
+
+### Estudo dizia "8 blocos de uma vez" (baixo)
+- `docs/estudo/P6.md`: com prefetch 8, um miss traz 9 blocos. Conta igual, texto corrigido.
+
+Conferido pelo revisor, sem problema: formato dos 8 cartões, escolha igual à recomendação
+e ao código, "9 páginas, 8 voltas" pelo `_prefetch`, e scans intercalados reproduzidos
+(80 leituras; seeks 80 → 6–16). Ele notou que ~1 962/9 é aproximação, não piso.
+
+## Revisão independente do cartão D-P6-11 (PR do plano físico, 19–20/11)
+
+Um revisor de fidelidade (contexto limpo, só leitura) leu o diff `origin/main...p6/5-cartao-plano-fisico`.
+Os 6 achados foram conferidos no código e no enunciado e aceitos.
+
+### Faixa em hash descrita como "scan completo com número" (alto)
+- Cartão (opção D, "Por que A") e estudo diziam que a linha `select.*.b_hash` em `cr` mostra com
+  número que a faixa vira scan. Errado: o contrato do HASH levanta `NotApplicable` e `bench/run.py`
+  grava `status='N/A'`, sem contagem (docstring de `select_experiments` já dizia isso).
+- **Como aconteceu:** o agente escreveu de memória da teoria (SKS 14.5) sem conferir o contrato.
+  O erro também foi dito ao integrante no debate. **Correção:** a linha é a resposta explícita,
+  com motivo, à configuração §5.2 1.b "chave do hashing"; o argumento de D foi reescrito.
+
+### Opção C com 19 variantes (médio)
+- Sem `cr` somem só `aluno__bt_cr` e `aluno__hs_cr`: 23 − 2 = 21. Corrigido.
+
+### "As configurações b–e exigem o detalhe pela FK" exagerava (médio)
+- Pelo §5.1, b e d se cumprem com o mestre pela PK. O que a opção B perde: a e e (exigem heap) e c
+  em `curso ⋈ disciplina` e `curso ⋈ aluno` (detalhe pela FK). `aluno ⋈ inscricao` teria c, porque a
+  PK de `inscricao` começa por `dre`. Cartão e estudo reescritos.
+
+### Opção C citava o §4.2 (médio)
+- O que se perde sem `cr` é o §5.2 1.b e 1.c (faixa em `cr` por organização primária e por
+  secundário). Referência passou a citar §5.2.
+
+### Hash primário "evita o particionamento" (baixo)
+- Guia P5 §4.3: um lado hash dispensa o particionamento só desse lado (`prepartitioned`); só o par
+  `HASH_EQ` dispensa os dois. Corrigido.
+
+### Teste citado sem nome; direção "toda variante é usada" sem teste (baixo)
+- Nome: `test_plan_and_catalog_adapter`. A direção plano → matriz foi conferida só por inspeção;
+  o cartão diz isso.
+
+Não verificável: as citações de livros (`refs/` não está no repositório). E&N 16.7 trocado por
+16.6 (arquivos ordenados) e 16.8 (hashing), a mesma numeração da D-P6-01.
+
