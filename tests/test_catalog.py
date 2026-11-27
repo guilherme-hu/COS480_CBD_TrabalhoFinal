@@ -753,3 +753,32 @@ def test_reorganize_updates_the_stats(engine):
     ds = t.data.stats()
     assert t.stats().n_records == 1500
     assert t.stats().n_blocks == ds["blocks"] - ds["meta_blocks"] < before
+
+
+
+def test_engine_with_prefetch_keeps_the_catalog_and_temp_out(tmp_path):
+    # #83, D-P2-19: o catálogo (área CATALOG) e o TempHeap (WORK) não declaram allow_prefetch, que o P1
+    # recusa nessas áreas com ValueError: criar a base e abri-la de novo (catálogo e tabela abertos pelo open)
+    # não pode levantar. O heap da tabela (DATA) declara: o scan de b blocos tem ⌈b / 9⌉ misses. (O índice
+    # hash real é testado em test_hash_index.py: aqui a fixture fake_index troca o índice por um dublê.)
+    cfg = BufferConfig(prefetch=8)
+    eng = Engine(StorageConfig(root_dir=str(tmp_path)), cfg)
+    eng.catalog.create_table(S, OrgSpec(Org.HEAP))
+    eng.catalog.load_table(S.name, rows(3000))
+    eng.close()
+    eng = Engine(StorageConfig(root_dir=str(tmp_path)), cfg)
+    t = eng.catalog.table(S.name)
+    b = t.data.stats()["blocks"] - t.data.stats()["meta_blocks"]
+    eng.cold()
+    assert sum(1 for _ in t.data.scan()) == 3000
+    data = eng.bp.stats_by_area[PageType.DATA]
+    assert b > 9 and (eng.fm.io.reads, data.misses, data.prefetched) == (b, math.ceil(b / 9), b - math.ceil(b / 9))
+    tmp = eng.catalog.temp(S)
+    for r in rows(500):
+        tmp.append(r)
+    tmp.finish()
+    eng.cold()
+    assert sum(1 for _ in tmp.scan()) == 500 and eng.bp.stats.prefetched == 0
+    tmp.drop()
+    assert eng.bp.pinned() == 0
+    eng.close()

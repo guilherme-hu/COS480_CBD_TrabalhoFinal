@@ -7,7 +7,8 @@ esses auxiliares duplicaria a validação do RID e o caminho seguro do reorganiz
 Decisões: D-P2-10 (RID de 6 B), D-P2-14 (bucket_of), D-P2-15 (bucket = 1 bloco + cadeia pelo next; bucket i
 no bloco 2 + i; meta no bloco 1), D-P2-16 (N = params["buckets"], ou ⌈n / (bfr_est · carga)⌉ com carga 0,8,
 limitado a params["distinct"]; sem forçar primo), D-P2-17 (insert no 1º bloco da cadeia com espaço; delete só
-apaga o slot; bulk_load ordenado por bucket; reorganize só por comando). Ver docs/decisoes/P2.md.
+apaga o slot; bulk_load ordenado por bucket; reorganize só por comando), D-P2-19 (prefetch só no scan).
+Ver docs/decisoes/P2.md.
 
 Layout do arquivo:
     bno 1        meta: 'HSH1' | N u32 | seed i64 | n_records u32 | n_overflow u32 | bfr_est u32 | max_chain u32
@@ -17,7 +18,7 @@ Layout do arquivo:
     bno > N+1    blocos de overflow, ligados pelo next da slotted page (0 = fim da cadeia)
 
 Invariantes: todo bloco de 2 até o último alocado é de dados (nenhum é devolvido: D-P2-17, R1); no máximo 1 página
-fixada por iterador; o insert fixa 2 (o bloco da cadeia e a meta) e o bulk_load fixa 2 no instante de ligar um
+fixada por iterador (1 + k no scan com cfg.prefetch = k, D-P2-19); o insert fixa 2 (o bloco da cadeia e a meta) e o bulk_load fixa 2 no instante de ligar um
 bloco novo à cadeia. Quem para um iterador no meio o fecha
 (close), senão a página fica fixada. UNIQUE trata NULL como valor: dois NULL na chave são duplicata (nenhuma chave
 de hash da bancada é nula).
@@ -29,7 +30,7 @@ import math
 import struct
 
 from cbd.contracts import DuplicateKey, FType, NotApplicable, PageType, RID
-from cbd.files.heap import HeapFile, _PTR, _encode, _fresh_page, _rebuild, _view
+from cbd.files.heap import HeapFile, _PTR, _allow_prefetch, _encode, _fresh_page, _rebuild, _view
 from cbd.records.codec import RecordCodec
 from cbd.records.hashing import hash_value
 from cbd.records.slotted_page import SlottedPage
@@ -49,6 +50,7 @@ class HashFile:
         self._k = schema.idx(spec.key)
         self._ktype = schema.get(spec.key).ftype
         self.seed = int(spec.params.get("seed", 0))
+        _allow_prefetch(self)                            # D-P2-19; o índice hash (INDEX) também declara
         self._reset()
 
     def _reset(self):
@@ -187,7 +189,8 @@ class HashFile:
     def scan_bucket(self, i):
         """Todos os registros do bucket i (primário + cadeia), para o hash join do P5. Custo: blocos do bucket i.
 
-        Sem seq=True: o bloco seguinte ao primário 2 + i é o primário de outro bucket, e o prefetch o leria.
+        Sem o cursor bp.seq_scan (D-P2-19): o bloco seguinte ao primário 2 + i é o primário de outro bucket, e o
+        prefetch o leria.
         """
         if type(i) is not int or not 0 <= i < self.n_buckets:  # float daria RID com bloco float
             raise IndexError(f"{self.name}: bucket {i} fora de [0, {self.n_buckets})")
@@ -202,13 +205,15 @@ class HashFile:
                 self.bp.unpin(page, toss=True)
 
     def scan(self):
-        """Todos os registros em ordem física (primários, depois o overflow). Custo: b leituras, 1 seek."""
-        for bno in range(2, self._last() + 1):
-            page = self.bp.pin(self.fid, bno, self.ptype, seq=True)
-            try:
-                yield from self._live(bno, SlottedPage(page.data))
-            finally:
-                self.bp.unpin(page, toss=True)
+        """Todos os registros em ordem física (primários, depois o overflow). Custo: b leituras, 1 seek.
+
+        D-P2-19: o único método do hash que lê pelo cursor bp.seq_scan (prefetch de k blocos por miss): search,
+        scan_bucket e fetch leem 1 bucket ou 1 bloco, e o vizinho do primário 2 + i é de outro bucket.
+        """
+        with self.bp.seq_scan(self.fid, self.ptype) as cur:
+            for bno in range(2, self._last() + 1):
+                with cur.page(bno, toss=True) as page:
+                    yield from self._live(bno, SlottedPage(page.data))
 
     def _live(self, bno, sp):
         for slot in range(sp.n_slots()):

@@ -464,8 +464,7 @@ def test_scan_bucket_does_not_prefetch_other_buckets(tmp_path):
     fm = FileManager(StorageConfig(root_dir=str(tmp_path)))
     pool = BufferPool(fm, BufferConfig(prefetch=8))
     h = HashFile.create(pool, "h", S, spec(buckets=64))
-    h.bulk_load([rec(i, 100) for i in range(640)])
-    pool.allow_prefetch(h.fid, PageType.DATA)
+    h.bulk_load([rec(i, 100) for i in range(640)])         # o construtor já declarou o prefetch (D-P2-19)
     cold(pool)
     assert keys_of(h.scan_bucket(3)) == list(range(3, 640, 64))
     assert pool.fm.io.reads == 1
@@ -740,3 +739,97 @@ def test_date_column_with_a_datetime_raises_type_error(bp):
     d.insert((date(2026, 1, 1), 1))
     with pytest.raises(TypeError):
         list(d.search(datetime(2026, 1, 1, 10)))
+
+
+# ---------- #83, D-P2-19: prefetch só no scan completo ----------
+
+def prefetch_pool(root, k=8):
+    from cbd.contracts import BufferConfig, StorageConfig
+    from cbd.storage.buffer_pool import BufferPool
+    from cbd.storage.file_manager import FileManager
+    return BufferPool(FileManager(StorageConfig(root_dir=str(root))), BufferConfig(prefetch=k))
+
+
+def close_pool(p):
+    assert p.pinned() == 0, "pin sem unpin"
+    p.flush_all()
+    p.fm.close_all()
+
+
+def test_hash_scan_prefetch_keeps_reads_and_cuts_misses(tmp_path):
+    # O scan lê os blocos 2..último em ordem física (D-P2-17): b leituras e 1 seek com ou sem prefetch;
+    # com k = 8, misses = ceil(b / 9) e prefetched = b − misses. Vale também depois de fechar e abrir.
+    out = {}
+    for k in (0, 8):
+        p = prefetch_pool(tmp_path / str(k), k)
+        h = HashFile.create(p, "h", S, spec(buckets=64))
+        h.bulk_load([rec(i, 200) for i in range(3000)])
+        h.close()
+        h = HashFile.open(p, "h", S, spec(buckets=64))
+        st = h.stats()
+        b = st["blocks"] - st["meta_blocks"]
+        cold(p)
+        assert keys_of(h.scan()) == list(range(3000))
+        out[k] = (p.fm.io.reads, p.fm.io.seeks, p.stats.misses, p.stats.prefetched)
+        h.close()
+        close_pool(p)
+    assert st["overflow_blocks"] > 0 and b > 128
+    assert out[0] == (b, 1, b, 0)
+    m = math.ceil(b / 9)
+    assert out[8] == (b, 1, m, b - m)
+
+
+def test_search_and_scan_bucket_do_not_prefetch(tmp_path):
+    # Acessos a um bucket só: o bloco seguinte ao primário 2 + i é de outro bucket (D-P2-19, opção B
+    # preterida). N = 64, 1 bloco por bucket: cada um custa 1 leitura e nada é pré-lido.
+    p = prefetch_pool(tmp_path)
+    h = HashFile.create(p, "h", S, spec(buckets=64))
+    h.bulk_load([rec(i, 100) for i in range(640)])
+    cold(p)
+    assert keys_of(h.search(70)) == [70]
+    assert keys_of(h.scan_bucket(3)) == list(range(3, 640, 64))
+    assert (p.fm.io.reads, p.stats.prefetched) == (2, 0)
+    close_pool(p)
+
+
+def test_hash_scan_uses_toss_and_releases_the_cursor(tmp_path, monkeypatch):
+    # Revisão da #83: todo unpin do scan passa toss=True (o mutante sem toss sobrevivia), e um scan parado
+    # no meio solta a página atual e as 8 pré-lidas (1 + k = 9 fixadas enquanto ele está aberto).
+    p = prefetch_pool(tmp_path)
+    h = HashFile.create(p, "h", S, spec(buckets=16))
+    h.bulk_load([rec(i, 200) for i in range(600)])
+    cold(p)
+    g = h.scan()
+    next(g)
+    assert p.pinned() == 9
+    g.close()
+    assert p.pinned() == 0
+    tosses, unpin = [], p.unpin
+
+    def spy(page, dirty=False, toss=False):
+        tosses.append(toss)
+        return unpin(page, dirty=dirty, toss=toss)
+    cold(p)
+    monkeypatch.setattr(p, "unpin", spy)
+    assert len(keys_of(h.scan())) == 600
+    monkeypatch.undo()
+    b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+    assert tosses.count(True) == b                          # 1 unpin com toss por bloco lido pelo scan
+    close_pool(p)
+
+
+def test_reorganized_hash_still_prefetches(tmp_path):
+    # O reorganize do hash também troca o fid (_rebuild): o prefetch é refeito no arquivo novo.
+    p = prefetch_pool(tmp_path)
+    h = HashFile.create(p, "h", S, spec(buckets=16))
+    ptrs = [h.insert(rec(i, 200)) for i in range(600)]
+    for ptr in ptrs[::2]:
+        h.delete(ptr)
+    old = h.fid
+    h.reorganize()
+    b = h.stats()["blocks"] - h.stats()["meta_blocks"]
+    cold(p)
+    assert h.fid != old and len(keys_of(h.scan())) == 300
+    m = math.ceil(b / 9)
+    assert b > 9 and (p.fm.io.reads, p.stats.misses, p.stats.prefetched) == (b, m, b - m)
+    close_pool(p)
