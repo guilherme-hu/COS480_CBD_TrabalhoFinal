@@ -27,5 +27,25 @@ usar essa base localmente.
 - #64. Estresse físico concluído com SQLite. BNL revisado: 22.650 leituras,
   zero gravações. Sort: 1.050 leituras, 900 gravações. Ver [stress.md](stress.md).
 
-Ao retomar uma pendência, registrar o commit da pilha, o comando, o resultado
-e as contagens que confirmam o aceite.
+## Como retomar o aceite
+
+1. Quando a P3 publicar os arquivos B+, execute `test_access_with_real_btree`
+   e repita os cenários de seleção e junção que hoje exigem B+ primária ou
+   secundária. Confira as tuplas com SQLite, a contagem a frio e zero pins.
+   Na configuração d, falta a orientação que usa o índice do lado detalhe.
+   Na configuração e, falta o caso com índices secundários em ambos os lados.
+2. Quando a P5 publicar o sort-merge, verifique que o operador usa o orçamento
+   `mem` de cada fluxo e os fecha em erro ou interrupção. Use como regressão
+   `test_external_sort_interleaves_two_real_work_streams`.
+3. Quando a P6 alinhar os argumentos de `sort_ptrs`, exercite igualdade e
+   faixa secundárias na bancada e confira a cobertura BNL a–e. Execute a
+   matriz completa e o comparativo de políticas na escala prevista pela P6.
+   Mantenha as leituras medidas e as estimadas identificadas na saída.
+4. Registre o commit da pilha, o comando executado, o resultado e as
+   contagens de cada aceite. Após a integração ao `main`, valide a suíte e
+   repasse as evidências para o relatório e o post-mortem do grupo.
+
+Os comandos e resultados do estresse físico estão em [stress.md](stress.md).
+Os testes por requisito estão no [estado da P4](ESTADO.md). Os motivos,
+alternativas e parâmetros da P4 estão nas
+[decisões da P4](../../docs/decisoes/P4.md).

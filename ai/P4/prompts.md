@@ -140,3 +140,14 @@ acrescentamos a cobertura de bancada permitida pelo armazenamento e
 regeneramos as três entradas da P4 no índice de decisões do relatório.
 O código de outros integrantes veio da `main`. As pendências de P3,
 P5, P6 e de consolidação foram atualizadas.
+
+## 26/11/2026 — Documentação e publicação da integração
+
+Ferramenta: Codex (GPT-6).
+
+> documente tudo q esta pendente e nossas decisoes e suba as atualizações em nossa branch e de push
+
+O registro de pendências foi conferido nas issues do grupo e ganhou um
+roteiro de aceite. O documento de decisões passou a ligar os cartões e as
+convenções de seleção aos testes que sustentam cada escolha. A publicação
+foi solicitada para a branch `p4/67-fechamento`.
