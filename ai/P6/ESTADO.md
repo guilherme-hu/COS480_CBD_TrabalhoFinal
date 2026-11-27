@@ -5,9 +5,9 @@
 page reais (`test_estimated_blocks_match_real_heap_bulk_load`). Em 4 KB, `aluno` = 1 664 e
 `inscricao` = 3 449 blocos; size checks `ok` nos 3 blocos. Suíte: 516 passaram e 1 pulado.
 Seguem bloqueadas pela B+ (P3: #49, #51, #53), pelo índice hash (#52) e pelos operadores
-(P4/P5): #14, #15, #16, #17, #18, #20, #21, #36. A #83 (P2) precisa ler o heap por
-`bp.seq_scan`, porque depois do #97 `pin(seq=True)` não pré-lê mais; sem isso o fator
-prefetch (D-P6-10) mede zero.
+(P4/P5): #14, #15, #16, #17, #18, #20, #21, #36. A #83 (P2, PR #107) faz o heap chamar
+`allow_prefetch` e ler por `bp.seq_scan`; depois do #97 as duas são necessárias, porque
+`pin(seq=True)` não pré-lê mais. Sem isso o fator prefetch (D-P6-10) mede zero.
 
 
 PRs #28–#35 (#4–#13) mesclados no `main` em 12/11. Pilha #76–#82 mesclada em 19/11

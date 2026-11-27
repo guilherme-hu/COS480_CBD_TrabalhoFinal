@@ -211,8 +211,9 @@ def select_experiments(workload):
 # Experimentos de fator único (P6 §4.4, issue #19). Níveis do guia; a base é o nível
 # do meio (B = 4096, toss off, prefetch 0, WORK = 64). Toss (D-P1-09) e prefetch
 # (D-P1-12) estão no main desde o PR #2 (19/11). Desde o #97 (D-P1-12 revista), o
-# prefetch só age dentro de bp.seq_scan; pin(seq=True) não pré-lê. Enquanto o heap
-# não ler por seq_scan (#83, P2), as linhas de prefetch medem efeito zero.
+# prefetch exige as duas coisas: o dono declarar o arquivo com bp.allow_prefetch e
+# ler dentro de bp.seq_scan; pin(seq=True) não pré-lê. Sem as duas no heap (#83,
+# P2), as linhas de prefetch medem efeito zero.
 BLOCK_SIZES = (2048, 4096, 8192)
 TOSS_LEVELS = (False, True)
 PREFETCH_LEVELS = (0, 8)

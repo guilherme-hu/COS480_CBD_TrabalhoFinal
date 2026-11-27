@@ -374,3 +374,18 @@ Os 6 achados foram conferidos no código e no enunciado e aceitos.
 Não verificável: as citações de livros (`refs/` não está no repositório). E&N 16.7 trocado por
 16.6 (arquivos ordenados) e 16.8 (hashing), a mesma numeração da D-P6-01.
 
+
+## Revisão do PR #107 (P2, #83) — 26/11
+
+### "allow_prefetch deixou de ser o caminho" (médio, erro do agente)
+- Onde: comentário do agente na issue #83, `bench/matrix.py:212-215` e a nota de 26/11 da
+  D-P6-10 (PR #104). Diziam que, depois do #97, o prefetch passava a vir só de `bp.seq_scan`
+  "e não mais por `allow_prefetch`".
+- Errado: `BufferPool._pin` só monta o lote quando há cursor **e**
+  `_monotyped.get(fid) == ptype`, que só o `allow_prefetch` preenche. As duas são necessárias.
+- **Como foi achado:** ao revisar o PR #107, que chama as duas; conferido em
+  `cbd/storage/buffer_pool.py` (`allow_prefetch` e a condição do lote).
+- **Como aconteceu:** o agente leu o resumo do revisor do P1 ("o prefetch só acontece dentro do
+  cursor") como se o cursor substituísse a declaração, sem abrir o código.
+- **Correção:** os três textos corrigidos e um comentário de correção na #83. O capítulo 2
+  também passou a descrever a D-P1-12 revista (cursor dono), em vez de `pin(seq=True)`.
