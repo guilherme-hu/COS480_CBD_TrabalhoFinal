@@ -219,7 +219,7 @@ Nomes únicos: `f"__tmp_{os.getpid()}_{contador}"`. As páginas de temporário s
 | Decisão | Escolha |
 | :--- | :--- |
 | Tipo | hashing externo **estático** |
-| Nº de buckets N | `params["buckets"]` se dado; senão `ceil(params["expected_records"] / (bfr_est · load))` com `load = params.get("load", 0.8)` e `bfr_est = max_record(B) // (avg + 4)`, em que `avg` é o tamanho médio dos primeiros 100 registros codificados (`load_table` passa os registros) |
+| Nº de buckets N | `params["buckets"]` se dado; senão `ceil(params["expected_records"] / (bfr_est · load))` com `load = params.get("load", 0.8)` e `bfr_est = max_record(B) // ceil(avg + 4)`, em que `avg` é o tamanho médio dos primeiros 100 registros codificados (`load_table` passa os registros) |
 | Bucket | **1 bloco primário** (slotted page) + **cadeia de overflow** pelo campo `next` |
 | Endereçamento | o bucket `i` está no bno `2 + i` (pré-alocados em sequência no `create`); sem diretório |
 | Função | INT: `(key + seed) % N`; outros tipos: `hash_value(key, seed) % N` (D-P2-14), com `seed = params.get("seed", 0)` salva no meta. O P5 precisa forçar N e seed iguais em duas tabelas para o *bucket-join* |

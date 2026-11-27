@@ -259,12 +259,13 @@ class HeapFile:
 
     def _try_insert(self, bno, data):
         """Tenta pôr data no bloco; devolve (slot ou None, bytes livres depois)."""
-        page = self.bp.pin(self.fid, bno, self.ptype)
-        sp = SlottedPage(page.data)
-        n_before = sp.n_slots()
-        slot = sp.insert(data)
-        free = sp.free_space()
-        self.bp.unpin(page, dirty=slot is not None)
+        with self.bp.page(self.fid, bno, self.ptype) as page:   # solta a página mesmo se o insert levantar
+            sp = SlottedPage(page.data)
+            n_before = sp.n_slots()
+            slot = sp.insert(data)
+            free = sp.free_space()
+            if slot is not None:
+                page.mark_dirty()
         if slot is not None and sp.n_slots() == n_before:
             self._deleted -= 1                           # reaproveitou um slot apagado
         return slot, free
@@ -374,6 +375,8 @@ class HeapFile:
 
         Os dados ficam contíguos depois da meta e da 1ª página do mapa. Custo: b gravações (quando as páginas
         saem do buffer). Se um registro levantar RecordTooLarge no meio, os anteriores já estão gravados.
+        Guarda em memória um par (bloco, espaço livre) por bloco para escrever o mapa no fim (`closed`; 1 664 em
+        `aluno`), fora da medição (preparação).
         """
         if self._n or self._ranges:
             raise ValueError(f"{self.name}: bulk_load exige um heap vazio")
@@ -416,7 +419,10 @@ class HeapFile:
             raise ValueError(f"RID fora da faixa (bloco u32, slot u16): {ptr}") from e
 
     def decode_ptr(self, b):
-        return RID(*_PTR.unpack(b))
+        try:
+            return RID(*_PTR.unpack(b))
+        except struct.error as e:
+            raise ValueError(f"RID de {_PTR.size} B esperado, vieram {len(b)} B") from e
 
     def stats(self):
         return {"blocks": self.bp.fm.n_blocks(self.fid), "records": self._n, "overflow_blocks": 0,
