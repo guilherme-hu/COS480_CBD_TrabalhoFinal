@@ -15,6 +15,7 @@ BTREE e os índices B+ ficam de fora.
 """
 import json
 import math
+import os
 import sys
 from collections import defaultdict
 
@@ -310,3 +311,137 @@ def test_e2e_p1_contract_disk_only_through_the_buffer_and_one_area_per_file(base
         assert areas[key] == w, (names.get(key), areas[key], w)
     mixed = {names.get(k): a for k, a in areas.items() if len(a) != 1}
     assert not mixed, f"arquivos com mais de uma área: {mixed}"
+
+
+# ---------------------------------------------------------------- com os operadores reais do P4 (#55)
+# A P2 por baixo do mini monitor do P4 (cbd/exec, no main desde o PR #108): seleções, nested-loop e ordenação
+# externa sobre as variantes HEAP e HASH, comparadas com a assinatura do SQLite e com as funções *_cost do P4.
+
+def p4_engine(root, b, **areas):
+    cfg = dict(areas_for_block(b))
+    cfg.update({PageType[k]: v for k, v in areas.items()})
+    return Engine(StorageConfig(str(root), b), BufferConfig(areas=cfg))
+
+
+def test_e2e_p4_selections_on_every_p2_path(base, loaded):
+    # Igualdade em aluno.dre pelos 3 caminhos da P2 (scan do heap, hash primário, índice hash + fetch) e faixa em
+    # aluno.cr por scan (heap e hash). Custo com cache frio: o hash primário lê a cadeia até a chave (o
+    # select_eq_cost do P4 supõe 1 + overflow médio), o índice lê a cadeia do índice + 1 bloco do heap, o scan
+    # com parada (UNIQUE) lê no máximo b, e o scan da faixa lê o arquivo inteiro (= select_range_cost).
+    from cbd.contracts import NotApplicable, Path as AP
+    from cbd.exec.selection import select_eq, select_range, select_range_cost
+    root, b, _ = loaded
+    with engine(root, b) as e:
+        heap, hs_dre, hs_cr = (e.catalog.table(n) for n in ("aluno__heap", "aluno__hs_dre", "aluno__hs_cr"))
+        nb = heap.stats().n_blocks
+        for q in [q for q in workload(base) if q["kind"] == "select"]:
+            want = (q["expected"]["count"], q["expected"]["checksum"])
+            if q["column"] == "dre":
+                for t, path, reads in ((heap, AP.SCAN, None), (hs_dre, AP.PRIMARY, chain_position(hs_dre.data, q["value"])),
+                                       (heap, AP.SECONDARY, chain_position(heap.indexes["dre"]._hf, q["value"]) + 1)):
+                    e.cold()
+                    rows = list(select_eq(e, t, "dre", q["value"], path))
+                    got = e.snapshot()["io.reads"]
+                    assert output_signature(q, rows) == want, (q["id"], t.name, path)
+                    assert got == reads if reads is not None else 1 <= got <= nb, (q["id"], path, got, reads)
+            else:
+                lo, hi = (q["value"], None) if q["operator"] == ">=" else (None, q["value"])
+                for t in (heap, hs_cr):
+                    est = select_range_cost(e, t, "cr", lo, hi, True, True, AP.SCAN)
+                    e.cold()
+                    rows = list(select_range(e, t, "cr", lo, hi, True, True, AP.SCAN))
+                    assert output_signature(q, rows) == want, (q["id"], t.name)
+                    assert e.snapshot()["io.reads"] == est.reads == t.data.stats()["blocks"] - t.data.stats()["meta_blocks"]
+                with pytest.raises(NotApplicable):                 # hash não tem ordem: faixa pelo primário é recusada
+                    list(select_range(e, hs_cr, "cr", lo, hi, True, True, AP.PRIMARY))
+        assert e.bp.pinned() == 0
+
+
+def join_configs(c, q):
+    from cbd.contracts import JoinSide, Path as AP
+    r, rc, s, sc = q["r_table"], q["r_column"], q["s_table"], q["s_column"]
+    return {
+        "a (BNL, heap × heap)": (JoinSide(c.table(f"{r}__heap"), rc, AP.SCAN), JoinSide(c.table(f"{s}__heap"), sc, AP.SCAN)),
+        "b (INL, detalhe em hash)": (JoinSide(c.table(f"{r}__heap"), rc, AP.SCAN),
+                                     JoinSide(c.table(f"{s}__hs_{sc}"), sc, AP.PRIMARY)),
+        "b (INL, mestre em hash)": (JoinSide(c.table(f"{r}__hs_{rc}"), rc, AP.PRIMARY),
+                                    JoinSide(c.table(f"{s}__heap"), sc, AP.SCAN)),
+        "d (INL, índice hash do mestre)": (JoinSide(c.table(f"{r}__heap"), rc, AP.SECONDARY),
+                                           JoinSide(c.table(f"{s}__heap"), sc, AP.SCAN)),
+    }
+
+
+@pytest.mark.parametrize("areas", [{}, {"DATA": 3, "INDEX": 3}], ids=["areas-da-bancada", "DATA-e-INDEX-de-3"])
+def test_e2e_p4_nested_loop_over_heap_hash_and_hash_index(base, loaded, areas):
+    # Os 3 joins da carga pelo nested-loop do P4, nas configurações que a P2 sustenta sozinha (a B+ é do P3).
+    # BNL: medido = nl_join_cost (exato: lê o externo uma vez e o interno uma vez por lote em WORK). INL: medido
+    # ≤ nl_join_cost, que supõe cada busca com cache frio; com as áreas da bancada a base inteira cabe no buffer
+    # (muitos hits), com DATA e INDEX de 3 páginas as buscas quase sempre vão ao disco.
+    from cbd.exec.nested_loop import nl_join, nl_join_cost
+    root, b, _ = loaded
+    with p4_engine(root, b, **areas) as e:
+        for q in [q for q in workload(base) if q["kind"] == "join"]:
+            want = (q["expected"]["count"], q["expected"]["checksum"])
+            for label, (r, s) in join_configs(e.catalog, q).items():
+                est = nl_join_cost(e, r, s)
+                info = {}
+                e.cold()
+                out = list(nl_join(e, r, s, info=info))
+                reads = e.snapshot()["io.reads"]
+                assert output_signature(q, out) == want, (q["id"], label)
+                if info["variant"] == "block":
+                    assert reads == est.reads, (q["id"], label, reads, est.reads)
+                else:
+                    assert 0 < reads <= est.reads, (q["id"], label, reads, est.reads)
+                assert e.bp.pinned() == 0
+                e.cold()                                      # o próximo começa sem nada do anterior
+
+
+@pytest.mark.parametrize("work", [3, 4, 8])
+def test_e2e_p4_external_sort_on_temp_heaps(base, loaded, work, monkeypatch):
+    # A ordenação externa do P4 grava as runs em TempHeaps da P2 (catalog.temp, área WORK). Com WORK = mem as runs
+    # vão de fato ao disco. O que a P2 garante, medido run a run: cada bloco de run vai ao disco no máximo uma vez,
+    # as gravações não passam dos blocos que as runs ocupam, as leituras não passam da entrada mais esses blocos,
+    # e nenhum temporário sobra.
+    # A fórmula do P4 (external_sort_cost) supõe que toda passada ocupa os mesmos b blocos. Com o registro de
+    # aluno, de tamanho variável, uma fusão reempacota os registros em outra ordem e pode ocupar um bloco a mais
+    # ou a menos (medido em B = 4096, WORK = 3: uma fusão de 2 + 2 blocos saiu com 5; em B = 2048, WORK = 3:
+    # 144 gravações contra 136 e 178 leituras contra 170). O teste confere a conta exata pelos blocos das runs.
+    from cbd.exec.external_sort import external_sort, external_sort_cost
+    root, b, _ = loaded
+    with p4_engine(root, b, WORK=work) as e:
+        t = e.catalog.table("aluno__heap")
+        nb, k = t.stats().n_blocks, t.schema.idx("cr")
+        before = set(os.listdir(root))
+        temps, make = [], e.catalog.temp
+        writes, real_write = defaultdict(int), FileManager.write
+
+        def temp(schema):
+            temps.append(make(schema))
+            return temps[-1]
+
+        def write(self, fid, bno, data):
+            writes[(fid, bno)] += 1
+            return real_write(self, fid, bno, data)
+        monkeypatch.setattr(e.catalog, "temp", temp)
+        est = external_sort_cost(e, nb, work)
+        info = {}
+        e.cold()
+        monkeypatch.setattr(FileManager, "write", write)
+        out = list(external_sort(e, (r for _, r in t.data.scan()), t.schema, "cr", nb, work, info))
+        monkeypatch.setattr(FileManager, "write", real_write)
+        s = e.snapshot()
+        assert sorted(out, key=lambda r: r[0]) == sorted((r for _, r in t.data.scan()), key=lambda r: r[0])
+        assert [r[k] for r in out] == sorted(r[k] for r in out)
+        run_blocks = sum(x.n_blocks() for x in temps)
+        assert len(temps) >= info["runs"] > 0 and max(writes.values()) == 1, "bloco de run gravado duas vezes"
+        # Cada bloco de run é gravado no máximo uma vez e lido no máximo uma vez, e a entrada é lida uma vez. Só as
+        # páginas que ainda estão na área WORK escapam do disco (relidas sem leitura, ou descartadas pelo drop sem
+        # gravação): no máximo `work` de cada lado.
+        w, r = s["io.writes"], s["io.reads"]
+        assert run_blocks - work <= w <= run_blocks, (work, w, run_blocks)
+        assert nb + run_blocks - work <= r <= nb + run_blocks, (work, r, nb, run_blocks)
+        # A fórmula do P4 conta passes · b gravações; a diferença é só o reempacotamento das runs.
+        assert est.writes == info["passes"] * nb and est.reads == nb + est.writes
+        assert e.bp.pinned() == 0
+        assert not [n for n in set(os.listdir(root)) - before if "__temp" in n], "temporário sobrou no disco"
