@@ -89,7 +89,12 @@ def _scan_inner(plan, inner_key, groups, info):
 
 def _record_limit(pages, stats):
     # bfr = n_records / n_blocks. Divida uma vez, sem erro de ponto flutuante.
-    return max(1, pages * stats.n_records // max(1, stats.n_blocks))
+    # Sem estatísticas (tabela sem analyze), o lote fica só com o limite por bytes
+    # (D-P4-02): um teto de 1 registro faria 1 passada no interno por registro externo.
+    # LIMITAÇÃO: estatísticas desatualizadas, mas não vazias, ainda podem reduzir o lote.
+    if stats.n_records <= 0 or stats.n_blocks <= 0:
+        return None
+    return max(1, pages * stats.n_records // stats.n_blocks)
 
 
 def _block(eng, plan, outer_key, inner_key, info):
@@ -161,7 +166,7 @@ def nl_join_cost(eng, r, s, outer="auto"):
     record_limit = _record_limit(work_pages, plan.left_stats)
     n = plan.left_stats.n_records
     by_blocks = (outer_blocks + work_pages - 1) // work_pages
-    by_records = (n + record_limit - 1) // record_limit
+    by_records = 0 if record_limit is None else (n + record_limit - 1) // record_limit
     passes = max(by_blocks, by_records) if n else 0
     return Cost(outer_blocks + passes * inner_blocks, seeks=max(int(outer_blocks > 0), 2 * passes),
                 formula=f"BNL ({plan.outer} externo): {outer_blocks} + {passes} × {inner_blocks}"

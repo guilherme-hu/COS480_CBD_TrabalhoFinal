@@ -129,3 +129,80 @@ def test_p4_nested_loop_through_the_bench_with_available_storage(eng):
     assert runs == 20  # Três consultas e duas orientações forçadas na linha a.
     assert covered == {(query_id, config) for query_id in workload if query_id.startswith("join_")
                        for config in "abcd"}
+
+
+# ---------- revisão do PR #108 (P6, 27/11) ----------
+
+def _review_engine(tmp_path, work=5, data=4):
+    import tempfile
+    from cbd.contracts import BufferConfig, PageType, StorageConfig
+    from cbd.engine import Engine
+
+    areas = {PageType.CATALOG: 8, PageType.INDEX: 64, PageType.DATA: data, PageType.WORK: work}
+    return Engine(StorageConfig(str(tmp_path)), BufferConfig(areas=areas))
+
+
+def _review_schema(name):
+    from cbd.contracts import Field, FType
+    return Schema(name, [Field("k", FType.INT), Field("pad", FType.CHAR, 200)])
+
+
+def test_block_nl_join_batch_does_not_depend_on_empty_stats(tmp_path):
+    # Achado da revisão: o teto de registros do lote vinha de TableStats. Uma tabela
+    # carregada por Table.insert sem analyze tem n_records = 0, o teto virava 1 e o BNL
+    # fazia 1 passada por registro externo (300 passadas, 8 116 leituras). O lote tem de
+    # continuar limitado pelas M − 2 = 3 páginas WORK: 300 registros de 208 B (+4 de slot)
+    # cabem 19 por página de 4 086 B úteis, 57 por lote, então ⌈300 / 57⌉ = 6 passadas,
+    # as mesmas que depois do analyze.
+    import random
+    from cbd.contracts import JoinSide
+    from cbd.exec.nested_loop import nl_join
+
+    rnd = random.Random(2)
+    with _review_engine(tmp_path) as eng:
+        eng.catalog.create_table(_review_schema("r"), OrgSpec(Org.HEAP))
+        r = eng.catalog.table("r")
+        for _ in range(300):
+            r.insert((rnd.randrange(50), "x"))
+        eng.catalog.create_table(_review_schema("s"), OrgSpec(Org.HEAP))
+        eng.catalog.load_table("s", [(rnd.randrange(50), "x" * 10) for _ in range(500)])
+        s = eng.catalog.table("s")
+        assert r.stats().n_records == 0                      # sem analyze
+        sides = JoinSide(r, "k", Path.SCAN), JoinSide(s, "k", Path.SCAN)
+
+        eng.cold()
+        info = {}
+        stale = sum(1 for _ in nl_join(eng, *sides, outer="r", info=info))
+        stale_passes = info["passes"]
+        eng.catalog.analyze("r")
+        eng.cold()
+        info = {}
+        fresh = sum(1 for _ in nl_join(eng, *sides, outer="r", info=info))
+        assert stale == fresh and stale_passes == info["passes"] == 6
+        assert eng.bp.pinned() == 0
+
+
+def test_primary_hash_not_unique_eq_cost_counts_the_chain_once(tmp_path):
+    # Achado da revisão: em hash primário NOT UNIQUE, select_eq_cost somava à cadeia média
+    # (que já contém os blocos de overflow onde ficam as repetições) mais ⌈matches/bfr⌉ − 1,
+    # e o teto usava o overflow do arquivo todo em vez de max_chain. Com 4 buckets e 600
+    # registros de 20 chaves: estimado 9,5 e medido 8,5 em média. A busca lê a cadeia
+    # inteira do bucket, então a estimativa tem de ficar entre a média medida e max_chain.
+    import random
+    from cbd.exec.selection import select_eq
+
+    rnd = random.Random(1)
+    with _review_engine(tmp_path) as eng:
+        eng.catalog.create_table(_review_schema("h"), OrgSpec(Org.HASH, "k", False, {"buckets": 4}))
+        eng.catalog.load_table("h", [(rnd.randrange(20), "x" * 10) for _ in range(600)])
+        h = eng.catalog.table("h")
+        est = meas = 0
+        for v in range(20):
+            est += select_eq_cost(eng, h, "k", v, Path.PRIMARY).reads
+            eng.cold()
+            sum(1 for _ in select_eq(eng, h, "k", v, Path.PRIMARY))
+            meas += eng.snapshot()["io.reads"]
+        chain = 1 + h.data.stats()["overflow_blocks"] / 4
+        assert est / 20 == pytest.approx(chain)
+        assert abs(est - meas) / meas <= 0.10                 # tolerância do compare_cost (P6)
+        assert eng.bp.pinned() == 0

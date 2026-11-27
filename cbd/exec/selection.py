@@ -203,12 +203,15 @@ def select_eq_cost(eng, table, column, value, path):
     if path is Path.PRIMARY:
         data_stats = table.data.stats()
         if variant == "primary-hash":
+            # A busca lê a cadeia inteira do bucket; as repetições já estão nela, então
+            # o resultado só aumenta o custo se ocupar mais blocos que a cadeia média.
             chain = _bucket(data_stats)
-            extra = 0 if unique else _result_leaves(matches, stats.bfr) - 1
-            largest_chain = 1 + data_stats["overflow_blocks"]
-            reads = min(chain + extra, largest_chain)
+            leaves = 1 if unique else _result_leaves(matches, stats.bfr)
+            # max_chain (P2) conta os blocos de overflow da maior cadeia, sem o primário.
+            largest_chain = 1 + data_stats.get("max_chain", data_stats["overflow_blocks"])
+            reads = min(max(chain, leaves), largest_chain)
             return Cost(reads, seeks=reads,
-                        formula=f"Hash: min({chain:g} + {extra}, cadeia máxima {largest_chain})")
+                        formula=f"Hash: min(max({chain:g}, {leaves}), cadeia máxima {largest_chain})")
         depth = _depth(data_stats)
         leaves = 1 if unique else _result_leaves(matches, stats.bfr)
         return Cost(depth - 1 + leaves, seeks=depth,

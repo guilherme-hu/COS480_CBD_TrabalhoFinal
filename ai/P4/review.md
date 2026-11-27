@@ -178,3 +178,41 @@
   aceitava. Nos cenários densos e fixos de 50 e 150 páginas, a rodada física
   observou exatamente o limite previsto. Os testes agora exigem as
   contagens calculadas para LRU, sem prefetch nem toss-immediate.
+
+## 27/11/2026 — Revisão do PR #108 pelo P6 (revisores independentes)
+
+- **Lote do BNL dependia de estatísticas (médio).** `nested_loop.py`,
+  `_record_limit`: o teto de registros por lote vinha de `TableStats`. Numa
+  tabela carregada por `Table.insert` sem `analyze`, `n_records = 0`, o teto
+  virava 1 e o BNL fazia uma passada por registro externo. Exemplo: 300
+  registros externos, WORK = 5, deram 300 passadas e 8.116 leituras, contra
+  6 passadas e 178 leituras depois do `analyze`. A conta por bytes (D-P4-02)
+  já garante as M − 2 páginas. **Correção:** sem estatísticas (n_records ou
+  n_blocks zero), o lote fica só com o limite por bytes. Com estatísticas
+  desatualizadas mas não vazias, o teto ainda pode errar: marcado como
+  `LIMITAÇÃO` no código.
+  Teste: `test_block_nl_join_batch_does_not_depend_on_empty_stats`.
+- **Custo da igualdade em hash primário NOT UNIQUE contava a cadeia duas vezes
+  (médio).** `selection.py`, `select_eq_cost`: somava à cadeia média
+  (`1 + overflow/N`, que já inclui os blocos de overflow onde ficam as
+  repetições) mais `⌈matches/bfr⌉ − 1`. O teto usava `1 + overflow` do arquivo
+  todo em vez da maior cadeia (`max_chain`). Exemplo: 4 buckets e 600
+  registros dão 9,5 estimado e 8,5 medido. No INL com interno hash, 1.199,75
+  estimado e 799 medido. **Correção:** `min(max(cadeia média, folhas do
+  resultado), 1 + max_chain)`, porque a busca lê a cadeia inteira do bucket
+  (`max_chain` da P2 conta só os blocos de overflow da maior cadeia).
+  Teste: `test_primary_hash_not_unique_eq_cost_counts_the_chain_once`.
+  Resíduo: no INL com interno hash (16 buckets, 2.000 registros), a estimativa
+  passou de 1.199,75 para 699,75 contra 799 medidos. A cadeia média pesa todos
+  os buckets igualmente, mas as chaves caem mais nas cadeias longas. Para
+  acertar, seria preciso a cadeia média ponderada por registros, que a P2 não
+  guarda. Fica como diferença a explicar no estimado × medido.
+- **Também apontados, sem correção neste PR (baixos):**
+  - o custo do INL conta buscas para chaves externas NULL, que a execução
+    pula (superestima em FK anulável);
+  - `info["sort_ptrs_applied"]` fica False numa faixa vazia;
+  - `_fetch` com `sort_ptrs` reserva WORK inteira;
+  - não há teste N2 do ganho de `sort_ptrs` com o buffer real (o guia previa
+    `test_sort_ptrs`);
+  - a bancada passava `sort_ptrs` ao estimador: era defeito da P6, corrigido
+    na `bench/run.py` (branch `p6/36-sort-ptrs-custo`).
