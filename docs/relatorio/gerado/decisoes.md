@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 44 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 45 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
@@ -34,6 +34,7 @@ Gerado de `docs/decisoes/`: 44 cartões, 0 provisórios. A última coluna diz em
 | D-P2-16 | Hash: número de buckets N e fator de carga | decidida | Funções de hash |
 | D-P2-17 | Hash: overflow, skew e controle do fator de carga | decidida | Estruturas dos arquivos e dos cabeçalhos |
 | D-P2-18 | Índice hash secundário: o que cada entrada guarda e como é feito | decidida | Estruturas dos arquivos e dos cabeçalhos |
+| D-P2-19 | Prefetch: onde o heap e o hash leem blocos antecipadamente | decidida | Configurações da gerência do buffer pool |
 | D-P4-01 | Escolha do externo no nested-loop | decidida | Demais escolhas |
 | D-P4-02 | Tamanho do lote externo do BNL | decidida | Demais escolhas |
 | D-P4-03 | Lotes por bytes e fusão final da ordenação externa | decidida | Demais escolhas |

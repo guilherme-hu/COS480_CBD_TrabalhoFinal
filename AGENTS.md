@@ -112,7 +112,7 @@ O debate acontece **na conversa**, com explicação detalhada. O cartão (§3.3)
 2. **Comece pela teoria dos livros.** Explique como o SKS e o E&N tratam o problema, citando a seção, e qual é a solução "de livro". Ela é a base da comparação: as opções são variações dela ou alternativas a ela.
 3. **Explique em detalhe as opções que você propõe e também as outras alternativas**, incluindo as que você não recomendaria e as que os livros citam de passagem. Para cada uma:
    - como funciona, com um exemplo pequeno;
-   - custo em blocos (com a fórmula, quando houver) calculado com números da nossa base (ex.: `aluno` com ~1 962 blocos em B = 4096, `M = 64`);
+   - custo em blocos (com a fórmula, quando houver) calculado com números da nossa base (ex.: `aluno` com ~1 664 blocos em B = 4096, `M = 64`; ver `results/base_stats.csv`);
    - prós e contras;
    - como afeta os testes e as medições (o que o CSV vai mostrar, que configuração fica melhor ou pior);
    - quanto código e quanto risco de bug acrescenta.

@@ -106,7 +106,8 @@ def base_section(stats_path):
           ', '.join(f'{c} = {_int(v)}' for c, v in sorted(any_block[t]['distinct'].items())) or '—')
          for t in tables], numeric=(1, 2)))
     parts.append('\n## Blocos e fator de blocagem estimados\n')
-    parts.append('Empacotamento heap estimado com o layout do P2 (cabeçalho de 28 bytes e slot de 4 bytes). '
+    parts.append('Empacotamento heap estimado com o codec do P2 e a slotted page (cabeçalho de 10 bytes e slot de 4 bytes), '
+                 'enchendo cada bloco na ordem de carga, como o `HeapFile.bulk_load`. '
                  '**Não são medidas do SGBD**: as medidas físicas entram quando a carga pela pilha real existir (#14).\n')
     parts.append(_table(
         ['Tabela'] + [f'b (B = {b})' for b in sizes] + [f'bfr (B = {b})' for b in sizes],

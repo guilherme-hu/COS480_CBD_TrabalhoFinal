@@ -56,8 +56,10 @@ permitem reproduzi-los. Não é necessário gerar de novo ao trocar a política
 de buffer. Os dados lógicos são os mesmos nos três tamanhos de bloco.
 
 `b` e `bfr` ficam vazios enquanto não há medição física. `estimated_blocks` e
-`estimated_bfr` simulam empacotamento heap com o layout P2 (cabeçalho de
-28 bytes e slot de 4 bytes); **não são contadores de I/O ou medições do SGBD**.
+`estimated_bfr` simulam empacotamento heap com o codec real do P2
+(`RecordCodec`) e a slotted page (cabeçalho de `SlottedPage.HEADER` = 10 bytes e
+slot de 4 bytes), enchendo cada bloco na ordem de carga como o
+`HeapFile.bulk_load`; **não são contadores de I/O ou medições do SGBD**.
 `V(A)` exclui nulos, como `COUNT(DISTINCT ...)` no SQL. O SHA-256 considera
 todos os campos e sua ordem de emissão; os checksums das consultas consideram
 as chaves lógicas e independem da ordem do resultado.

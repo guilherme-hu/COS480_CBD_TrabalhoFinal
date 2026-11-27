@@ -7,8 +7,12 @@ from pathlib import Path
 import sqlite3
 
 from cbd.contracts import FType
+from cbd.records.codec import RecordCodec
 from cbd.records.hashing import MASK, hash_value
+from cbd.records.slotted_page import SlottedPage
 from bench.schema import SCHEMAS, PK, FOREIGN_KEYS, logical_key
+
+_SLOT = 4  # entrada (offset u16, tamanho u16) do diretório da slotted page
 
 
 def quote(name):
@@ -54,24 +58,19 @@ def from_sql(schema, row):
                  for field, value in zip(schema.fields, row))
 
 
+_CODECS = {}
+
+
 def record_bytes(schema, record):
-    """Tamanho previsto pelo layout P2 §2; não é medição de páginas físicas."""
-    total = (len(schema.fields) + 7) // 8
-    for field, value in zip(schema.fields, record):
-        if field.ftype in (FType.INT, FType.FLOAT):
-            total += 8
-        elif field.ftype == FType.DATE:
-            total += 4
-        elif field.ftype == FType.CHAR:
-            total += field.size
-        else:
-            total += 4  # diretório offset/tamanho
-            if value is not None:
-                if field.ftype == FType.VARCHAR:
-                    total += len(value.encode('utf-8'))
-                else:
-                    total += 2 + sum(2 + len(item.encode('utf-8')) for item in value)
-    return total
+    """Bytes que o codec real do P2 grava (D-P2-01 a D-P2-05); não é medição de páginas físicas.
+
+    Usa o próprio RecordCodec em vez de refazer a conta do layout: a estimativa acompanha
+    o formato do registro sem precisar de outra issue quando ele mudar (#90).
+    """
+    codec = _CODECS.get(schema.name)
+    if codec is None:
+        codec = _CODECS[schema.name] = RecordCodec(schema)
+    return len(codec.encode(record))
 
 
 class SQLiteReference:
@@ -130,17 +129,20 @@ class SQLiteReference:
     def stats(self, table, block_size=4096):
         schema = SCHEMAS[table]
         n = total = blocks = used = 0
+        room = block_size - SlottedPage.HEADER
         digest = hashlib.sha256()
         for record in self.records(table):
             encoded = json.dumps(to_sql(schema, record), ensure_ascii=False, separators=(',', ':')).encode()
             digest.update(encoded + b'\n')
             size = record_bytes(schema, record)
-            if size + 4 > block_size - 28:
+            # Encaixe guloso do HeapFile.bulk_load: cada registro ocupa os bytes dele mais
+            # 1 slot de 4 B; a página útil é B menos o cabeçalho da slotted page (#94).
+            if size > SlottedPage.max_record(block_size):
                 raise ValueError(f'{table}: registro não cabe no bloco {block_size}')
-            if not blocks or used + size + 4 > block_size - 28:
+            if not blocks or used + size + _SLOT > room:
                 blocks += 1
                 used = 0
-            used += size + 4
+            used += size + _SLOT
             n += 1
             total += size
         distinct = {}
