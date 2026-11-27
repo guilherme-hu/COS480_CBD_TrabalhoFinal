@@ -109,3 +109,27 @@ contra a nossa P2, e os 2 testes físicos de `tests/stress/test_p4_stress.py` pa
 blocos para 450 cursos, com `PAYLOAD = BLOCK_SIZE - 28`; a P2 grava 113, com o cabeçalho de 10 B da D-P2-07).
 27/11, com o P4 já no `main` (PR #108): o teste usa `PAYLOAD = BLOCK_SIZE - SlottedPage.HEADER`, e a suíte inteira
 (P4 incluído) passa sobre a P2: 753 testes, 2 pulados.
+
+## E2E com os operadores reais do P4 (`test_p2_e2e.py`, 27/11)
+
+Depois do merge do P4 (PR #108), os operadores de `cbd/exec` rodam sobre a P2 real, na mesma base do E2E (escala
+0,01, 50 cursos, 200 disciplinas, B = 2048, 4096 e 8192), e a saída é comparada com a assinatura do SQLite.
+
+| Teste | O que roda | Resultado |
+| :-- | :-- | :-- |
+| `test_e2e_p4_selections_on_every_p2_path` | `select_eq` em `aluno.dre` pelos 3 caminhos (scan do heap, hash primário, índice hash + fetch) e `select_range` em `aluno.cr` por scan (heap e hash) | assinaturas iguais; hash primário = blocos da cadeia até a chave; índice = cadeia do índice + 1; faixa = `select_range_cost` exato; faixa pelo hash primário recusada (`NotApplicable`) |
+| `test_e2e_p4_nested_loop_over_heap_hash_and_hash_index` | `nl_join` dos 3 joins em 4 configurações (BNL heap × heap; INL com o detalhe em hash, com o mestre em hash, e pelo índice hash do mestre), com as áreas da bancada e com DATA e INDEX de 3 páginas | assinaturas iguais; BNL = `nl_join_cost` exato; INL ≤ `nl_join_cost` (a estimativa supõe cada busca com cache frio: `aluno ⋈ inscricao` com o mestre em hash mediu 56 leituras com as áreas da bancada, 4 539 com DATA e INDEX de 3, contra 5 035 estimadas) |
+| `test_e2e_p4_external_sort_on_temp_heaps` | `external_sort` de `aluno__heap` por `cr` com WORK = mem = 3, 4 e 8, runs em `TempHeap` da P2 | saída ordenada e completa; cada bloco de run gravado e lido no máximo uma vez; nenhum temporário sobra no disco |
+
+O que essa integração mostrou:
+- **Nenhum defeito na P2 nem no P4.** Todas as saídas batem com o SQLite e nenhum pin sobra.
+- **O sort difere da fórmula do P4 por causa do reempacotamento.** O `external_sort_cost` supõe que toda passada
+  ocupa os mesmos b blocos. Com o registro de `aluno`, de tamanho variável, a fusão grava os registros em outra
+  ordem e pode ocupar um bloco a mais ou a menos. Medido em B = 2048, WORK = 3: 144 gravações e 178 leituras,
+  contra 136 e 170 da fórmula. Não houve bloco gravado duas vezes: a diferença é só quantos blocos as runs
+  ocupam. O teste confere pelos blocos reais das runs.
+- **Páginas de run que ficam na área WORK não vão ao disco.** Elas são relidas sem leitura ou descartadas pelo
+  `drop()` sem gravação, no máximo `work` de cada lado. Com WORK maior que mem (WORK = 64 e mem = 3), todas as
+  runs couberam no buffer e o sort mediu 0 gravações contra 51 estimadas. Isso é o que a docstring do `TempHeap`
+  avisa: na bancada, mem = WORK.
+

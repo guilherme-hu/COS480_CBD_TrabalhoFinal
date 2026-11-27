@@ -18,8 +18,8 @@ de 22/11 a 27/11. Ferramenta: Claude Code (Opus 5.5), em sessões interativas; u
 
 Números finais em escala 1, B = 4096: `curso` 2 blocos, `disciplina` 21, `aluno` 1 664, `inscricao` 3 449;
 `aluno__hs_dre` com N = 2 084 e 0 overflow (busca = 1 leitura); índice hash de `aluno.dre` = 2 leituras por busca.
-Testes da P2: 477 (unitários, integração, E2E e estresse, com os 10 da revisão final), mais 18 E2E com os operadores
-do P4 na branch da #55; a suíte do grupo passa com 770 (27/11, antes dos E2E do P4).
+Testes da P2: 495 (unitários, integração, E2E com os operadores do P4 e estresse, com os 10 da revisão final); a
+suíte do grupo passa com 788 (27/11).
 
 ## Prompts-chave e o código bruto devolvido
 
@@ -105,6 +105,13 @@ E o estresse da P2 inteira: 100 mil inserts + deletes no heap e no hash (5 confi
 política × toss × B, `Table` + `Catalog` + índice com reabertura e `reorganize`, todos contra um `dict`. 17
 mutantes plantados: 16 mortos, 1 equivalente no escopo.
 
+## Integração com o P4
+
+Os operadores reais do P4 (`select_eq`, `select_range`, `nl_join`, `external_sort`) rodam sobre a P2 na base do P6, nos
+3 tamanhos de bloco, e dão a assinatura do SQLite em todas as consultas da carga (`stress.md`). Achado da integração:
+o `external_sort_cost` supõe b blocos por passada, e o registro de tamanho variável reempacotado em outra ordem ocupa
+um bloco a mais ou a menos (B = 2048, WORK = 3: 144 gravações contra 136). Não é defeito de nenhum dos dois lados.
+
 ## Estimado × medido
 
 | Operação | Estimado | Medido (cache frio) | Bateu? |
@@ -117,6 +124,7 @@ mutantes plantados: 16 mortos, 1 equivalente no escopo.
 | insert UNIQUE no hash | a cadeia do bucket | meta + cadeia inteira (checa duplicata) e 2 gravações | sim, com a meta |
 | `scan_bucket` com prefetch | blocos do bucket | 9 blocos para um bucket de 1 (1ª versão) | não: o `scan_bucket` ficou sem cursor |
 | `TempHeap` | gravar e reler todos os blocos | menos, quando a run cabe na área WORK (as páginas só vão ao disco ao sair do buffer) | documentado: o medido fica abaixo da fórmula |
+| ordenação externa do P4 sobre `TempHeap`, WORK = mem | `external_sort_cost`: passes · b gravações | os blocos que as runs realmente ocupam (B = 2048, WORK = 3: 144 contra 136) | não por causa da P2: o registro variável reempacotado muda o número de blocos da run |
 
 ## Decisões que mudaríamos hoje
 
