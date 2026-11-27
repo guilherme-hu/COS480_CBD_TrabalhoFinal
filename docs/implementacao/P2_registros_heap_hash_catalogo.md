@@ -183,7 +183,7 @@ O mapa tem 1 byte por bloco, indexado pelo número do bloco: a página k cobre o
 | `insert(rec)` | `codec.encode` → `RecordTooLarge` se `len > max_record(B)` (D-P2-06) → §5.1 → `SlottedPage.insert` → `mark_dirty`; atualiza o mapa quando a cauda muda ou um bloco antigo recebe o registro; regrava a meta | 1 bloco de dados; 2 pins na cauda (cauda e meta, em geral no buffer) |
 | `delete(rid)` | `SlottedPage.delete`, mapa, `n_deleted += 1`, meta | 1 bloco de dados; 3 pins (bloco, mapa e meta) |
 | `fetch(rid)` | pin, `get(slot)`, decode, unpin. Slot apagado → `KeyError` | 1 bloco |
-| `scan()` | percorre as faixas de dados em ordem, `pin(seq=True)`, devolve `(RID, rec)` dos slots vivos, `unpin(toss=True)` | `b_r` |
+| `scan()` | percorre as faixas de dados em ordem pelo cursor `with bp.seq_scan(fid, ptype) as cur` / `cur.page(bno, toss=True)` e devolve `(RID, rec)` dos slots vivos. O `allow_prefetch(fid, ptype)` é chamado ao criar, abrir e reorganizar (fid novo), só em DATA e INDEX. Com `cfg.prefetch = k`, o cursor segura até 1 + k páginas; numa faixa seguida por uma página do mapa, os últimos k blocos são lidos sem cursor, para a pré-leitura não ler o mapa (D-P2-19) | `b_r` leituras com ou sem prefetch; misses ≈ ⌈`b_r` / (k + 1)⌉ |
 | `search` / `range` | `NotApplicable` | — |
 | `bulk_load(recs)` | append direto, sem consultar o FSM; grava o FSM no fim | `b_r` gravações |
 | `reorganize()` | copia os vivos para um `TempHeap`, recria o arquivo com o mesmo nome e recarrega com `bulk_load` (o `FileManager` não tem rename, e renomear o `.dat` por fora furaria a camada 4). Não é atômico. Quando disparar: D-P2-11, em aberto | `b_r + 3·b'` |
@@ -204,7 +204,7 @@ class TempHeap:
             self._out = self.bp.new_page(self.fid, PageType.WORK); SlottedPage(self._out.data).init()
             self._bnos.append(self._out.bno); ...insert
     def finish(self): unpin da página de saída (dirty=True)
-    def scan(self): para cada bno: pin(WORK, seq=True) / yield registros / unpin(toss=True)
+    def scan(self): para cada bno: pin(WORK) / yield registros / unpin(toss=True)   # sem prefetch: o P1 o proíbe em WORK (D-P2-19)
     def drop(self): bp.drop_file(fid); fm.delete(fid)   # IDEMPOTENTE: 2ª chamada não faz nada
 ```
 
@@ -241,8 +241,8 @@ bno > N+1    : overflow
 | `insert(rec)` | `RecordTooLarge` se `len > max_record(B)` (D-P2-06); se `unique`: `search` antes (`DuplicateKey`); percorre a cadeia buscando espaço; se nenhum bloco servir, `new_page` de overflow ligado ao **último** da cadeia |
 | `delete(rid)` | slot apagado no bloco do RID (pode ser overflow). Não desfaz a cadeia |
 | `fetch(rid)` | 1 bloco |
-| `scan()` | em ordem física: blocos 2 até o último (primários, depois o overflow), 1 seek; a ordem por bucket é do `scan_bucket` (ver D-P2-17) |
-| `scan_bucket(i)` / `bucket_of(k)` | para o P5 (geral §5.2); `scan_bucket` sem `seq=True` (o bloco seguinte ao primário é de outro bucket) |
+| `scan()` | em ordem física: blocos 2 até o último (primários, depois o overflow), 1 seek; a ordem por bucket é do `scan_bucket` (ver D-P2-17). É o único método do hash que lê pelo cursor `bp.seq_scan` (prefetch, D-P2-19); o arquivo termina no último bloco de dados, então a pré-leitura nunca lê bloco que não é pedido |
+| `scan_bucket(i)` / `bucket_of(k)` | para o P5 (geral §5.2); `scan_bucket`, `search` e `fetch` sem cursor e sem prefetch (D-P2-19: o bloco seguinte ao primário é de outro bucket) |
 | `range` | `NotApplicable` |
 | `bulk_load(recs)` | ordena os registros por `bucket_of` em memória (D-P2-17; o N só existe depois de ver os registros) e enche cada cadeia em sequência: a cadeia de cada bucket fica contígua no disco (tempo de carga, não medido) |
 

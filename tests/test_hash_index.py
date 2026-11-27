@@ -398,3 +398,30 @@ def test_aluno_dre_index_at_scale_1(tmp_path):
         assert [t.data.fetch(p)[0] for p in idx.search(dre)] == [dre]
         assert e.fm.io.reads == 2
     e.close()
+
+
+def test_hash_index_and_index_area_prefetch(tmp_path):
+    # #83, D-P2-19 (revisão da #83: o teste do catálogo usava o FakeIndex). Com prefetch = 8:
+    # - a busca pelo índice real lê 1 bloco do índice (INDEX) + 1 do heap (DATA), sem pré-leitura;
+    # - um HashFile em INDEX declara o prefetch na área INDEX: o scan de b blocos tem ⌈b / 9⌉ misses e
+    #   b − ⌈b / 9⌉ pré-lidas, todas na área INDEX.
+    import math
+    from cbd.storage.buffer_pool import BufferPool
+    from cbd.storage.file_manager import FileManager
+    pool = BufferPool(FileManager(StorageConfig(root_dir=str(tmp_path))), BufferConfig(prefetch=8))
+    h, idx = heap_with_index(pool, 2000)
+    cold(pool)
+    assert [r for _, r in ((p, h.fetch(p)) for p in idx.search(1234))] == [(1234, "x" * 100)]
+    assert (pool.fm.io.reads, pool.stats.prefetched) == (2, 0)
+    hf = HashFile.create(pool, "p", S, OrgSpec(Org.HASH, "k", True, {"buckets": 16}), PageType.INDEX)
+    hf.bulk_load([(i, "x" * 1000) for i in range(400)])
+    b = hf.stats()["blocks"] - hf.stats()["meta_blocks"]
+    cold(pool)
+    assert sum(1 for _ in hf.scan()) == 400
+    area = pool.stats_by_area[PageType.INDEX]
+    m = math.ceil(b / 9)
+    assert b > 9 and (pool.fm.io.reads, area.misses, area.prefetched) == (b, m, b - m)
+    assert pool.stats_by_area[PageType.DATA].requests == 0
+    assert pool.pinned() == 0
+    pool.flush_all()
+    pool.fm.close_all()

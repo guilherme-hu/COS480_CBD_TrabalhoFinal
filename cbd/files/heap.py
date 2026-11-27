@@ -4,7 +4,7 @@ Implementa: DataFile (HeapFile) e TempFile (TempHeap) de cbd/contracts.py.
 Usa: BufferPool (P1), SlottedPage e RecordCodec (P2).
 Decisões: D-P2-06 (RecordTooLarge no insert, antes de tocar em página), D-P2-07 e D-P2-08 (slotted page,
 compactação preguiçosa), D-P2-09 (mapa de espaço livre com 1 byte por bloco), D-P2-10 (RID de 6 B), D-P2-11
-(reorganize só por comando).
+(reorganize só por comando), D-P2-19 (prefetch só no scan do HeapFile; o TempHeap, em WORK, não tem).
 Ver docs/decisoes/P2.md. A carga em massa enche os blocos na ordem de chegada (guia P2 §5.3).
 
 Layout do arquivo do heap:
@@ -16,7 +16,7 @@ Layout do arquivo do heap:
                bloco); o byte vale livre·256 // B, arredondado para baixo (D-P2-09). Páginas além da 1ª
                são criadas quando o arquivo passa de P blocos
 
-Invariantes: no máximo 1 página fixada por iterador; a entrada do mapa da cauda não é mantida (a cauda é
+Invariantes: no máximo 1 página fixada por iterador, ou 1 + k no scan com cfg.prefetch = k (D-P2-19); a entrada do mapa da cauda não é mantida (a cauda é
 tentada primeiro); o mapa é uma dica: uma entrada errada é corrigida quando o bloco é pinado.
 n_deleted = slots apagados que ainda existem (o insert que reaproveita um deles desconta). A meta é
 regravada a cada mudança: ela fica no buffer, então custa 1 pin e nenhum I/O até sair dele.
@@ -60,6 +60,16 @@ def _fresh_page(bp, fid, ptype, data):
     return page, sp
 
 
+def _allow_prefetch(df):
+    """D-P2-19: declara df.fid apto ao prefetch do P1 (D-P1-12), que só pré-lê dentro de bp.seq_scan.
+
+    Só em DATA e INDEX: o P1 recusa CATALOG (o heap do catálogo) e WORK (o TempHeap). O arquivo inteiro (meta,
+    mapa e dados) mora na área df.ptype, como o P1 exige. Chamado a cada fid novo (abrir, criar, reorganize).
+    """
+    if df.ptype in (PageType.DATA, PageType.INDEX):
+        df.bp.allow_prefetch(df.fid, df.ptype)
+
+
 def _view(sp, slot):
     """Bytes do slot, ou None se o slot não existe ou está apagado."""
     return sp.get(slot) if 0 <= slot < sp.n_slots() else None
@@ -91,6 +101,7 @@ def _rebuild(df, reload):
     try:
         df.bp.fm.delete(df.fid)
         df.fid = df.bp.fm.create(df.name)
+        _allow_prefetch(df)                              # D-P2-19: o fid mudou
         df._reset()
         df._new_meta()
         rows = tmp.scan()
@@ -120,6 +131,7 @@ class HeapFile:
         self._b = bp.block_size
         self._max = SlottedPage.max_record(self._b)
         self._per = self._FSM_PER_PAGE or self._b
+        _allow_prefetch(self)
         self._reset()
 
     def _reset(self):
@@ -327,18 +339,29 @@ class HeapFile:
             return self.codec.decode(view)
 
     def scan(self):
-        """Todos os registros, (RID, registro), bloco a bloco. 1 página fixada por vez. Custo: b leituras."""
-        for a, z in list(self._ranges):
-            for bno in range(a, z + 1):
-                page = self.bp.pin(self.fid, bno, self.ptype, seq=True)
-                try:
-                    sp = SlottedPage(page.data)
-                    for slot in range(sp.n_slots()):
-                        view = sp.get(slot)
-                        if view is not None:
-                            yield RID(bno, slot), self.codec.decode(view)
-                finally:
-                    self.bp.unpin(page, toss=True)
+        """Todos os registros, (RID, registro), bloco a bloco. Custo: b leituras, as mesmas com ou sem prefetch.
+
+        D-P2-19: lê pelo cursor bp.seq_scan, então com cfg.prefetch = k cada miss traz também os k blocos
+        seguintes (misses ≈ ⌈b / (k + 1)⌉ quando os dados terminam no fim do arquivo). O cursor segura até
+        1 + k páginas; quem para no meio fecha o iterador.
+        """
+        k = self.bp.cfg.prefetch
+        ranges = list(self._ranges)
+        end = max([z for _, z in ranges] + self._fsm, default=0)   # último bloco do arquivo
+        with self.bp.seq_scan(self.fid, self.ptype) as cur:
+            for a, z in ranges:
+                # D-P2-19: o P1 pré-lê os k blocos seguintes do arquivo, sejam de dados ou do mapa. Numa faixa
+                # seguida por outro bloco (uma página do mapa), os últimos k blocos vêm sem cursor, para nenhuma
+                # pré-leitura passar de z (ai/P2/review.md, revisão da #83).
+                last_cur = z if z == end else z - k
+                for bno in range(a, z + 1):
+                    with (cur.page(bno, toss=True) if bno <= last_cur
+                          else self.bp.page(self.fid, bno, self.ptype, toss=True)) as page:
+                        sp = SlottedPage(page.data)
+                        for slot in range(sp.n_slots()):
+                            view = sp.get(slot)
+                            if view is not None:
+                                yield RID(bno, slot), self.codec.decode(view)
 
     def search(self, key):
         raise NotApplicable("heap não tem chave de organização: use scan ou um índice")
@@ -434,7 +457,7 @@ class TempHeap:
             self._out = self._sp = None
 
     def scan(self):
-        """Os registros na ordem do append; 1 página fixada por vez, seq=True, toss=True."""
+        """Os registros na ordem do append; 1 página fixada por vez, toss=True. Sem prefetch: o P1 não o permite em WORK."""
         if self._out is not None:
             raise RuntimeError(f"{self.name}: chame finish() antes do scan")
         for bno in range(1, self._blocks + 1):
