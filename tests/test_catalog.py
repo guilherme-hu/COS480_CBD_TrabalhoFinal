@@ -1,8 +1,8 @@
 """Testes do Table e do Catalog (P2, #46). Decisões: D-P2-12 (catálogo como 4 relações, Fig. 13.12 do SKS)
 e D-P2-13 (gravação forçada no fim de cada operação, detalhes primeiro e a linha da tabela por último).
 
-N1/N2: pilha real (FileManager + BufferPool + HeapFile); os índices secundários ainda não existem (#52, P3),
-então um dublê em memória (`FakeIndex`) entra no lugar da fábrica de índices.
+N1/N2: pilha real (FileManager + BufferPool + HeapFile); para testar só o catálogo, um dublê em memória
+(`FakeIndex`) entra no lugar da fábrica de índices (o índice hash real é testado em test_hash_index.py).
 N3: o adaptador do P6 (`bench.build.load_physical`) carregando uma base minúscula.
 """
 import math
@@ -378,7 +378,7 @@ def test_load_physical_tiny_base_heap_variants(engine):
     ds = Dataset(scale=0.002)
     stats = {t: {"n": ds.counts[t], "estimated_bfr": 10.0, "distinct": {c: 5 for c in cols}}
              for t, cols in ACCESS_COLUMNS.items()}
-    # Só as variantes heap, sem índices: HashFile (#48), HashIndex (#52) e a B+ (P3) ainda não existem.
+    # Só as variantes heap, sem índices (o catálogo isolado; o índice hash real está em test_hash_index.py e no E2E).
     plan = [dict(item, indexes=[]) for item in physical_plan(stats) if item["org"]["org"] == Org.HEAP]
     e = engine()
     out = load_physical(e, SimpleNamespace(records=ds.records), plan)
@@ -393,7 +393,7 @@ def test_load_physical_tiny_base_heap_variants(engine):
 
 def test_load_physical_tiny_base_hash_variants(engine):
     # #48: as variantes hash do plano do P6 (seed, load, distinct; os pares _eq_ com buckets forçado) carregam
-    # pelo catálogo e voltam iguais depois de reabrir. Sem índices: HashIndex (#52) e a B+ (P3) ainda não existem.
+    # pelo catálogo e voltam iguais depois de reabrir. Sem índices (o índice real está em test_hash_index.py; a B+ é do P3).
     from bench.build import load_physical, physical_plan
     from bench.generator import Dataset
     from bench.schema import ACCESS_COLUMNS, SCHEMAS
@@ -445,7 +445,7 @@ def test_k_index_params_persist_and_stay_separate(engine):
 
 
 def test_k_orgspec_key_unique_persist(engine, monkeypatch):
-    monkeypatch.setattr(catalog_mod, "_datafile_cls", lambda org: HeapFile)   # HashFile (#48) ainda não existe
+    monkeypatch.setattr(catalog_mod, "_datafile_cls", lambda org: HeapFile)   # só o catálogo: a organização real não importa aqui
     e = engine()
     spec = OrgSpec(Org.HASH, "id", True, {"buckets": 5})
     e.catalog.create_table(Schema("u", S.fields), spec)

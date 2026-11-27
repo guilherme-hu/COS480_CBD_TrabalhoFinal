@@ -425,3 +425,110 @@ def test_hash_index_and_index_area_prefetch(tmp_path):
     assert pool.pinned() == 0
     pool.flush_all()
     pool.fm.close_all()
+
+
+# ---------- revisão final da P2 (#62) ----------
+
+def writes_left_to_flush(e):
+    # Quantos blocos sujos ainda estavam no buffer: um flush_all depois da operação não pode gravar nada
+    # (pela interface pública; nenhuma leitura de disco por fora do buffer).
+    e.fm.reset_stats()
+    e.bp.flush_all()
+    return e.fm.io.writes
+
+
+def test_reorganize_writes_the_files_before_the_catalog_row(tmp_path):
+    # D-P2-13: os arquivos de dados e de índices vão para o disco antes da linha do catálogo que aponta para eles.
+    # O reorganize recria o heap e o índice e termina no analyze, que força a linha de relacoes.
+    e = engine(tmp_path)
+    e.catalog.create_table(S, OrgSpec(Org.HEAP))
+    e.catalog.load_table("t", [(i, "x" * 40) for i in range(2000)])
+    e.catalog.create_index(ispec())
+    t = e.catalog.table("t")
+    for i in range(1000):
+        t.delete(next(t.indexes["k"].search(i)))
+    t.reorganize()
+    assert writes_left_to_flush(e) == 0
+    e.close()
+
+
+def test_analyze_writes_the_files_before_the_catalog_row(tmp_path):
+    e = engine(tmp_path)
+    e.catalog.create_table(S, OrgSpec(Org.HEAP))
+    e.catalog.create_index(ispec(buckets=8))
+    t = e.catalog.table("t")
+    for i in range(300):
+        t.insert((i, "x" * 40))
+    e.catalog.analyze("t")
+    assert writes_left_to_flush(e) == 0
+    e.close()
+
+
+def test_hash_index_only_over_a_heap(tmp_path):
+    # Arquitetura §5.3: índice hash secundário só sobre heap (ele guarda o RID em dois INT); sobre hash ou B+
+    # primário só há B+ secundário. Recusa antes de criar o arquivo do índice.
+    e = engine(tmp_path)
+    e.catalog.create_table(S, OrgSpec(Org.HASH, "k", True, {"buckets": 4}))
+    with pytest.raises(ValueError):
+        e.catalog.create_index(ispec())
+    assert not e.fm.exists("t__k") and e.catalog.table("t").indexes == {}
+    e.close()
+
+
+def test_decode_ptr_of_the_wrong_size_raises_valueerror(bp):
+    # D-P2-10: os dois lados do RID de 6 B levantam ValueError, não struct.error.
+    h = HeapFile.create(bp, "t", S, OrgSpec(Org.HEAP))
+    hf = HashFile.create(bp, "u", S, OrgSpec(Org.HASH, "k", True, {"buckets": 2}))
+    for f in (h, hf):
+        assert f.decode_ptr(f.encode_ptr(RID(7, 3))) == RID(7, 3)
+        for bad in (b"", b"\0" * 5, b"\0" * 8):
+            with pytest.raises(ValueError):
+                f.decode_ptr(bad)
+
+
+def test_failed_page_insert_releases_the_pin(bp, monkeypatch):
+    # O insert do heap solta a página mesmo se o SlottedPage.insert levantar (página corrompida).
+    from cbd.records import slotted_page
+    h = HeapFile.create(bp, "t", S, OrgSpec(Org.HEAP))
+    h.insert((1, "a"))
+
+    def boom(self, data):
+        raise AssertionError("página corrompida")
+    monkeypatch.setattr(slotted_page.SlottedPage, "insert", boom)
+    with pytest.raises(AssertionError) as ei:
+        h.insert((2, "b"))
+    assert bp.pinned() == 0
+
+
+def test_bulk_load_failure_leaves_the_table_empty_and_usable(tmp_path):
+    # Um registro grande demais (ou um valor que o codec recusa) no meio da carga em massa não pode deixar o heap
+    # com os anteriores e o índice vazio: a carga recusa antes de tocar no arquivo, e repetir com dados bons dá certo.
+    from cbd.contracts import RecordTooLarge
+    e = Engine(StorageConfig(root_dir=str(tmp_path), block_size=2048), BufferConfig())   # max_record = 2 034 B
+    e.catalog.create_table(S, OrgSpec(Org.HEAP))
+    e.catalog.create_index(ispec(buckets=8))
+    good = [(i, "x" * 40) for i in range(50)]
+    for bad, err in (((50, "x" * 2100), RecordTooLarge), ((50, None), ValueError)):
+        with pytest.raises(err):
+            e.catalog.load_table("t", good + [bad])
+        t = e.catalog.table("t")
+        assert list(t.data.scan()) == [] and list(t.indexes["k"].search(0)) == []
+        assert e.bp.pinned() == 0
+    e.catalog.load_table("t", good)
+    t = e.catalog.table("t")
+    assert t.stats().n_records == 50 and [t.data.fetch(p) for p in t.indexes["k"].search(7)] == [(7, "x" * 40)]
+    e.close()
+
+
+def test_create_table_refuses_a_file_that_exists_on_disk(tmp_path):
+    # Depois de uma falha no meio do reorganize, a cópia <t>__reorg<k> pode ser a única dos dados: criar uma tabela
+    # ou um índice com esse nome truncaria o arquivo (fm.create). O catálogo recusa nome de arquivo que já existe.
+    e = engine(tmp_path)
+    fid = e.fm.create("x__reorg0")
+    with pytest.raises(ValueError):
+        e.catalog.create_table(Schema("x__reorg0", S.fields), OrgSpec(Org.HEAP))
+    e.catalog.create_table(Schema("x", (Field("k", FType.INT), Field("reorg0", FType.INT))), OrgSpec(Org.HEAP))
+    with pytest.raises(ValueError):
+        e.catalog.create_index(IndexSpec("x", "reorg0", IndexKind.HASH, False, {"buckets": 2}))
+    assert e.fm.exists("x__reorg0") and "x__reorg0" not in e.catalog.tables()
+    e.close()

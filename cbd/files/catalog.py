@@ -30,9 +30,10 @@ import itertools
 from datetime import date
 
 from cbd.contracts import DuplicateKey, Field, FType, IndexKind, IndexSpec, Org, OrgSpec, PageType, Schema, TableStats
-from cbd.files.heap import HeapFile, TempHeap
+from cbd.files.heap import HeapFile, TempHeap, _encode
 from cbd.files.table import Table
 from cbd.records.codec import RecordCodec
+from cbd.records.slotted_page import SlottedPage
 
 
 def _v(name, size, nullable=False):
@@ -239,6 +240,9 @@ class Catalog:
     def _free_name(self, name):
         if name in self._files() or name.startswith(_TEMP):
             raise ValueError(f"{name}: o nome já é de um arquivo do catálogo ou é reservado ({_TEMP}*)")
+        if self.bp.fm.exists(name):
+            # ex.: a cópia <t>__reorg<k> que sobrou de um reorganize que falhou; fm.create a truncaria
+            raise ValueError(f"{name}: já existe um arquivo com esse nome no disco")
 
     # ------------------------------------------------------------ operações
     def create_table(self, schema, spec):
@@ -267,10 +271,19 @@ class Catalog:
         return self._open[name]
 
     def load_table(self, name, recs, bulk=True):
-        """Carga em massa (bulk_load; B+ ordena antes) ou registro a registro (Table.insert). No fim, analyze."""
+        """Carga em massa (bulk_load; B+ ordena antes) ou registro a registro (Table.insert). No fim, analyze.
+
+        Em massa, recusa antes de tocar no arquivo: registro que o codec recusa (ValueError), que não cabe no
+        bloco (RecordTooLarge) ou chave repetida num índice UNIQUE (DuplicateKey).
+        """
         t = self.table(name)
         if bulk:
             recs = list(recs)                                        # preparação: fora da medição
+            # o bulk_load do heap grava um registro por vez: um registro que o codec recusa ou que não cabe no bloco
+            # deixaria os anteriores no heap e o índice vazio. Recusa antes de tocar no arquivo.
+            codec, limit = RecordCodec(t.schema), SlottedPage.max_record(self.bp.block_size)
+            for r in recs:
+                _encode(codec, r, limit)
             for col in [c for c, i in t.indexes.items() if i.spec.unique]:
                 # chave repetida num índice UNIQUE: recusa antes de tocar no heap (senão o heap ficaria
                 # carregado e o índice, ao ser refeito, vazio)
@@ -287,18 +300,21 @@ class Catalog:
         else:
             for r in recs:
                 t.insert(r)
-        self._flush()                                                # os dados antes das estatísticas
-        self.analyze(name)
+        self.analyze(name)                                           # grava os dados antes das estatísticas
 
     def create_index(self, spec):
         """Cria o índice a partir dos registros que já existem (bulk_load, chaves NULL de fora) e o registra.
-        Se encher o índice falhar, o arquivo novo é apagado e nada é registrado."""
+        Se encher o índice falhar, o arquivo novo é apagado e nada é registrado. ValueError, antes de criar o
+        arquivo, para índice HASH sobre arquivo que não é heap (arquitetura §5.3) ou nome de arquivo já usado."""
         e = self._meta[spec.table]
         t = self.table(spec.table)
         field = t.schema.get(spec.column)                            # KeyError se a coluna não existe
         if spec.column in e["idx"]:
             raise ValueError(f"o índice {spec.table}.{spec.column} já existe")
         spec = dataclasses.replace(spec, kind=IndexKind(spec.kind))
+        if spec.kind is IndexKind.HASH and t.data.spec.org is not Org.HEAP:
+            # arquitetura §5.3: o índice hash guarda o RID do heap (bloco, slot); sobre hash ou B+ só há B+
+            raise ValueError(f"{spec.table}.{spec.column}: índice hash secundário só sobre heap")
         file = f"{spec.table}__{spec.column}"
         self._free_name(file)
         params = [(f"{spec.table}.{spec.column}", k, _param(k, v)) for k, v in spec.params.items()]
@@ -358,8 +374,11 @@ class Catalog:
     def analyze(self, name):
         """Um scan: n_r, b_r, f_r, l_r e, por coluna, V(A, r) (sem NULL), min e max (SKS §16.3.1, p. 758).
 
-        Grava as linhas novas antes de apagar as velhas (D-P2-13). Custo: b_r leituras (fora da medição).
+        Primeiro grava os arquivos de dados e de índices (D-P2-13: eles vão para o disco antes da linha que aponta
+        para eles; vale para o load_table, o reorganize e o analyze chamado direto), depois grava as linhas novas
+        antes de apagar as velhas. Custo: b_r leituras (fora da medição).
         """
+        self._flush()
         t, e = self.table(name), self._meta[name]
         codec = RecordCodec(t.schema)
         n, size, seen = 0, 0, [set() for _ in t.schema.fields]
