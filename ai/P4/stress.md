@@ -6,6 +6,42 @@ Na raiz do repositório, execute `python -m pytest -q -s -m stress`.
 No Windows, a execução desta sessão usou `PYTHONUTF8=1`, redirecionamento
 da entrada padrão e um `--basetemp` novo dentro de `.pytest_cache`.
 
+## Validação física de 26/11/2026
+
+Base `origin/main` `3d0eb70`, com P1/P2 reais. O cenário de 150 blocos por
+tabela foi recalibrado usando `RecordCodec` e `SlottedPage` reais, pois o
+estimador anterior da bancada ainda refletia o layout antigo. Em 2.048
+bytes, o cabeçalho real ocupa dez bytes e o slot ocupa quatro. Após o
+carregamento, as duas tabelas têm 600 registros e 150 blocos físicos. O
+SQLite devolveu 600 tuplas, com assinatura `(600, 11038302970453882392)`.
+O hash de referência também mudou na P2 desde a rodada histórica.
+
+| Cenário | Trabalho lógico observado | Estimado, leituras/gravações | Medido a frio, leituras/gravações |
+| :--- | :--- | :--- | :--- |
+| Controle ingênuo, `M = 3` | 600 registros externos retidos, 300.000 bytes úteis mais slots, uma varredura interna. | 300 / 0 | 300 / 0 |
+| BNL histórico, `M = 3` | Quatro cursos por lote, 2.000 bytes incluindo slots, 150 varreduras. | 22.650 / 0 | 22.650 / 0 |
+| BNL revisado, `M = 3` | Quatro cursos por lote, 2.000 bytes incluindo slots, 150 varreduras. | 22.650 / 0 | 22.650 / 0 |
+| Sort externo, `M = 3` | 75 runs, seis fusões, SQLite igual e zero pins ao final. | 1.050 / 900 | 1.050 / 900 |
+
+Todos os BNLs preservaram as tuplas e a multiplicidade. Nas versões em
+blocos, a única página reservada ao lote comporta 2.038 bytes antes dos
+slots. O ingênuo reteve 150 vezes esse lote e ficou fora do orçamento WORK.
+Com cinco frames DATA, outro BNL controlado repetiu a mesma varredura e
+mediu **21 leituras com LRU e 17 com MRU**, ante 21 estimadas sem reuso.
+No INL com índice hash secundário, o reuso entre duas consultas iguais
+reduziu de cinco leituras previstas para três medidas. As correções do
+arredondamento histórico também passaram no cenário lógico de 501 registros.
+
+Todos os **sete testes de estresse da P4 passaram**, incluindo dois físicos.
+Em uma execução diagnóstica a frio, os tempos dos três BNLs foram 0,032 s,
+1,376 s e 1,408 s na ordem da tabela. As contagens são o indicador primário.
+Para os casos ainda bloqueados, veja [pendências externas](PENDENCIAS_EXTERNAS.md).
+
+## Registro histórico de 18/11/2026
+
+As dimensões, assinaturas e observações desta seção são da versão anterior
+à integração da P2. A rodada de 26/11 acima é a referência física.
+
 `tests/stress/test_p4_stress.py` usa `random.Random(48064)`, `M = 3` e
 blocos de 2.048 bytes (2.020 úteis antes dos slots). As duas tabelas têm
 150 páginas previstas, 50 vezes `M`. São 450 cursos com PK distinta e
@@ -73,7 +109,7 @@ temporárias ainda presentes no buffer podem virar hits ou ser descartadas
 antes de uma gravação. Com tamanhos variáveis, a reordenação também pode
 mudar a blocagem. A medição física e a diferença numérica aguardam P1/P2.
 
-A rodada local de estresse teve **5 aprovações e 2 pulados**. Na tentativa
+A rodada histórica de estresse teve **5 aprovações e 2 pulados**. Na tentativa
 isolada com a camada 4 do PR #2 carregada, a integração parou em
 `cbd.files.catalog`. Os testes físicos preparam cache frio por execução e
 comparam as mesmas tuplas com SQLite. Veja [pendências externas](PENDENCIAS_EXTERNAS.md).

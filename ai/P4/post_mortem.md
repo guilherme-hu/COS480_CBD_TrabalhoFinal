@@ -49,12 +49,13 @@ Mais detalhes, incluindo lacunas encontradas por mutação, em [review.md](revie
 
 ## Evidência: ingênuo × refatorado
 
-Com `M = 3` e 150 páginas nominais por tabela, as três versões devolveram
-as mesmas **600 tuplas** que o SQLite. O controle ingênuo reteve **450
-registros externos** (242.550 bytes codificados e slots). As duas versões
-em blocos retiveram no máximo **3 por lote** (1.617 bytes) com `curso`
-externo. Com `disciplina` no externo, o revisado manteve até **4 registros**
-da mesma chave por lote e preservou o resultado.
+Na rodada de 26/11 com P1/P2 disponíveis, as três versões devolveram as
+mesmas **600 tuplas** que o SQLite com `M = 3` e 150 páginas físicas por
+tabela. O controle ingênuo reteve **600 registros externos** (300.000
+bytes codificados e slots). As duas versões em blocos retiveram no máximo
+**4 por lote** (2.000 bytes) com `curso` externo. Com `disciplina` no
+externo, o revisado manteve até **4 registros** da mesma chave por lote e
+preservou o resultado.
 
 No cenário de 501 registros em 62 páginas, com `M = 64`, o primeiro BNL
 histórico fez **duas varreduras lógicas** do interno. O revisado fez **uma**.
@@ -66,14 +67,17 @@ e as contagens completas estão em [stress.md](stress.md).
 
 | Cenário | Estimativa sem reuso | Verificado localmente | Medição física |
 | :--- | :--- | :--- | :--- |
-| BNL revisado, 150 blocos por lado, `M = 3` | 22.650 leituras | 150 varreduras no dublê e resultado SQLite igual. | Pendente |
-| BNL com 501 registros em 62 páginas | 63 leituras | Histórico fez duas passadas e revisado uma. Contando blocos sem reuso, a execução histórica corresponderia a 64 leituras. | Pendente |
-| Sort de 150 blocos, `M = 3` | 1.050 leituras e 900 gravações | 75 runs, seis fusões e 600 registros ordenados como no SQLite. | Pendente |
+| BNL revisado, 150 blocos por lado, `M = 3` | 22.650 leituras | 150 varreduras e resultado SQLite igual. | 22.650 leituras, zero gravações |
+| BNL com 501 registros em 62 páginas | 63 leituras | Histórico fez duas passadas e revisado uma. Contando blocos sem reuso, a execução histórica corresponderia a 64 leituras. | Caso de regressão lógica |
+| Sort de 150 blocos, `M = 3` | 1.050 leituras e 900 gravações | 75 runs, seis fusões e 600 registros ordenados como no SQLite. | 1.050 leituras e 900 gravações |
+| BNL em cinco frames DATA | 21 leituras sem reuso | As políticas usam a mesma orientação e as mesmas tuplas. | LRU 21, MRU 17 |
+| INL com hash secundário | Cinco leituras sem reuso | A segunda busca repete a mesma chave. | Três leituras, pois índice e heap ainda estão no buffer |
 
 O número de passadas é observável sem disco real. Uma diferença física
 também pode vir do buffer, como reuso de páginas ou temporários descartados
 antes da gravação, ou da ocupação dos blocos após ordenar registros variáveis.
-A comparação com a pilha completa permanece em [pendências externas](PENDENCIAS_EXTERNAS.md).
+Os casos B+ e a rodada completa do grupo permanecem em
+[pendências externas](PENDENCIAS_EXTERNAS.md).
 
 ## Decisões que mudaríamos hoje
 

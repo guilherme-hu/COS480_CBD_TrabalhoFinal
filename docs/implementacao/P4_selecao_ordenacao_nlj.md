@@ -111,7 +111,7 @@ def fetch_cost(table) -> float:           # blocos de um DataFile.fetch (geral �
 - **Faixa em campo UNIQUE:** opcional no enunciado novo, fora do escopo. O `select_range` é genérico na coluna, mas a bancada não mede esse caso.
 - **Igualdade em NOT UNIQUE** não é um teste de seleção da matriz, mas o INL precisa dela: faz `lookup` no lado detalhe (`inscricao.dre`, `aluno.curso`) e usa `select_eq_cost` como custo de cada busca.
 - `NotApplicable` vira "N/A" no CSV da bancada; não trate como erro.
-- **`sort_ptrs=True`** (só `SECONDARY`, só quando o `Ptr` é `RID`): dentro de `reserve_work(k)`, junte ponteiros em lotes de até `k · (B // 8)`, ordene por `(block, slot)` e faça o `fetch` em ordem. Blocos repetidos viram *hit*, e o custo cai de `n` para ~`min(n, b_r)` (fórmula de Cardenas). É a variante "bitmap/RID sort" dos livros (SKS 15.3.2). Para `Ptr` de B+ (`(k, seq)`) ignore, porque ordenar não ajuda a descida.
+- **`sort_ptrs=True`** (só `SECONDARY`, só quando o `Ptr` é `RID`): dentro de `reserve_work(k)`, junte ponteiros em lotes de até `k · (B // data.ptr_size)`, ordene por `(block, slot)` e faça o `fetch` em ordem. Heap e hash da P2 usam seis bytes por RID. Agrupar RIDs por bloco pode evitar leituras repetidas dentro do lote. A fórmula de Cárdenas estima blocos distintos, mas lotes separados podem reler páginas. É a variante "bitmap/RID sort" dos livros (SKS 15.3.2). Para `Ptr` lógico da B+, preserve a ordem do índice.
 - Preencha `info`: `{"variant": "scan|scan-stop|primary-hash|primary-btree|secondary-hash|secondary-btree|…", "matches": n}`.
 
 ### 4.2 Fórmulas de custo (`select_eq_cost`, `select_range_cost`)
@@ -300,6 +300,10 @@ Registre em `ai/P4/review.md`. Guarde uma versão **executável** do BNL ingênu
 ---
 
 ## 9. Plano de execução — 18/11/2026
+
+O diagnóstico abaixo é o registro inicial. A situação após a integração com
+P1/P2 está em [Estado da P4](../../ai/P4/ESTADO.md) e
+[Pendências externas](../../ai/P4/PENDENCIAS_EXTERNAS.md).
 
 O §5.1 do enunciado pede comparar três algoritmos para o NATURAL JOIN
 mestre-detalhe. A P4 entrega o nested-loop, e a P5 entrega os outros dois.

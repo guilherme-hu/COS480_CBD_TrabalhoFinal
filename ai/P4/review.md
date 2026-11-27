@@ -164,3 +164,17 @@
   temporário. Um mutante materializava as 591 linhas restantes logo depois
   e passava. Comparamos agora, para cada registro da ingestão, o total já
   consumido e o total gravado nos runs iniciais.
+
+## 26/11/2026 — Integração com a `main` 3d0eb70
+
+- **Geometria do estresse usava o layout antigo do estimador da P6.**
+  `tests/stress/test_p4_stress.py` esperava três cursos por página. A
+  primeira rodada física achou 113 blocos para 450 cursos. A P2 usa
+  inteiros de quatro bytes, prefixos compactos e cabeçalho de dez bytes.
+  O teste passa a usar o codec e o layout reais para montar 150 blocos
+  por lado. Nenhum estimador compartilhado precisou ser alterado.
+- **Asserções de I/O permitiam perder uma passada de fusão.** A revisão
+  simulou contadores com 150 transferências a menos e o estresse ainda
+  aceitava. Nos cenários densos e fixos de 50 e 150 páginas, a rodada física
+  observou exatamente o limite previsto. Os testes agora exigem as
+  contagens calculadas para LRU, sem prefetch nem toss-immediate.

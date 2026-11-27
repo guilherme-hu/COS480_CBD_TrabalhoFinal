@@ -126,3 +126,17 @@ O integrante pediu confirmar a completude local e garantir dois registros
 separados, um de pendências externas e outro com arquitetura, formatos,
 parâmetros e justificativas. O inventário foi acrescentado a
 `docs/decisoes/P4.md` e a conferência a `PENDENCIAS_EXTERNAS.md` e `ESTADO.md`.
+
+## 26/11/2026 — Integração com a `main` atual
+
+Ferramenta: Codex (GPT-6).
+
+> analise a versao atual da main [...] e utilize para fechar oq estava pendente da nossa parte (p4) mexa apenas oq for referente a nossa parte, se algo ficar pendente por partes de terceiros faltando atualize o .md de partes pendentes para atualizar futuramente
+
+Integramos a `main` `3d0eb70` na branch da P4, mantendo o `pyproject.toml`
+da `main`, e validamos os caminhos físicos disponíveis com P1/P2.
+Corrigimos a geometria dos dados de estresse para usar o codec real,
+acrescentamos a cobertura de bancada permitida pelo armazenamento e
+regeneramos as três entradas da P4 no índice de decisões do relatório.
+O código de outros integrantes veio da `main`. As pendências de P3,
+P5, P6 e de consolidação foram atualizadas.

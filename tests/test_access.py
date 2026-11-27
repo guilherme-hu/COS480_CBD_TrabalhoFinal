@@ -241,28 +241,49 @@ def test_secondary_fetch_error_closes_index_cursor(monkeypatch):
     assert side.table.indexes["grupo"].active == 0
 
 
-def test_access_with_real_heap_and_btree(tmp_path):
+def test_access_with_real_heap_and_hash(tmp_path):
     pytest.importorskip("cbd.storage.buffer_pool")
     pytest.importorskip("cbd.files.catalog")
-    pytest.importorskip("cbd.files.btree_file")
     from cbd.engine import Engine
 
     with Engine(StorageConfig(str(tmp_path), 2048), BufferConfig()) as eng:
         eng.catalog.create_table(SCHEMA, OrgSpec(Org.HEAP))
         eng.catalog.load_table(SCHEMA.name, RECORDS)
+        eng.catalog.create_index(IndexSpec(SCHEMA.name, "id", IndexKind.HASH, True, {"buckets": 1}))
+        hash_schema = Schema("demo_hash", SCHEMA.fields)
+        eng.catalog.create_table(hash_schema, OrgSpec(Org.HASH, "id", True, {"buckets": 1}))
+        eng.catalog.load_table(hash_schema.name, RECORDS)
+        table = eng.catalog.table(SCHEMA.name)
+        heap = JoinSide(table, "id", Path.SCAN)
+        secondary = JoinSide(table, "id", Path.SECONDARY)
+        primary_hash = JoinSide(eng.catalog.table(hash_schema.name), "id", Path.PRIMARY)
+
+        eng.cold()
+        assert list(read_all(heap)) == list(RECORDS)
+        assert read_ordered(heap) is None
+        # Três tuplas de dois inteiros cabem em um bloco de 2 KiB.
+        assert eng.snapshot()["io.reads"] == 1
+        assert eng.bp.pinned() == 0
+        for side, reads in ((primary_hash, 1), (secondary, 2)):
+            eng.cold()
+            assert read_ordered(side) is None
+            with closing(lookup(side, 3)) as cursor:
+                assert next(cursor) == (3, 2)
+            # Um bucket por caminho. O secundário também busca o bloco do heap.
+            assert eng.snapshot()["io.reads"] == reads
+            assert eng.bp.pinned() == 0
+
+
+def test_access_with_real_btree(tmp_path):
+    pytest.importorskip("cbd.files.btree_file")
+    from cbd.engine import Engine
+
+    with Engine(StorageConfig(str(tmp_path), 2048), BufferConfig()) as eng:
         tree_schema = Schema("demo_btree", SCHEMA.fields)
         eng.catalog.create_table(tree_schema, OrgSpec(Org.BTREE, "id", unique=True))
         eng.catalog.load_table(tree_schema.name, sorted(RECORDS))
-        heap = JoinSide(eng.catalog.table(SCHEMA.name), "id", Path.SCAN)
         tree = JoinSide(eng.catalog.table(tree_schema.name), "id", Path.PRIMARY)
         try:
-            eng.cold()
-            assert list(read_all(heap)) == list(RECORDS)
-            assert read_ordered(heap) is None
-            # Três tuplas de dois inteiros cabem em um bloco de 2 KiB.
-            assert eng.snapshot()["io.reads"] == 1
-            assert eng.bp.pinned() == 0
-
             eng.cold()
             assert list(read_ordered(tree)) == sorted(RECORDS)
             # Toda a B+ cabe na raiz, que também é a única folha de dados.

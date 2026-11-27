@@ -11,41 +11,45 @@ import pytest
 from ai.P4.raw import nested_loop_v1 as historical_join
 from ai.P4.raw.nested_loop_unbounded_baseline import naive_bnl
 from bench.schema import CURSO, DISCIPLINA
-from bench.sqlite_ref import SQLiteReference, from_sql, output_signature, query_sql, quote, record_bytes
-from cbd.contracts import BufferConfig, JoinSide, Org, OrgSpec, PageType, Path, StorageConfig, TableStats
+from bench.sqlite_ref import SQLiteReference, from_sql, output_signature, query_sql, quote
+from cbd.contracts import BufferConfig, JoinSide, Org, OrgSpec, PageType, Path, Policy, StorageConfig, TableStats
 from cbd.exec import external_sort as sort_module, nested_loop as join_module
 from cbd.exec.access import read_all
+from cbd.records.codec import RecordCodec
+from cbd.records.slotted_page import SlottedPage
 
 
 pytestmark = pytest.mark.stress
 M = 3
 BLOCK_SIZE = 2048
-PAYLOAD = BLOCK_SIZE - 28
+PAYLOAD = BLOCK_SIZE - SlottedPage.HEADER
+SLOT_SIZE = PAYLOAD - SlottedPage.max_record(BLOCK_SIZE)
 BLOCKS = 50 * M
 SEED = 48064
+CODECS = {schema.name: RecordCodec(schema) for schema in (CURSO, DISCIPLINA)}
 QUERY = dict(kind="join", r_table="curso", r_column="codigo",
              s_table="disciplina", s_column="curso")
 
 
 def charge(schema, record):
-    return record_bytes(schema, record) + 4
+    return len(CODECS[schema.name].encode(record)) + SLOT_SIZE
 
 
 @pytest.fixture
 def workload():
     rng = Random(SEED)
-    hot = rng.randrange(1, BLOCKS * 3 + 1)
+    hot = rng.randrange(1, BLOCKS * 4 + 1)
     courses = [(n, "c" * 60, "e" * 40, 360, n, f"c{n}@ufrj.br", "a" * 80, ("1" * 15,) * 16)
-               for n in range(1, BLOCKS * 3 + 1)]
+               for n in range(1, BLOCKS * 4 + 1)]
     details = [(n, hot, "d" * 60, "e" * 200, 60, ("00000001",) * 16)
                for n in range(1, BLOCKS * 4 + 1)]
     rng.shuffle(courses)
     rng.shuffle(details)
 
-    # Três cursos ou quatro disciplinas por página no layout contratado.
-    for schema, rows, per_block in ((CURSO, courses, 3), (DISCIPLINA, details, 4)):
-        assert len(rows) == BLOCKS * per_block
-        assert {PAYLOAD // charge(schema, row) for row in rows} == {per_block}
+    # Quatro registros por página nas duas tabelas, no layout efetivo da P2.
+    for schema, rows in ((CURSO, courses), (DISCIPLINA, details)):
+        assert len(rows) == BLOCKS * 4
+        assert {PAYLOAD // charge(schema, row) for row in rows} == {4}
 
     with SQLiteReference(":memory:") as reference:
         reference.create_schema()
@@ -137,7 +141,7 @@ def _scan(bp, rows):
 
 
 def _side(bp, schema, rows, column, blocks=BLOCKS):
-    sizes = [record_bytes(schema, row) for row in rows]
+    sizes = [charge(schema, row) - SLOT_SIZE for row in rows]
     distinct = len({row[schema.idx(column)] for row in rows})
     stats = TableStats(len(rows), blocks, len(rows) / blocks, sum(sizes) / len(rows),
                        {column: distinct}, {}, {})
@@ -181,14 +185,13 @@ def _verify_join(eng, r, s, reference):
         assert eng.bp.pinned() == 0
 
     assert signature[0] == 600  # Todas as FKs apontam para o mesmo mestre.
-    assert naive_info == {"peak_outer_records": 450, "passes": 1}
+    assert naive_info == {"peak_outer_records": 600, "passes": 1}
     assert historical_info["passes"] == info["passes"] == 150
     assert s.table.data.scans == 1 + 150 + 150
     return signature, durations
 
 
 def _observe_course_batches(module, monkeypatch):
-    monkeypatch.setattr(module, "_layout", lambda schema, size: (PAYLOAD, lambda row: charge(schema, row)))
     scan_inner = module._scan_inner
     peak = [0, 0]
 
@@ -213,7 +216,7 @@ def test_p4_bnl_stress_sqlite_and_work_limit(workload, monkeypatch):
     assert historical_peak == revised_peak
     peak_records, peak_bytes = revised_peak
     naive_bytes = sum(charge(CURSO, row) for row in courses)
-    assert (peak_records, peak_bytes) == (3, 3 * charge(CURSO, courses[0]))
+    assert (peak_records, peak_bytes) == (4, 4 * charge(CURSO, courses[0]))
     assert bp.reserved == 0 and bp.peak == M - 2
     assert peak_bytes <= PAYLOAD < naive_bytes
     estimate = join_module.nl_join_cost(eng, r, s, outer="r")
@@ -229,7 +232,6 @@ def test_p4_bnl_stress_with_skew_on_outer_side(workload, monkeypatch):
     eng = SimpleNamespace(M=M, bp=bp)
     r = _side(bp, CURSO, courses, "codigo")
     s = _side(bp, DISCIPLINA, details, "curso")
-    monkeypatch.setattr(join_module, "_layout", lambda schema, size: (PAYLOAD, lambda row: charge(schema, row)))
     scan_inner = join_module._scan_inner
     peak = 0
 
@@ -250,20 +252,18 @@ def test_p4_bnl_stress_with_skew_on_outer_side(workload, monkeypatch):
     print(f"BNL detalhe externo: linhas={len(rows)}; pico={peak}; passadas={info['passes']}")
 
 
-def test_p4_historical_bnl_extra_pass(workload, monkeypatch):
+def test_p4_historical_bnl_extra_pass(workload):
     _, details, _ = workload
-    # 5 páginas de 9 registros a 224 bytes e 57 de 8 a 250 bytes.
-    end_lengths = [39] * 45 + [65] * 456
+    # 5 páginas de 9 registros a 224 bytes e 57 de 8 a 244 bytes.
+    end_lengths = [60] * 45 + [80] * 456
     courses = [(n, "c" * 60, "e" * 40, 360, n, f"c{n}@ufrj.br", "a" * length, None)
                for n, length in enumerate(end_lengths, 1)]
     assert {charge(CURSO, row) for row in courses[:45]} == {224}
-    assert {charge(CURSO, row) for row in courses[45:]} == {250}
+    assert {charge(CURSO, row) for row in courses[45:]} == {244}
     bp = WorkBudget(capacity=64)
     eng = SimpleNamespace(M=64, bp=bp)
     r = _side(bp, CURSO, courses, "codigo", blocks=62)
     s = _side(bp, DISCIPLINA, details[:4], "curso", blocks=1)
-    for module in (historical_join, join_module):
-        monkeypatch.setattr(module, "_layout", lambda schema, size: (PAYLOAD, lambda row: charge(schema, row)))
     with SQLiteReference(":memory:") as reference:
         reference.create_schema()
         reference.load("curso", courses)
@@ -283,11 +283,10 @@ def test_p4_historical_bnl_extra_pass(workload, monkeypatch):
 
 
 @pytest.mark.parametrize("column", ["curso", "codigo"])
-def test_p4_sort_stress_sqlite_and_work_limit(workload, monkeypatch, column):
+def test_p4_sort_stress_sqlite_and_work_limit(workload, column):
     _, details, reference = workload
     bp = WorkBudget()
     eng = SimpleNamespace(M=M, bp=bp, catalog=Catalog(bp))
-    monkeypatch.setattr(sort_module, "_layout", lambda schema, size: (PAYLOAD, lambda row: charge(schema, row)))
 
     def source():
         with closing(read_all(_side(bp, DISCIPLINA, details, column))) as rows:
@@ -328,7 +327,8 @@ def physical(real_engine, tmp_path, workload):
     courses, details, reference = workload
     areas = dict(BufferConfig().areas)
     areas.update({PageType.DATA: 2, PageType.WORK: M})
-    with real_engine(StorageConfig(str(tmp_path), BLOCK_SIZE), BufferConfig(areas=areas)) as eng:
+    cfg = BufferConfig(areas=areas, policy=Policy.LRU, prefetch=0, toss_immediate=False)
+    with real_engine(StorageConfig(str(tmp_path), BLOCK_SIZE), cfg) as eng:
         for schema, rows in ((CURSO, courses), (DISCIPLINA, details)):
             eng.catalog.create_table(schema, OrgSpec(Org.HEAP))
             eng.catalog.load_table(schema.name, rows)
@@ -373,9 +373,9 @@ def test_p4_sort_stress_physical(physical):
     assert info == {"in_memory": False, "runs": 75, "passes": 6}
     assert eng.bp.pinned() == 0
     estimate = sort_module.external_sort_cost(eng, BLOCKS)
-    # Ao menos 147 dos 150 blocos dos runs iniciais precisam sair de WORK
-    # e ser relidos, além da varredura da entrada. Os demais podem ter hits.
-    assert 2 * BLOCKS - M <= metrics["io.reads"] <= estimate.reads
-    assert BLOCKS - M <= metrics["io.writes"] <= estimate.writes
+    # Uma leitura da entrada e seis dos runs. A geração e as cinco
+    # passadas intermediárias gravam os 150 blocos por vez.
+    assert metrics["io.reads"] == estimate.reads == 7 * BLOCKS
+    assert metrics["io.writes"] == estimate.writes == 6 * BLOCKS
     print(f"Sort físico: blocos lidos {metrics['io.reads']}/{estimate.reads}, "
           f"gravados {metrics['io.writes']}/{estimate.writes} (medido/estimado)")

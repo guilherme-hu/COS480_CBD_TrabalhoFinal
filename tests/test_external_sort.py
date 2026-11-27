@@ -6,7 +6,7 @@ import pytest
 
 from cbd.contracts import (
     BufferConfig, Field, FType, JoinSide, Org, OrgSpec, PageType, Path,
-    RecordTooLarge, Schema, StorageConfig,
+    Policy, RecordTooLarge, Schema, StorageConfig,
 )
 from cbd.exec import external_sort as sort_module
 from cbd.exec.access import read_all
@@ -317,7 +317,8 @@ def test_external_sort_with_real_storage(tmp_path, n, expected_runs, expected_pa
     rows = [(i % 4, str(i)) for i in range(n, 0, -1)]
     areas = dict(BufferConfig().areas)
     areas[PageType.WORK] = 3
-    with Engine(StorageConfig(str(tmp_path), 2048), BufferConfig(areas=areas)) as eng:
+    cfg = BufferConfig(areas=areas, policy=Policy.LRU, prefetch=0, toss_immediate=False)
+    with Engine(StorageConfig(str(tmp_path), 2048), cfg) as eng:
         eng.catalog.create_table(schema, OrgSpec(Org.HEAP))
         eng.catalog.load_table(schema.name, rows)
         side = JoinSide(eng.catalog.table(schema.name), "key", Path.SCAN)
@@ -325,7 +326,7 @@ def test_external_sort_with_real_storage(tmp_path, n, expected_runs, expected_pa
         info = {}
         out = list(external_sort(eng, read_all(side), schema, "key", info=info))
         assert out == sorted(rows, key=order)
-        # 1.209 bytes por registro antes do slot. Cada página de 2 KiB
+        # 1.204 bytes por registro antes do slot. Cada página de 2 KiB
         # comporta um registro, tanto no heap quanto nos temporários.
         assert info == {"in_memory": False, "runs": expected_runs, "passes": expected_passes}
         measured = eng.snapshot()
@@ -336,6 +337,40 @@ def test_external_sort_with_real_storage(tmp_path, n, expected_runs, expected_pa
             assert measured["io.reads"] == estimate.reads == 12
             assert measured["io.writes"] == estimate.writes == 6
         else:
-            assert 50 < measured["io.reads"] <= estimate.reads
-            assert 0 < measured["io.writes"] <= estimate.writes
+            # 50 blocos de entrada e 5 leituras dos runs. A geração e as
+            # quatro passadas intermediárias gravam os 50 blocos por vez.
+            assert measured["io.reads"] == estimate.reads == 300
+            assert measured["io.writes"] == estimate.writes == 250
+        assert eng.bp.pinned() == 0
+
+
+def test_external_sort_interleaves_two_real_work_streams(tmp_path):
+    pytest.importorskip("cbd.files.catalog")
+    from cbd.engine import Engine
+
+    fields = (Field("key", FType.INT), Field("text", FType.CHAR, 1200))
+    left, right = Schema("left_wide", fields), Schema("right_wide", fields)
+    r_rows = [(i, str(i)) for i in range(6, 0, -1)]
+    s_rows = [(i, str(i)) for i in range(16, 10, -1)]
+    areas = dict(BufferConfig().areas)
+    areas[PageType.WORK] = 6
+    with Engine(StorageConfig(str(tmp_path), 2048), BufferConfig(areas=areas)) as eng:
+        for schema, rows in ((left, r_rows), (right, s_rows)):
+            eng.catalog.create_table(schema, OrgSpec(Org.HEAP))
+            eng.catalog.load_table(schema.name, rows)
+        r = JoinSide(eng.catalog.table(left.name), "key", Path.SCAN)
+        s = JoinSide(eng.catalog.table(right.name), "key", Path.SCAN)
+        eng.cold()
+
+        with closing(external_sort(eng, read_all(r), left, "key", mem=3)) as r_input:
+            first = next(r_input)
+            with closing(external_sort(eng, read_all(s), right, "key", mem=3)) as s_input:
+                assert next(s_input) == s_rows[-1]
+                # Cada fusão final abriu três runs. Não há página de saída.
+                assert eng.bp.pinned(PageType.WORK) == 6
+                second = next(r_input)
+                assert eng.bp.pinned(PageType.WORK) == 6
+            assert eng.bp.pinned(PageType.WORK) == 3
+            assert [first, second, *r_input] == sorted(r_rows)
+
         assert eng.bp.pinned() == 0

@@ -1,31 +1,31 @@
 # Pendências externas — P4
 
-Registro das verificações e alinhamentos que exigem entregas de P1–P3, P5
-ou P6. Os testes locais com dublês verificam a lógica da P4. A validação
-física e o aceite entre partes são registrados quando executados.
+Conferido em 26/11/2026 com `origin/main` em `3d0eb70`. A camada 4 de P1
+e o codec, as páginas com slots, heap, temporários, catálogo, hash primário
+e índice hash secundário de P2 já estão disponíveis. A branch da P4 passou a
+usar essa base localmente.
 
 | P4 | Dependência | Falta verificar ou combinar | Estado |
 | :--- | :--- | :--- | :--- |
-| #54 · Adaptador | P1 #37, P2 #43 e #46, P3 #49 | Rodar `tests/test_access.py::test_access_with_real_heap_and_btree`, conferir tuplas, uma leitura física por operação no cenário controlado e zero pins. | Aberta. A parte local passou em 30 testes. Na cópia com a camada 4 do PR #2, o teste físico foi pulado porque `cbd.files.catalog` está ausente. |
-| #58 · Ordenação externa | P1 #37 e P2 #39, #40, #43 e #46 | Rodar `test_external_sort_with_real_storage` com codec, layout, reserva `WORK` e `Catalog.temp()` reais. Conferir 12 leituras e 6 gravações no caso de seis blocos e `M = 3`, além de cinco passadas no caso de 50 blocos. | Implementação e testes locais concluídos. Aceite físico em aberto. |
-| #58 · Consumo no sort-merge | P5 #66 | Exercitar dois fluxos ordenados intercalados com `mem` parcial e fechamento antecipado no join. Alinhar a referência do guia P5 a `_bfr_from_sample`, auxiliar que não consta da interface pública. | Dois sorts intercalados passaram no teste com dublês. Aceite com o operador P5 aberto. |
-| #59 · Seleções e custo físico | P1 #37, P2 #46, #48, #52, P3 #49 e #53 | Validar igualdade e faixa nos caminhos aplicáveis; comparar saída com SQLite e leituras frias com a estimativa, inclusive ordenação de `RID`s e cenário de hash primário marcado `N/A`. | Aberta. |
-| #59 · Bancada | P6 #36 | `bench.run.measure` encaminha `sort_ptrs` aos estimadores das linhas secundárias de igualdade (com `False`) e de faixa (com `False` ou `True`). A arquitetura recebe esse argumento apenas nos operadores. Combinar o encaminhamento e como registrar o custo das variantes no CSV. | Aberta. |
-| #60 · Contagem, políticas e integração | P1 #37, P2 #39, #40, #43, #46, #48 e #52, P3 #49 e #53, P6 #16 e #36 | Com heap real, executar `test_bnl_exact_cost` e `test_bnl_flooding`, observar LRU × MRU com varreduras repetidas e medir a variante indexada em caminhos reais. Integrar os resultados à bancada. | Aberta. |
-| #60 · BNL na matriz a–e | P6 #36 e decisão do grupo | O §5.1 pede BNL em todas as configurações. Os caminhos da arquitetura selecionam INL automaticamente sempre que o interno é pesquisável. A bancada pode medir o BNL adicional construindo lados `SCAN` sobre as mesmas organizações físicas e preservando seus rótulos. | Aberta. |
-| #64 · Estresse físico | P1 #37, P2 #39, #40, #43 e #46 | Rodar `pytest -q -s -m stress` com heap, codec e temporários reais. Registrar leituras, gravações e tempos a frio e explicar a diferença para os custos estimados em `stress.md`. | Cinco cenários locais passaram com SQLite. Os dois físicos foram pulados. Em cópia com P1, a execução parou na ausência de catálogo. |
-| #67 · Aceite do grupo | P1 #72, P6 #36 e os aceites externos acima | Incorporar a P4 no `main`, validar os operadores e estimativas pela bancada e incluir o post-mortem da P4 na consolidação da raiz. | Fechamento local registrado. Aceite e publicação em aberto. |
+| #54 · Adaptador B+ | P3 #49 e #53 | Rodar `test_access_with_real_btree` e validar `read_ordered` e `lookup` com índice B+ secundário real. | Heap, hash primário e hash secundário já validados a frio. O teste real da B+ pula pela ausência de `cbd.files.btree_file`. |
+| #58 · Consumo no sort-merge | P5 #66 | Exercitar o sort-merge da P5 usando `mem` parcial e fechamento antecipado. Alinhar a referência do guia P5 a `_bfr_from_sample`, que não consta da interface pública. | A P4 já intercalou dois sorts com `TempFile` real em seis frames WORK e fechou um antes do fim. Falta a integração com o operador ausente da P5. |
+| #59 · B+ e faixa por índice | P3 #49 e #53 | Medir B+ primária e secundária a frio. Validar filtros de 1% e 50% no índice e comparar leituras com e sem ordenação de RIDs em faixas secundárias. | Heap e hash foram comparados com SQLite. Faixas por hash primário aparecem como `N/A` na bancada. |
+| #59 · Argumentos dos estimadores | P6 #36 | Separar os argumentos do operador e do estimador ou aprovar outra forma de representar o custo com `sort_ptrs`. | Reproduzido `TypeError` no estimador da igualdade secundária real. A bancada também envia o argumento ao estimador de faixa. A assinatura da arquitetura reserva `sort_ptrs` aos operadores. A igualdade hash secundária funciona pela API da P4 e mede dois blocos no teste controlado. |
+| #60 · Casos B+ e cobertura da matriz | P3 #49 e #53, P6 #36 e decisão do grupo | Rodar as variantes restantes de B+, inclusive a configuração e. Para cobrir BNL em a–e mesmo quando o interno tem índice, a bancada pode medir `SCAN` sobre as mesmas organizações e preservar seu rótulo. | 20 cenários de nested-loop suportados passaram na bancada com SQLite, com as três consultas e configurações a–d disponíveis. BNL e INL já têm contagem física controlada. |
+| #60 · Política oficial | P6 #16 | Rodar a escolha de política na matriz e registrar a política da operação. | No teste da P4, BNL com cinco frames DATA mediu 21 leituras com LRU e 17 com MRU. |
+| #67 · Aceite do grupo | P1 #72, P6 #14 e #36, P3/P5 acima | Incorporar a P4 à `main`, rodar a matriz física completa e incluir o post-mortem da P4 na consolidação da raiz. | A branch P4 está publicada e a integração física disponível está documentada em `stress.md`. O aceite no `main` e a rodada completa estão abertos. |
 
-Na conferência de 19/11/2026, `origin/main` continuava em `f81c3c5` e as
-issues principais de armazenamento, integração da bancada e consumo pela P5
-continuavam abertas. Para retomar o aceite:
+## Verificações que a `main` já liberou
 
-1. Com a pilha de P1–P3 disponível, rodar primeiro os testes físicos do
-   adaptador, sort, seleção e nested-loop. Em seguida rodar `pytest -q -s -m stress`
-   e registrar as leituras e gravações medidas ao lado da estimativa em `stress.md`.
-2. Com P5 e P6, validar o consumo intercalado do sort, encaminhar `sort_ptrs`
-   aos destinos acordados e conferir a cobertura de BNL nas configurações a–e.
-   Rodar a matriz e comparar saídas com o SQLite.
-3. Para cada linha aceita, registrar o commit da pilha, o comando, o resultado
-   e as contagens. Depois, conferir a suíte no `main` e repassar o post-mortem
-   para a consolidação da P1.
+- #54. Varredura de heap: um bloco. Hash primário: um bloco. Hash secundário:
+  dois blocos, com zero pins depois de fechar o cursor.
+- #58. Sort físico em `M = 3` validado em seis e cinquenta blocos. No caso
+  de seis blocos, 12 leituras e seis gravações. Dois sorts em fluxo dividiram
+  seis frames WORK sem deixar pins.
+- #59 e #60. Os caminhos disponíveis foram exercitados em uma base P6 de
+  escala `0,002`, por meio de `bench.run.measure` e também da API da P4.
+- #64. Estresse físico concluído com SQLite. BNL revisado: 22.650 leituras,
+  zero gravações. Sort: 1.050 leituras, 900 gravações. Ver [stress.md](stress.md).
+
+Ao retomar uma pendência, registrar o commit da pilha, o comando, o resultado
+e as contagens que confirmam o aceite.
