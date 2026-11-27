@@ -43,8 +43,8 @@ Enquanto a camada 3 não chega, teste a **lógica** com um dublê (`FakeTable` s
 
 ## 2. Regras de memória (geral §3.4). Valem para todo o seu código
 
-1. Qualquer lista, dict ou heap Python que acumule **registros** precisa estar dentro de um `with eng.bp.reserve_work(k)` e ter no máximo `k · bfr` registros.
-2. `bfr` da entrada: `table.stats().bfr` quando a entrada é uma tabela. Quando é um fluxo (ex.: a saída de outro operador), estime com `_bfr_from_sample(schema, amostra)`: média de `len(RecordCodec(schema).encode(r))` em até 100 registros, então `SlottedPage.max_record(B) // (média + 4)`.
+1. Lotes de **registros** acumulados em estruturas Python exigem `with eng.bp.reserve_work(k)` e precisam caber nas `k` páginas. Na fusão, a fila de prioridade retém um registro por página de entrada já fixada.
+2. A ordenação e o BNL conferem os bytes codificados de cada registro, mais slot e cabeçalho, para respeitar a capacidade das páginas. O BNL mantém também o limite por linha calculado com `table.stats().bfr`.
 3. **Ponteiros** (para `sort_ptrs`) também ocupam memória: no máximo `k · (B // ptr_size)` por lote.
 4. Iteradores de entrada fixam 1 página cada (DATA/INDEX), e temporários fixam 1 página cada (WORK). Planeje: **reserva + temporários abertos ≤ M**.
 5. Feche os geradores que abandonar (`it.close()`) ou use `contextlib.closing`. Pin vazado aparece na fixture como `pin sem unpin`.
@@ -111,7 +111,7 @@ def fetch_cost(table) -> float:           # blocos de um DataFile.fetch (geral �
 - **Faixa em campo UNIQUE:** opcional no enunciado novo, fora do escopo. O `select_range` é genérico na coluna, mas a bancada não mede esse caso.
 - **Igualdade em NOT UNIQUE** não é um teste de seleção da matriz, mas o INL precisa dela: faz `lookup` no lado detalhe (`inscricao.dre`, `aluno.curso`) e usa `select_eq_cost` como custo de cada busca.
 - `NotApplicable` vira "N/A" no CSV da bancada; não trate como erro.
-- **`sort_ptrs=True`** (só `SECONDARY`, só quando o `Ptr` é `RID`): dentro de `reserve_work(k)`, junte ponteiros em lotes de até `k · (B // 8)`, ordene por `(block, slot)` e faça o `fetch` em ordem. Blocos repetidos viram *hit*, e o custo cai de `n` para ~`min(n, b_r)` (fórmula de Cardenas). É a variante "bitmap/RID sort" dos livros (SKS 15.3.2). Para `Ptr` de B+ (`(k, seq)`) ignore, porque ordenar não ajuda a descida.
+- **`sort_ptrs=True`** (só `SECONDARY`, só quando o `Ptr` é `RID`): dentro de `reserve_work(k)`, junte ponteiros em lotes de até `k · (B // data.ptr_size)`, ordene por `(block, slot)` e faça o `fetch` em ordem. Heap e hash da P2 usam seis bytes por RID. Agrupar RIDs por bloco pode evitar leituras repetidas dentro do lote. A fórmula de Cárdenas estima blocos distintos, mas lotes separados podem reler páginas. É a variante "bitmap/RID sort" dos livros (SKS 15.3.2). Para `Ptr` lógico da B+, preserve a ordem do índice.
 - Preencha `info`: `{"variant": "scan|scan-stop|primary-hash|primary-btree|secondary-hash|secondary-btree|…", "matches": n}`.
 
 ### 4.2 Fórmulas de custo (`select_eq_cost`, `select_range_cost`)
@@ -128,18 +128,18 @@ Registros esperados:
 | A1 scan | `b_r` (igualdade UNIQUE: `b_r / 2` em média) |
 | A2 B+ primário, igualdade na chave UNIQUE | `h` |
 | A3 B+ primário, igualdade NOT UNIQUE | `h − 1 + ⌈n / f_r⌉` |
-| Hash primário, igualdade | `1 + overflow_blocks / buckets` (UNIQUE); para NOT UNIQUE, os blocos da cadeia do bucket ≈ `1 + overflow_blocks / buckets` mais `⌈n / f_r⌉ − 1` se os iguais transbordarem |
+| Hash primário, igualdade | `1 + overflow_blocks / buckets` (UNIQUE); para NOT UNIQUE, somar `⌈n / f_r⌉ − 1` quando positivo e limitar pelo máximo de `1 + overflow_blocks` blocos em uma cadeia |
 | A4 secundário, igualdade (B+) | `h_i + (blocos da posting) + n · fetch_cost` |
 | A4 secundário, igualdade (Hash) | `1 + overflow/buckets + n · fetch_cost` |
 | A5 B+ primário, faixa | `h − 1 + ⌈n / f_r⌉` |
-| A6 secundário, faixa | `h_i − 1 + (folhas do índice na faixa) + n · fetch_cost` |
+| A6 secundário, faixa | `h_i − 1 + (folhas do índice na faixa) + (blocos estimados de listas de ponteiros) + n · fetch_cost` |
 | A6 com `sort_ptrs` | idem, trocando `n · fetch_cost` por `b_r · (1 − (1 − 1/b_r)^n)` (Cardenas) |
 
 Seeks (`Cost.seeks`): scan = 1; descida de árvore = 1 por nível; cada `fetch` aleatório = 1. Preencha `Cost.formula` com o texto e os números (ex.: `"A3: h-1+ceil(n/f) = 3-1+ceil(100/25) = 6"`). O P6 joga isso direto no relatório.
 
 ### 4.3 Parâmetro de seletividade
 
-A bancada escolhe `lo`/`hi` para obter 1% e 50% (§5.2.2 do enunciado). A estimativa pela uniformidade pode errar se a distribuição não for uniforme (ex.: CR). **Não corrija isso no custo**: o erro vira análise no relatório. Se `info` vier com `"sel"`, preencha **também** `Cost` com o `n` real numa segunda linha da fórmula, para mostrar as duas.
+A bancada escolhe `lo`/`hi` para obter 1% e 50% (§5.2.2 do enunciado). A estimativa pela uniformidade pode errar para CR. O estimador atual recebe os limites, enquanto a seletividade real e `sort_ptrs` ficam nos dados do experimento. A estimativa ajustada para `sort_ptrs` e o encaminhamento dos argumentos dependem de alinhamento na #36.
 
 ---
 
@@ -149,58 +149,25 @@ O enunciado não pede para medir a ordenação sozinha, mas o sort-merge join (P
 
 ### 5.1 Algoritmo (SKS 15.4, merge-sort externo)
 
-```python
-_END = object()
+Seja `M` o orçamento deste sort (`mem`, ou `eng.M` quando omitido). A
+decisão D-P4-03 define a formação de lotes e a última fusão.
+As fontes de tabela da P5 usam DATA/INDEX. Quando a própria fonte usa uma
+página WORK, o chamador deve excluí-la do orçamento `mem` do sort.
 
-def external_sort(eng, source, schema, key, n_blocks_hint=None, mem=None, info=None):
-    M, bp, cat = (mem or eng.M), eng.bp, eng.catalog   # daqui para baixo, "M" = memória DESTE sort
-    if M < 3:
-        raise ValueError("external_sort precisa de mem >= 3 (fan-in >= 2)")
-    k = schema.idx(key)
-    keyf = lambda r: (r[k] is None, r[k])              # None vai para o fim
-    it = iter(source)
-    sample = list(islice(it, 100))
-    bfr = _bfr_from_sample(schema, sample)             # §2
-    it = chain(sample, it)
-    runs = []
-    try:
-        # ---- fase 1: run montado em M-1 páginas reservadas; o frame WORK restante é a página de saída
-        while True:
-            with bp.reserve_work(M - 1) as pages:
-                buf = list(islice(it, pages * bfr))
-                if not buf:
-                    break
-                buf.sort(key=keyf)
-                peek = next(it, _END)
-                if peek is _END and not runs:          # tudo coube: 0 gravações, nenhum temporário
-                    yield from buf
-                    return
-                t = cat.temp(schema)                   # grava o run DENTRO da reserva (1 frame livre)
-                for r in buf:
-                    t.append(r)
-                t.finish()
-                runs.append(t)
-            if peek is _END:
-                break
-            it = chain([peek], it)
-        # ---- fase 2: fusões com fan-in M-1 (+1 de saída); a ÚLTIMA tem fan-in M e não grava
-        while len(runs) > M:
-            nxt = []
-            for i in range(0, len(runs), M - 1):
-                g = runs[i:i + M - 1]
-                t = cat.temp(schema)
-                for r in heapq.merge(*(x.scan() for x in g), key=keyf):
-                    t.append(r)
-                t.finish()
-                nxt.append(t)
-                for x in g:
-                    x.drop()
-            runs = nxt
-        yield from heapq.merge(*(x.scan() for x in runs), key=keyf)
-    finally:
-        for x in runs:
-            x.drop()                                   # também se o consumidor abandonar o gerador
-```
+1. Reserve `M − 1` páginas para o lote em memória. Meça o registro codificado
+   e o slot. Avance para outra página quando a linha não couber inteira na
+   atual. O registro que inicia o próximo lote é o único registro lido à
+   frente. `n_blocks_hint` é uma estimativa, e o orçamento usa os registros
+   efetivamente consumidos.
+2. Ordene o lote pela coluna com `None` no fim. Se toda a entrada couber,
+   entregue o lote da memória. Se houver mais entrada, grave o lote em
+   `Catalog.temp(schema)` usando a página WORK que sobrou e limpe o lote.
+3. Enquanto houver mais de `M` runs (lotes já ordenados), intercale grupos
+   de até `M − 1` para produzir novos runs. Descarte os antigos depois de
+   liberar os cursores. A última fusão intercala até `M` entradas e usa
+   `yield`, sem alocar página de saída.
+4. Feche os cursores antes de remover temporários. Libere as reservas
+   durante exceções e se o consumidor fechar o iterador antes do fim.
 
 Pontos em que a IA costuma errar:
 
@@ -212,13 +179,19 @@ Pontos em que a IA costuma errar:
 
 ### 5.2 Custo (`external_sort_cost(eng, n_blocks, mem=None)`)
 
-Use `M = mem or eng.M`, igual ao operador. Com `b = n_blocks` e `P = ⌈log_{M−1}(⌈b / (M−1)⌉)⌉` passadas de fusão (o expoente é o número de runs iniciais):
+Use `M = eng.M` quando `mem` for `None`. Com `b = n_blocks`, estime
+`R = ceil(b / (M − 1))` runs iniciais. Se `R ≤ 1`, estime zero fusões.
+Caso contrário, conte uma fusão final e, enquanto `R > M`, substitua
+`R` por `ceil(R / (M − 1))` e some uma fusão intermediária. Esse processo
+chega a `P`, o número total de fusões. A estimativa assume blocagem
+comparável na entrada e nos temporários. Registros variáveis e páginas
+esparsas podem alterar o número real de runs.
 
 | Item | Valor |
 | :--- | :--- |
 | `b ≤ M − 1` | `reads = b`, `writes = 0` |
 | caso geral | `reads = b·(P + 1)`, `writes = b·P` → total `b(2P + 1)` (SKS, sem gravar a saída final) |
-| seeks (SKS) | `2⌈b / M⌉ + b·(2P − 1)` (com b_b = 1) |
+| seeks (modelo com uma página por acesso) | `2R_inicial + b·(2P − 1)` no caso externo |
 
 **Diferença esperada medido × estimado:** páginas de run que nunca saíram da área `WORK` antes do `drop()` não são gravadas (geral §3.4 / P2 §5.4). Com `b` próximo de `M` o medido fica **abaixo** da fórmula. Documente; não "conserte" gravando à força.
 
@@ -231,13 +204,20 @@ Use `M = mem or eng.M`, igual ao operador. Com `b = n_blocks` e `P = ⌈log_{M�
 | Situação | Variante | Externo |
 | :--- | :--- | :--- |
 | nenhum lado com caminho (config. a) | **block** (BNL) | o de **menos blocos** (`b_r`) |
-| só um lado com `can_lookup` (b, d com 1 indexado) | **indexed** (INL) | o lado **sem** caminho; o indexado é o interno |
+| só um lado com `can_lookup` (b) | **indexed** (INL) | o lado **sem** caminho; o indexado é o interno |
 | os dois com caminho (c, d, e) | **indexed** | o de **menos registros** (`n_r`), porque o custo é `b_ext + n_ext · c` |
 | `outer="r"` / `"s"` forçado | indexed se o interno tiver caminho, senão block | o indicado |
 
 Registre em `info`: `variant`, `outer` ("r"/"s"), `outer_blocks`, `passes` (iterações do laço externo no BNL).
 
 ### 6.2 BNL
+
+A decisão D-P4-02 complementa o pseudocódigo abaixo. A média `bfr` impõe um
+limite de quantidade. O tamanho de cada registro codificado e seu slot
+impõem o limite de ocupação por página, sem dividir uma linha entre páginas.
+O registro que abre o próximo lote permanece no cursor de entrada enquanto
+o lote anterior é processado. Compare `info["passes"]` com as passadas do
+modelo, que usa os blocos do arquivo de dados.
 
 ```python
 with bp.reserve_work(M - 2) as k:                  # bloco externo: M-2 páginas
@@ -274,6 +254,13 @@ O `lookup` cria um gerador por registro externo, e cada um faz pin/unpin. Feche-
 | block | `⌈b_ext / (M − 2)⌉ · b_int + b_ext`; seeks `2⌈b_ext / (M − 2)⌉` |
 | indexed | `b_ext + n_ext · c`, com `c` = custo de uma busca de igualdade no interno pelo caminho dele (use `select_eq_cost(..., path)` do interno, com `n` = registros por chave = `n_int / V(col, int)`) |
 
+No BNL implementado, o número de lotes estimado considera também o teto
+da arquitetura em registros. Seja `L = floor((M−2) × n_ext / b_ext)`
+(no mínimo 1). Para exterior não vazio, use o maior valor entre
+`ceil(b_ext/(M−2))` e `ceil(n_ext/L)`. A soma ainda é estimada porque o
+empacotamento variável por bytes pode mudar as passadas e o buffer pode
+reusar páginas entre varreduras.
+
 O custo usa a **mesma** regra de escolha do externo que o operador (§6.1). Extraia a regra para uma função `_plan(eng, r, s, outer)` usada pelos dois, para que não divirjam.
 
 ---
@@ -309,3 +296,89 @@ O custo usa a **mesma** regra de escolha do externo que o operador (§6.1). Extr
 - Iterador abandonado no meio (`break`) sem `close()`: pin vazado.
 
 Registre em `ai/P4/review.md`. Guarde uma versão **executável** do BNL ingênuo da IA (que carrega o externo inteiro) em `ai/P4/raw/` para o teste ingênuo × refatorado: com `M` pequeno a versão ingênua viola a memória, e a refatorada não.
+
+---
+
+## 9. Plano de execução — 18/11/2026
+
+O diagnóstico abaixo é o registro inicial. A situação após a integração com
+P1/P2 está em [Estado da P4](../../ai/P4/ESTADO.md) e
+[Pendências externas](../../ai/P4/PENDENCIAS_EXTERNAS.md).
+
+O §5.1 do enunciado pede comparar três algoritmos para o NATURAL JOIN
+mestre-detalhe. A P4 entrega o nested-loop, e a P5 entrega os outros dois.
+A ordenação externa da P4 é uma etapa do sort-merge. Para o §5.2, a P4
+entrega igualdade em `aluno.dre` e faixa em `aluno.cr`. A P6 monta a matriz,
+executa as primitivas e compara as saídas com o SQLite.
+
+O `main` (`f81c3c5`) já tem os contratos, o Engine, a referência SQLite,
+a matriz e o protocolo de medição. Ainda faltam os módulos `cbd/exec/`,
+`cbd/files/` e `cbd/storage/` no `main`. A camada 4 está no PR #2,
+vinculado à #37. As seis issues da P4 estão abertas e atribuídas a Raphael.
+
+| Ordem sugerida | Entrega | O que pode avançar e o que falta para o aceite |
+| :--- | :--- | :--- |
+| 1 · [#54](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/54) | Adaptador `access.py` | Começar com `TableLike` e cursores dublês. Provar `SCAN`, `PRIMARY` e `SECONDARY`, o retorno literal `None` quando o caminho válido não fornece ordem ou busca, `NotApplicable` em caminho incompatível e o fechamento do cursor em consumo parcial. A integração exige #46 e #49. |
+| 2 · [#58](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/58) | Ordenação externa e custo | Priorizar porque a P5 precisa da assinatura e de `mem`. Validar formação dos lotes ordenados (runs), fusões, limpeza no fechamento e `M = 3` com dublês. Depois medir com `Catalog.temp()` e `reserve_work` reais, quando #37, #43 e #54 estiverem resolvidas. |
+| 3 · [#59](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/59) | Seleções e custos | Cobrir scan, organização primária e índice secundário, inclusive faixa hash como `NotApplicable`. Exercitar nulos, limites abertos e inclusivos/exclusivos, e comparar tuplas completas nos testes pequenos. Dependências formais: #54, #48, #52 e #53. |
+| 4 · [#60](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/60) | Nested-loop em blocos e indexado | Depende formalmente da #54. A variante em blocos pode avançar após o adaptador. Para completar a estimativa da variante indexada, usar o custo de busca da #59. Testar as orientações forçadas, saída `r_rec + s_rec`, multiplicidade, nulos e impacto de LRU/MRU nas varreduras repetidas. |
+| 5 · [#64](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/64) | Estresse e evidência de autoria | Após #58 e #60, executar com `M = 3`, tabelas 50 vezes maiores que `M`, chaves concentradas e referência SQLite. Comparar com a primeira versão executável preservada em `ai/P4/raw/`. |
+| 6 · [#67](https://github.com/guilherme-hu/COS480_CBD_TrabalhoFinal/issues/67) | Fechamento | Após #54, #58, #59, #60 e #64, consolidar cartões, verificações, estudo e post-mortem. Os operadores e custos reais alimentam a integração da P6 (#36). |
+
+### Pontos para decidir ou alinhar antes do código correspondente
+
+- **Adaptador e encerramento de cursores (#54).** A arquitetura §6.1 exige
+  liberar a página ao abandonar o iterador. O pseudocódigo do §3 usa expressões
+  geradoras, que não invocam explicitamente `close()` no cursor de origem.
+  Comparar com delegação e fechamento explícito. O teste deve manter uma
+  referência ao cursor de origem e verificar o fechamento após uma linha.
+  Alinhar com a P5 os auxiliares que ela usará, sobretudo a referência do seu
+  guia a `_bfr_from_sample`, um nome privado ausente da interface oficial.
+- **Orçamento e passadas da ordenação (#58).** O tamanho médio da amostra não
+  garante que registros maiores caibam no lote, e a amostra do pseudocódigo
+  é lida antes da reserva. Comparar limite por bytes codificados (incluindo
+  slots e cabeçalhos) com limite conservador pelo maior registro do esquema.
+  O modelo deve reproduzir a regra escolhida de fusão. No guia, com `M = 3`
+  e três runs, há uma fusão final de três entradas. A fórmula baseada só em
+  fan-in `M − 1` prevê duas fusões. Testar também dois sorts intercalados com
+  `mem` parcial e fechamento durante a fusão.
+- **Seleção e métricas (#59).** A bancada atual gera 80 igualdades pontuais
+  e 18 linhas de faixa, incluindo secundário B+ sobre heap, hash e B+.
+  Igualdade UNIQUE retorna no máximo uma linha, enquanto as faixas em CR
+  cobrem as metas de 1% e 50%. A estimativa recebe `**args` (inclusive
+  `sort_ptrs` nas variantes secundárias de faixa) e a assinatura oficial
+  de `select_range_cost` não o recebe. O `info` também começa vazio.
+  Alinhar com a P6 na #36 o encaminhamento desses argumentos e a distinção
+  entre custo base e custo com ponteiros ordenados. Para o teste de
+  ordenação por lotes, isolar leituras de dados das leituras de índice.
+  O total pode ultrapassar `b_r` mesmo quando a ordenação ajuda, pois há
+  leituras do índice e o mesmo bloco pode reaparecer em lotes diferentes.
+- **Plano e contagem do nested-loop (#60).** A configuração d tem dois
+  caminhos pesquisáveis (`PRIMARY` + `SECONDARY`). O `auto` recomendado
+  no guia usa menos blocos no BNL e menos registros no indexado quando
+  ambos têm acesso. Debater essa heurística e a alternativa de comparar
+  as duas estimativas completas, pois o arredondamento dos lotes e o custo
+  por busca podem mudar a melhor orientação. Com `B = 4096` e `M = 64`,
+  `aluno ⋈ inscricao` com `aluno` externo tem estimativa de
+  `1962 + ceil(1962/62) × 4588 = 148778` leituras na fórmula sem reuso.
+  São blocos estimados para heap. A pilha real pode registrar acertos entre
+  varreduras, e um scan B+ pode incluir nós internos além das folhas.
+  Para LRU × MRU, considerar também o frame DATA fixado pelo cursor externo.
+
+### Critério de avanço
+
+Nas etapas da P4, valide localmente o que puder ser testado com os contratos
+disponíveis. Quando o aceite exigir código ou validação de outra parte
+(P1–P3, P5 ou P6) sem acesso nesta sessão, registre a pendência e prossiga
+com o trabalho independente quando ele estiver autorizado. O teste com dublês
+comprova a lógica do operador. A medição física fica aberta até a pilha real
+estar disponível.
+
+Após o debate de cada decisão, registrar o cartão e guardar a primeira versão
+executável antes de refiná-la. Validar primeiro com dublês (N1). Assim que a
+camada inferior estiver disponível, medir contagens calculadas à mão em cache
+frio (N2), comparar a base pequena com o SQLite (N3) e explicar diferenças
+entre modelo e contagem (N4). Por fim, executar estresse (N5), autorrevisão,
+revisão independente e suíte completa. Conferir `bp.pinned() == 0` tanto no
+término normal quanto após fechamento antecipado. Consultar SKS 15.3–15.5 e
+E&N cap. 19 conforme a etapa, com a edição usada pelo grupo.

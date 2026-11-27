@@ -1,0 +1,218 @@
+# Revisão do código gerado — P4
+
+## 18/11/2026 — Adaptador (#54)
+
+### O cursor reavaliava um caminho já validado
+
+- **Arquivo:** `raw/access_v1.py`, `read_ordered`, `lookup`, `_ordered` e
+  `_matching` (linhas 47–91). Categoria: corretude.
+- **Detecção:** revisão independente de corretude. `JoinSide` é mutável.
+  Se o chamador pedia `read_ordered` com `PRIMARY` e depois mudava o caminho
+  para `SCAN`, consumir o cursor disparava `KeyError`. A revisão reproduziu
+  um efeito equivalente ao mudar a coluna de um `lookup` secundário.
+- **Correção:** resolver o arquivo e, quando houver, o índice na criação
+  do cursor. Abrir o cursor da camada 3 somente na primeira iteração.
+  `test_cursor_keeps_the_validated_access_path` demonstra os dois casos.
+
+### Consultas com múltiplos resultados e buscas redundantes
+
+- **Arquivo:** `tests/test_access.py`, `test_access_paths`. Categoria:
+  cobertura de corretude e contagem.
+- **Detecção:** revisões de contrato e I/O. Os casos de busca esgotada
+  tinham no máximo uma linha. O teste também aceitava `fetch` repetido
+  porque só verificava o nome do método. Um operador que perdia detalhes
+  ou buscava o mesmo ponteiro duas vezes poderia passar.
+- **Correção:** testar busca primária e secundária com duas linhas de mesma
+  chave e conferir quais ponteiros foram buscados, na ordem e uma vez cada.
+
+### Integração com a camada 3
+
+- **Arquivo:** `tests/test_access.py`, `test_access_with_real_heap_and_btree`.
+  Categoria: cobertura de contagem física.
+- **Detecção:** revisão independente de I/O. O teste inicial resfriava o
+  cache uma vez e verificava apenas os resultados e o total de pins final.
+- **Correção:** usar cache frio por operação e declarar as leituras previstas
+  para o heap de um bloco e a B+ de uma folha. Conferir pins após cada
+  consumo ou fechamento. Os testes com armazenamento real seguem pendentes.
+
+### Despacho da varredura física com caminho primário
+
+- **Arquivo:** `tests/test_access.py`, `test_scan_always_reads_physical_order`.
+- **Detecção:** a revisão dos testes confirmou em memória que substituir
+  `scan()` por `range()` só em `PRIMARY` B+ passava com os casos iniciais.
+  Isso pode trocar as dicas de cache usadas pela varredura física.
+- **Correção:** exercitar `read_all` com caminho primário em hash e B+ e
+  exigir exatamente uma chamada a `scan()`.
+
+### Ponteiro opaco no caminho secundário
+
+- **Detecção:** a revisão dos testes confirmou em memória que converter o
+  ponteiro para `int` antes do `fetch` passava nos dublês iniciais. Isso
+  quebraria o `RID` de heap/hash e a tupla da B+ (arquitetura §5.4).
+- **Correção:** usar os dois formatos de ponteiro nos dublês de índice e
+  verificar que `fetch` recebe cada ponteiro no formato original.
+
+## 18/11/2026 — Seleções (#59)
+
+- **Faixa em B+ e nulos** (`raw/selection_v1.py`, `_primary_range` e
+  `_secondary`). A revisão observou que a varredura exclui nulos e os
+  adaptadores de faixa dependiam de o cursor também fazer isso. Um dublê que
+  entrega a chave nula reproduz saída incompatível com o filtro SQL. A
+  seleção deve aplicar a mesma regra de nulos em todos os caminhos.
+- **Extremo inclusivo na estimativa** (`_range_share`). Uma faixa como
+  `cr >= max(cr)` era estimada sem resultados porque o intervalo recortado
+  tinha largura zero. A consulta pode encontrar o máximo. O caso pontual
+  deve usar a média de registros por valor distinto quando o extremo pertence
+  ao intervalo.
+- **Listas de ponteiros no custo secundário** (`select_range_cost`). A
+  revisão de I/O mostrou que o modelo contava folhas e fetches, mas fora
+  das folhas o índice também precisa ler listas de ponteiros. O modelo
+  deve incluir a proporção estimada de `overflow_blocks` no intervalo.
+- **Contrato da bancada.** A revisão confirmou que passar `sort_ptrs` aos
+  estimadores da arquitetura resulta em `TypeError`. O ajuste entre partes
+  permanece na #36 e em `PENDENCIAS_EXTERNAS.md`.
+- **Limite de overflow no hash NOT UNIQUE** (`select_eq_cost`). A média
+  de overflow somada ao espaço dos repetidos estimava cinco leituras para
+  um único balde com dois blocos de overflow. A estimativa da cadeia fica
+  limitada pelo total de blocos que uma cadeia pode ter.
+- **Indicador de ordenação sem resultados** (`_report`). A revisão confirmou
+  que uma faixa vazia aparecia como `sort_ptrs_applied=True` mesmo sem montar
+  lote. O indicador deve começar falso e mudar ao produzir uma linha do lote.
+- **Cobertura de despacho e lotes.** A revisão dos testes apontou que trocar
+  uma igualdade indexada por varredura ainda devolveria a mesma tupla, e que
+  ordenar somente o primeiro lote passaria na comparação por conjunto.
+  Os testes passam a exigir as chamadas exatas e a ordem de todos os lotes.
+- **Cobertura de `close()` e custo de igualdade secundária.** Remover o
+  fechamento explícito passava porque o dublê era destruído no CPython.
+  O teste guarda uma referência ao cursor e verifica que foi liberado.
+  A estimativa A4 agora é conferida tanto para hash quanto para B+.
+
+## 18/11/2026 — Nested-loop (#60)
+
+- **Passadas subestimadas quando o limite por registros é arredondado**
+  (`raw/nested_loop_v1.py`, `_block` e `nl_join_cost`). A revisão encontrou
+  um caso com quatro linhas em três blocos, `M = 3` e `bfr = 4/3`. O lote
+  aceita no máximo um registro e o operador varre o interno quatro vezes,
+  mas a estimativa do livro previa três. O custo deve usar o máximo entre
+  a conta por blocos e a conta por registros, com o mesmo limite de lote.
+  A ocupação variável por bytes ainda pode fazer o medido divergir.
+- **Arredondamento binário do limite médio** (`raw/nested_loop_v1.py`,
+  `_block`). Com 501 linhas em 62 páginas, `int(62 × (501/62))` pode dar
+  500. A divisão inteira de `k × n_records` por `n_blocks` implementa
+  `floor(k × bfr)` sem arredondamento anterior.
+- **Dublê de índice ligava um nome indefinido** (`tests/test_nested_loop.py`,
+  `make_side`). Os casos `SECONDARY` falharam com `NameError` no primeiro
+  teste. O índice do dublê deve usar `table.data`, o arquivo criado para a tabela.
+- **Cenário LRU × MRU mascarado pelo pin do externo** (`test_bnl_flooding`).
+  Na revisão por traço de frames, o cenário com quatro blocos internos e
+  três frames DATA podia produzir as mesmas quinze leituras nas duas
+  políticas. O teste agora usa seis blocos internos e cinco frames para
+  expor reuso mesmo quando um frame está fixado pelo externo. A contagem
+  real segue pendente.
+- **Cobertura do BNL por posição, ocupação e duração de lotes.** As
+  mutações poderiam passar quando todas as chaves ocupavam o primeiro
+  campo, um lote ficava retido após seu uso ou o limite incluía somente
+  cargas estritamente menores que a página. Os testes cobrem posições
+  distintas, encaixe exato, referência a lotes descartados e externo vazio.
+
+## 18/11/2026 — Ordenação externa (#58)
+
+- **Cursor aberto após falha de validação** (`raw/external_sort_v1.py`,
+  `external_sort`). A revisão reproduziu um cursor já consumido até a
+  primeira linha que permanecia aberto se `mem` fosse inválido ou a chave
+  não existisse. A validação precisa estar dentro do contexto que fecha a
+  entrada, antes de reservar WORK.
+- **Orçamento da fonte.** Um `TempFile.scan()` já utiliza uma página
+  WORK. `mem = eng.M` não deixa espaço para o sort e para essa fonte. A
+  arquitetura dá `mem` ao sort, e a P5 usa fontes em DATA e INDEX. O guia
+  e os testes explicitam o caso de uma fonte WORK com orçamento separado.
+- **Estimado × medido.** O modelo recebe só os blocos da entrada. O mesmo
+  conjunto de registros pode ocupar um número diferente de blocos depois
+  de ordenado (o empacotamento depende da ordem). O custo em blocos assume
+  blocagem comparável entre as passadas e precisa dizer isso expressamente.
+- **Cobertura de streaming e ocupação.** A revisão fez três mutações em
+  memória que passavam: materializar a fusão intermediária em uma lista,
+  desconsiderar o slot e zerar os seeks. Agora o teste verifica leitores
+  abertos na primeira gravação de uma fusão, a cobrança de cabeçalho e
+  slot e os seeks estimados para seis e cinquenta blocos.
+- **Cobertura da posição da coluna.** Fixar a primeira coluna em uma
+  mutação passava porque todos os casos usavam a chave nessa posição. Um
+  teste em múltiplos runs pede ordenação pelo segundo campo.
+
+## 18/11/2026 — Estresse e integração (#64)
+
+- A primeira mensagem de diagnóstico do BNL usava uma seta Unicode. Com
+  stdout redirecionada em CP1252, o teste falhava durante a impressão, depois
+  das verificações. Substituímos a seta por texto compatível com o terminal.
+- O teste de sort que usa a FK concentrada preservava todas as tuplas, mas
+  uma mutação que ordenava sempre por uma coluna constante também passava.
+  Incluímos um caso com `codigo` embaralhado na mesma base e comparamos com
+  a ordem do SQLite. A fonte de teste também limita quantas linhas podem ser
+  puxadas antes de criar o primeiro run, detectando `list(source)` no operador.
+- O teste original de BNL mantinha a FK concentrada no interno. O teste
+  adicional põe o detalhe no externo para validar múltiplos registros
+  da mesma chave no lote e a orientação `r_rec + s_rec` com lados invertidos.
+- O primeiro teste físico de sort aceitava números de I/O incompatíveis
+  com os 150 blocos de runs iniciais. A asserção agora inclui o limite
+  inferior de páginas que saem de WORK e precisam ser relidas. Os imports
+  da pilha real são testados antes de pedir o diretório temporário no Windows.
+- A revisão demonstrou que observar os lotes não detecta, isoladamente,
+  a retenção de todos os lotes antigos em outro contêiner. O relatório
+  atribui o pico ao lote observado. O teste unitário com referências
+  fracas verifica separadamente a liberação dos lotes antigos.
+- A primeira asserção de leitura antecipada só verificava até o primeiro
+  temporário. Um mutante materializava as 591 linhas restantes logo depois
+  e passava. Comparamos agora, para cada registro da ingestão, o total já
+  consumido e o total gravado nos runs iniciais.
+
+## 26/11/2026 — Integração com a `main` 3d0eb70
+
+- **Geometria do estresse usava o layout antigo do estimador da P6.**
+  `tests/stress/test_p4_stress.py` esperava três cursos por página. A
+  primeira rodada física achou 113 blocos para 450 cursos. A P2 usa
+  inteiros de quatro bytes, prefixos compactos e cabeçalho de dez bytes.
+  O teste passa a usar o codec e o layout reais para montar 150 blocos
+  por lado. Nenhum estimador compartilhado precisou ser alterado.
+- **Asserções de I/O permitiam perder uma passada de fusão.** A revisão
+  simulou contadores com 150 transferências a menos e o estresse ainda
+  aceitava. Nos cenários densos e fixos de 50 e 150 páginas, a rodada física
+  observou exatamente o limite previsto. Os testes agora exigem as
+  contagens calculadas para LRU, sem prefetch nem toss-immediate.
+
+## 27/11/2026 — Revisão do PR #108 pelo P6 (revisores independentes)
+
+- **Lote do BNL dependia de estatísticas (médio).** `nested_loop.py`,
+  `_record_limit`: o teto de registros por lote vinha de `TableStats`. Numa
+  tabela carregada por `Table.insert` sem `analyze`, `n_records = 0`, o teto
+  virava 1 e o BNL fazia uma passada por registro externo. Exemplo: 300
+  registros externos, WORK = 5, deram 300 passadas e 8.116 leituras, contra
+  6 passadas e 178 leituras depois do `analyze`. A conta por bytes (D-P4-02)
+  já garante as M − 2 páginas. **Correção:** sem estatísticas (n_records ou
+  n_blocks zero), o lote fica só com o limite por bytes. Com estatísticas
+  desatualizadas mas não vazias, o teto ainda pode errar: marcado como
+  `LIMITAÇÃO` no código.
+  Teste: `test_block_nl_join_batch_does_not_depend_on_empty_stats`.
+- **Custo da igualdade em hash primário NOT UNIQUE contava a cadeia duas vezes
+  (médio).** `selection.py`, `select_eq_cost`: somava à cadeia média
+  (`1 + overflow/N`, que já inclui os blocos de overflow onde ficam as
+  repetições) mais `⌈matches/bfr⌉ − 1`. O teto usava `1 + overflow` do arquivo
+  todo em vez da maior cadeia (`max_chain`). Exemplo: 4 buckets e 600
+  registros dão 9,5 estimado e 8,5 medido. No INL com interno hash, 1.199,75
+  estimado e 799 medido. **Correção:** `min(max(cadeia média, folhas do
+  resultado), 1 + max_chain)`, porque a busca lê a cadeia inteira do bucket
+  (`max_chain` da P2 conta só os blocos de overflow da maior cadeia).
+  Teste: `test_primary_hash_not_unique_eq_cost_counts_the_chain_once`.
+  Resíduo: no INL com interno hash (16 buckets, 2.000 registros), a estimativa
+  passou de 1.199,75 para 699,75 contra 799 medidos. A cadeia média pesa todos
+  os buckets igualmente, mas as chaves caem mais nas cadeias longas. Para
+  acertar, seria preciso a cadeia média ponderada por registros, que a P2 não
+  guarda. Fica como diferença a explicar no estimado × medido.
+- **Também apontados, sem correção neste PR (baixos):**
+  - o custo do INL conta buscas para chaves externas NULL, que a execução
+    pula (superestima em FK anulável);
+  - `info["sort_ptrs_applied"]` fica False numa faixa vazia;
+  - `_fetch` com `sort_ptrs` reserva WORK inteira;
+  - não há teste N2 do ganho de `sort_ptrs` com o buffer real (o guia previa
+    `test_sort_ptrs`);
+  - a bancada passava `sort_ptrs` ao estimador: era defeito da P6, corrigido
+    na `bench/run.py` (branch `p6/36-sort-ptrs-custo`).
