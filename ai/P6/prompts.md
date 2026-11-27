@@ -268,3 +268,16 @@ Ferramenta: Claude Code, modelo Claude Opus 5.5.
    parte da #27) no topo de `docs/decisoes/P6.md`: tabela dos 11 cartões, como as decisões se
    combinam, perguntas prováveis do professor e quais cartões foram delegados sem debate.
 
+
+8. Pedidos do usuário (26/11): "olha se tem algum PR aberto e revisa/corrige e da merge" e
+   "veja o que falta da minha parte e vai fazendo". Ferramenta: Claude Code (Claude Opus 5.5).
+
+   Resultado: 7 PRs revisados (3 revisores independentes, nenhum achado crítico ou alto) e
+   mesclados (#96–#102); bases dos PRs empilhados do P2 trocadas para o `main`, porque o
+   slotted page (#93) tinha entrado na branch do codec depois que ela já estava no `main`.
+   Na P6, só a #90 e a #94 estavam livres: o estimador do `base_stats.csv` passou a usar o
+   `RecordCodec` e o `SlottedPage.HEADER` reais, e um teste novo prova que a estimativa é
+   igual aos blocos de dados do `HeapFile.bulk_load` real nos 3 tamanhos de bloco. `aluno`
+   caiu de 1 962 para 1 664 blocos em 4 KB, e `inscricao` de 4 588 para 3 449. A queda vem
+   também do INT de 4 B (D-P2-05 revista), não só dos 2 B por campo variável que a #90
+   previa. Size checks seguem `ok` nos 3 blocos.
