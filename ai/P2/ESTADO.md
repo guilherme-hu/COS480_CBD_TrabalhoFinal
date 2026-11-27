@@ -1,4 +1,4 @@
-# Estado da parte P2 — atualizado em 26/11
+# Estado da parte P2 — atualizado em 27/11
 ## Pronto (com teste que prova)
 - **Codec (#39), `cbd/records/codec.py`:** `RecordCodec` (encode/decode, `max_size`), `key_size`, `encode_key`, `decode_key`, com D-P2-01 a D-P2-06; INT de 4 B no registro e na chave desde a revisão do D-P2-05 (23/11). 83 testes em `tests/test_codec.py` (N1 roundtrip, layout, sentinelas, corrompidos, fuzz de 20 mil registros corrompidos, aleatórios; N3 todas as tabelas do gerador; N4 contagens de blocos das decisões; ordem das chaves em 10 mil pares por tipo). Versão bruta em `ai/P2/raw/codec_v1.py`.
 - **Slotted page (#40), `cbd/records/slotted_page.py`:** `SlottedPage` com a assinatura da arquitetura §5.1, D-P2-07 (formato; revista em 23/11: sem `flags` e sem `USER`, `HEADER` = 10 B, folha da B+ encadeia pelo `next`) e D-P2-08 (compactação preguiçosa). 86 testes em `tests/test_slotted_page.py` (N1 enchimento exato em 2/4/8 KB, `free_space` exato com `insert` e `insert_at`, `insert_at` recusando página com slot apagado, reuso de slot, compactação, ordem lógica, padrão do split da B+, cabeçalho corrompido, oráculos `dict` e lista; N2 página sobrevivendo ao disco com 1 leitura). Versão bruta em `ai/P2/raw/slotted_page_v1.py`; 4 revisores independentes e uma 2ª revisão (`/code-review` + `/ponytail-review`), achados em `review.md`.
@@ -7,11 +7,19 @@
 - **Hashing (#41), `cbd/records/hashing.py`:** `hash_value` revisado: codificação de texto e tupla agora injetiva (defeito da versão bruta, `ai/P2/raw/hashing_v1.py`); INT, FLOAT, DATE e NULL com os mesmos valores. D-P2-14 (25/11): `bucket_of` = `(k + seed) % N` para INT e `hash_value` para os outros tipos (implementado na #48). 11 testes em `tests/test_hashing.py` (estabilidade, injetividade, dispersão nas colunas de acesso com N potência de 2, seeds independentes em 3 níveis, valores fixados de todos os tipos, `datetime` recusado); 14 mutantes do revisor, todos mortos. PR #101 (`p2/41-hash-value`, base `p2/46-catalog`), com o aviso ao P6 sobre os checksums. `/ponytail-review` do PR (25/11): comentários e docs corrigidos (exemplo de colisão, "todas as chaves de hash são INT", seed do P5) e teste redundante removido (`review.md`).
 - **Hash estático primário (#48), `cbd/files/hash_file.py`:** `HashFile` (DataFile + `n_buckets`, `seed`, `bucket_of`, `scan_bucket`). D-P2-15 (1 bloco + cadeia pelo `next`, bucket i no bloco 2 + i, meta no bloco 1 com `key_idx` e `unique`), D-P2-16 (N = `buckets`, ou ⌈n / (bfr_est · 0,8)⌉ ≤ `distinct`, bfr_est pelos 100 primeiros), D-P2-17 (insert no 1º bloco com espaço, delete só do slot, `bulk_load` ordenado por bucket com cadeias contíguas, `reorganize` por comando). `bucket_of` pelo tipo da coluna. 56 testes em `tests/test_hash_file.py` (critérios da #48; N4 search = 1 leitura, scan = b leituras e 1 seek, cadeia contígua = 2 seeks, scan_bucket sem prefetch de vizinhos; N3 a base do gerador e `aluno.dre` em escala 1 com 0 overflow; `inscricao.dre` em escala 1 com N 4 311 e 39 de overflow, marcado stress; N5 oráculos UNIQUE e NOT UNIQUE com cache esvaziado ao acaso) + `test_load_physical_tiny_base_hash_variants` (plano do P6 pelo catálogo). Versão bruta em `ai/P2/raw/hash_file_v1.py` e `test_hash_file_v1.py`. 4 revisores independentes (26/11): 7 defeitos de código e 3 de texto corrigidos, 13 mutantes sobreviventes cobertos (`review.md`). Commit `26484ec`, PR #102.
 ## Em andamento
-- **#83 (branch `p2/83-allow-prefetch`, 26/11):** D-P2-19 decidida (A: prefetch só nos scans completos). `_allow_prefetch` (heap.py) no construtor do `HeapFile` e do `HashFile` e no `_rebuild` (fid novo), só em DATA e INDEX; `HeapFile.scan` e `HashFile.scan` pelo cursor `bp.seq_scan`; `search`, `scan_bucket`, `fetch` e `TempHeap.scan` sem cursor. Revisão independente (4 revisores): o scan do heap lia as páginas do mapa com o prefetch (corrigido: os últimos k blocos de uma faixa seguida por outro bloco vêm sem cursor), textos velhos, teste do catálogo que usava o `FakeIndex`, 3 mutantes sobreviventes (todos mortos agora). Suíte: 567 passaram. Falta: commit, PR e comentário na #83 sobre o critério do `TempHeap` (o P1 proíbe prefetch em WORK), tudo com o ok do Guilherme.
-- Todas as issues anteriores da P2 fechadas (#39, #40, #41, #43, #46, #48, #52, #105); PRs #91 a #103 e #106 mergeados.
+- **#55 (branch `p2/55-stress`, 27/11):** estresse e integração prontos e passando.
+  - `tests/stress/test_p2_stress.py`: 100 mil inserts + deletes no heap, no hash UNIQUE, no NOT UNIQUE com Zipf e nos dois casos FLOAT que começam de `bulk_load`; heap com várias páginas de mapa; 36 casos de política × toss × B; skew total; `Table` + `Catalog` + índice hash com reabertura e `reorganize`.
+  - `tests/integration/test_p2_e2e.py`: 16 testes, a base do P6 contra o SQLite nos 3 B, as consultas do `workload.json`, contagens N4, os contratos do P5 (bucket-join, partição nas duas orientações) e do P1 (disco só pelo buffer, uma área por arquivo).
+  - Ingênuo da IA em `ai/P2/raw/hash_file_naive_v1.py` (subagente limpo, escolha do Guilherme), comparado com a raw v1 da #48 e o atual em `ai/P2/stress.md`.
+  - Revisão: 3 revisores independentes. Nenhum bug no código da P2; os defeitos eram dos testes novos (oráculo tautológico no `reorganize`, caminhos não exercitados, espiã de áreas por `fid`), registrados em `review.md` e corrigidos.
+  - 17 mutantes: 16 mortos, 1 equivalente no escopo.
+  - Suíte rebaseada no `main` com o P4 (#108) e o estimador do P6 (#104): 753 passaram, 2 pulados.
+  - Commit e PR com o ok do Guilherme (27/11).
+- Todas as issues anteriores da P2 fechadas (#39, #40, #41, #43, #46, #48, #52, #83, #105); PRs #91 a #103, #106 e #107 mergeados.
 ## Falta
-- #55 (estresse e versão ingênua do hash), depois #62 (fechamento).
+- #62 (fechamento), depois do merge do PR da #55.
 - Avisar (fora da P2): a arquitetura §3.4 (linha 243) ainda diz "uma página fixada por vez por cursor" nas tabelas-base, e a linha da D-P1-12 no relatório (`02_opcoes_de_projeto.md`) ainda fala em `pin(seq=True)`. São textos do P1 e da arquitetura: PR próprio.
+- Avisar o grupo: o `pyproject.toml` não tira o marcador `stress` da suíte padrão, então `python -m pytest -q` roda todo estresse (7,5 min). Decisão do grupo, não da P2.
 ## Requisitos do enunciado cobertos
 | Enunciado § | Onde está | Teste que prova |
 | :-- | :-- | :-- |
@@ -38,6 +46,8 @@
 | §4.2 hash: acesso direto pelo primário, UNIQUE e NOT UNIQUE | `HashFile.search` (segue a cadeia; UNIQUE para no 1º) | `test_hash_unique`, `test_hash_overflow_chain_not_unique`, `test_unique_search_stops_at_first_match` |
 | §7.1 hash que ignora a cadeia de overflow | `search`, `delete`, `scan_bucket` seguem o `next` | `test_hash_unique`, `test_delete_keeps_the_empty_block_linked`, `test_random_ops_match_dict_oracle` |
 | §5 fator prefetch (leitura antecipada) | `heap.py` e `hash_file.py`: `_allow_prefetch` e o scan pelo `bp.seq_scan` (D-P2-19) | `test_scan_prefetch_keeps_reads_and_cuts_misses` (heap e hash), `test_prefetch_cuts_seeks_when_another_file_reads_in_between`, `test_prefetch_does_not_read_the_map_pages`, `test_hash_index_and_index_area_prefetch` |
+| §7.2.3.d e guia P1 §6 (estresse, ingênuo × refatorado) | `tests/stress/test_p2_stress.py`, `ai/P2/raw/hash_file_naive_v1.py`, `ai/P2/stress.md` | `test_p2_stress_100k_ops_match_dict`, `test_naive_hash_versus_refactored`, `test_table_with_hash_indexes_random_ops_match_oracle` |
+| §6 contagens na pilha real e resultados = referência (N3, N4) | `tests/integration/test_p2_e2e.py` | `test_e2e_cold_counts_match_the_cost_formulas`, `test_e2e_selections_give_the_sqlite_signature`, `test_e2e_bucket_join_with_the_p5_contract` |
 | §7.1 acesso fora da faixa | `decode` valida cada tamanho; `get` valida offset e slot | `test_codec_corrupt`, `test_corrupt_directory_is_detected`, `test_offset_inside_header_is_detected` |
 ## Desvios ou dúvidas sobre o contrato
 - **#83, critério 1:** o `TempHeap` não chama `allow_prefetch`: desde a D-P1-12 revista (23/11) o P1 levanta `ValueError` em WORK (e em CATALOG, o heap do catálogo). Justificado no cartão D-P2-19; vai no PR e num comentário da issue.
@@ -47,6 +57,7 @@
 - `aluno.curso` é Zipf (0,7) no gerador: curso 1 tem 6 192 alunos, o menor 416. O guia P2 §6.1 fala em "~1 000 por curso" (é só a média).
 - D-P2-01 muda o tamanho do registro: o estimador do P6 (`bench/sqlite_ref.py::record_bytes`) precisa acompanhar. Pedido ao P6 na issue #90.
 ## Armadilhas conhecidas / bugs abertos
+- **P4:** resolvido. Na cópia de 26/11 os 2 testes físicos de `tests/stress/test_p4_stress.py` supunham 3 cursos por bloco (`PAYLOAD = BLOCK_SIZE - 28`); no `main` (PR #108) o P4 já usa `SlottedPage.HEADER` e eles passam contra a P2.
 - **P1 (D-P1-03):** o `FileManager` só grava o bloco 0 (`high_water`) no fechamento. A gravação forçada do catálogo dá coerência, não durabilidade: uma queda de verdade perde os blocos alocados depois da abertura. Avisar o P1 (issue a propor, com o ok do Guilherme).
 - **P3:** o catálogo não usa `fid` (fora do contrato); grava os arquivos com `bp.flush_all` e apaga pelo nome. O `BTreeFile`/`BTreeIndex` precisa do construtor da arquitetura §5.2 (`create`/`open`) e de `spec`, `stats()`, `close()`.
 - No Windows, 2 testes do P6 (`test_data_preparation.py`) só passam com `PYTHONUTF8=1` (abrem arquivo sem `encoding`). Avisar o P6.
@@ -54,5 +65,5 @@
 - Views de `get` valem só com a página fixada; `insert`/`insert_at`/`compact` podem mover registros. Avisar o P3 no PR.
 - LIMITAÇÃO: slots apagados no fim do diretório guardam seus 4 B até um `insert` reaproveitá-los.
 ## Decisões provisórias a rever
-- **D-P2-11 decidida (24/11):** reorganizar só por comando, com `stats()["deleted"]` como critério; revisitar se o estresse (#55) precisar de outra forma. O `reorganize` copia por um temporário (`b + 3·b'`, não atômico) porque o `FileManager` não tem rename.
+- **D-P2-11 decidida (24/11):** reorganizar só por comando, com `stats()["deleted"]` como critério; o estresse (#55) não pediu outra forma (o `reorganize` por comando passou em todas as rodadas). O `reorganize` copia por um temporário (`b + 3·b'`, não atômico) porque o `FileManager` não tem rename.
 - Fator de carga 0,8 e buckets no bloco 2 + i decididos em 25/11 (D-P2-15, D-P2-16). A função de hash foi decidida em 25/11 (D-P2-14). Catálogo decidido em 25/11: relações como na Fig. 13.12 do SKS (D-P2-12), forçadas no fim de cada operação, em ordem (D-P2-13). Resolvidas em 24/11: mapa de espaço livre (D-P2-09) e RID de 6 B (D-P2-10).
