@@ -5,3 +5,9 @@
 - **Achado confirmado antes da correção:** `docs/estudo/P3.md`, pergunta de fixação sobre `seq` na seção de D-P3-02, ainda dizia que o uso do desempate seria decidido. D-P3-03 já aprova seu uso na primária NOT UNIQUE.
 - **Categoria:** documentação desatualizada; gravidade baixa. Encontrado por revisor independente somente leitura e confirmado pela comparação dos cartões.
 - **Correção prevista:** atualizar a resposta para distinguir uso aprovado de geração, tamanho e codificação pendentes. Nenhum código/teste de execução afetado; validação por leitura e `git diff --check`.
+
+## 28/11/2026 — Revisão documental de D-P3-04
+
+- **Achado confirmado antes da correção:** cbd/exec/access.py:112–114 ainda estima fetch de BTREE pela altura, valor consumido por selection.py:225,250. D-P3-04 prevê referência física e acesso direto à página, mas o cartão não explicitava esse ajuste de estimador.
+- **Categoria:** omissão documental de integração com P4. Achado por revisor independente e confirmado por leitura do código.
+- **Correção:** registrar pendência no cartão, roteiro, estado e item correspondente do Notion; não modificar implementação de P4 sem alinhamento. Nenhum teste de execução alterado; validação por leitura e diff.

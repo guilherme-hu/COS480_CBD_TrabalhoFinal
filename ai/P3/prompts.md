@@ -24,3 +24,9 @@
 - **Pedido de Gabriel:** registrar a escolha de desempate interno para a primária NOT UNIQUE, esclarecer os três casos de B+ e iniciar um roteiro atual se útil. Antecipar a próxima decisão no chat enquanto os arquivos são atualizados.
 - **Atuação:** D-P3-03, roteiro parcial `P3_PLANO_ATUAL.md`, estudo e estado. Identificador interno não determina a referência pública; a próxima discussão compara referência física/lógica. Não aprovar silenciosamente seq de 8 B, geração de IDs, referência, layout ou preenchimento.
 - **Limite:** sem código de implementação, commit, push ou alteração de issues. Guia antigo não usado como fundamento técnico. Roteiro novo registra obrigações e pendências, não funcionamento já entregue.
+
+## 28/11/2026 — Codex — referência física e mapa no Notion
+
+- **Pedido:** Gabriel aprovou bloco + slot para referência da primária UNIQUE/NOT UNIQUE e pediu database dos mesmos itens da lista agrupada, ao fim de CBD — P2/P3: decisões e comparações; preservar descrições, origem, estado e espaço para notas.
+- **Atuação:** D-P3-04 e atualização do roteiro/estado/estudo. Database no Notion com 23 registros, mesmos cinco grupos, colunas de origem/escopo/decisão/pendências/notas e estados coloridos; implementação separada. Conteúdo anterior preservado.
+- **Referências:** E&N §17.6.1; P2 D-P2-10 e formato existente; consumidores P4 tratam Ptr como opaco. Sem mudança de código compartilhado, commit, push ou escrita no GitHub. Próxima decisão: representação do identificador interno NOT UNIQUE.

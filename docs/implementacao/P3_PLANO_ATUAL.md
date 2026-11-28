@@ -8,11 +8,11 @@ Requisitos: enunciado vigente; teoria: SKS/E&N; integração: código e interfac
 
 | Caso | Construção e consulta | Representação aprovada / pendente |
 | :--- | :--- | :--- |
-| Primária UNIQUE | Bulk loading e leitura; um campo da tabela | Registros completos nas folhas; chave do campo única; recusar repetição. Layout completo/referência pendentes |
-| Primária NOT UNIQUE | Bulk loading e leitura; um campo da tabela | D-P3-03: ordem interna `(valor, identificador)`. Tamanho/geração/codificação do identificador e referência pública pendentes |
+| Primária UNIQUE | Bulk loading e leitura; um campo da tabela | Registros completos nas folhas; chave do campo única; recusar repetição. Referência física bloco + slot por D-P3-04; layout completo pendente |
+| Primária NOT UNIQUE | Bulk loading e leitura; um campo da tabela | D-P3-03: ordem interna `(valor, identificador)`. Tamanho/geração/codificação do identificador pendentes; referência física por D-P3-04 |
 | Secundária NOT UNIQUE | Bulk loading e leitura; uma coluna indexada | §4.2: uma entrada por chave na folha, associada a referências. Representação do grupo e grupos grandes pendentes |
 
-D-P3-01 corresponde ao método de carga de §3.4.4; somente leitura é limitação adicional. D-P3-02 corresponde a §3.4.1. D-P3-03 deriva de §3 e do layout de §3.4.2; não impõe desempate ao secundário.
+D-P3-01 corresponde ao método de carga de §3.4.4; somente leitura é limitação adicional. D-P3-02 corresponde a §3.4.1. D-P3-03 deriva de §3 e do layout de §3.4.2; não impõe desempate ao secundário. D-P3-04 define RID físico bloco u32 + slot u16 (6 B, formato de P2) para a primária UNIQUE e NOT UNIQUE.
 
 ## Interfaces a fornecer
 
@@ -33,20 +33,24 @@ As classes ainda não existem. As chamadas abaixo são consumidores reais no [ca
 
 | Etapa | O que falta fechar | Comportamento a implementar/verificar depois |
 | :--- | :--- | :--- |
-| Próxima decisão | Referência pública da primária: física (bloco/slot) ou lógica (chave/identificador) | `scan/search` produzem referências que `fetch` recupera corretamente |
-| Identificador | Domínio, geração, tamanho, codificação e persistência | Ordem sem empates, recuperação após reabertura, erro em limites excedidos |
+| Referência aprovada | D-P3-04: bloco + slot; implementar codificação e fetch | `scan/search` produzem referências que `fetch` recupera corretamente |
+| Próxima decisão: identificador | Domínio, geração, tamanho, codificação e persistência | Ordem sem empates, recuperação após reabertura, erro em limites excedidos |
 | Layout | Entradas de folhas, nós internos, separadores, metadados/tipos e árvore vazia | Criar, carregar uma folha, percorrer e reabrir usando páginas reais |
 | Construção completa | Preenchimento/ocupação, últimos grupos e memória usada; calcular capacidades | Vários níveis e folhas encadeadas; nenhuma página excede B |
 | Buscas | Convenções dos separadores e limites pelo campo original | Igualdade/faixas; duplicatas em várias folhas; limites inclusivos/exclusivos |
 | Secundário | Grupos de referências e páginas auxiliares | Uma chave por entrada; todas as referências recuperadas, inclusive grupos grandes |
-| Integração e métricas | Recusa de manutenção com P2; bancada bulk-only com P6; estatísticas | Testes reais com consumidores, pins liberados, cache frio e custos explicados |
+| Integração e métricas | Recusa de manutenção com P2; bancada bulk-only com P6; estatísticas; fetch_cost de P4 ainda pressupõe descida pela altura | Testes reais com consumidores, pins liberados, cache frio e custos explicados |
 
 São marcos de implementação, não uma exigência de decorar todo o layout antes de começar. Entregas parciais devem declarar seus limites; métodos incompletos nunca devem aparentar sucesso. Não criar abstrações genéricas só para antecipar formatos que ainda não foram escolhidos.
 
 ## Pendências explícitas
 
-Sem defaults novos de 8 B para identificador, 90% de carga, 50% de ocupação ou limiares de overflow. Sem decisão de referência física/lógica, reconstrução automática, recarga no mesmo objeto, nó interno compartilhado ou diferente por uso. Cada escolha será justificada antes do código correspondente.
+Sem defaults novos de 8 B para identificador, 90% de carga, 50% de ocupação ou limiares de overflow. Sem decisão de reconstrução automática, recarga no mesmo objeto, nó interno compartilhado ou diferente por uso. Cada escolha será justificada antes do código correspondente.
 
 ## Validação planejada
 
 Usar codec/páginas reais e buffer; testes de ordenação, duplicatas, igualdade/faixas, persistência, limites de entrada e liberação de pins. No secundário, conferir ausência de chave repetida nas folhas e recuperar todos os registros por suas referências. Não há testes de B+ executados nem implementação entregue por este documento.
+
+## Acompanhamento editável
+
+[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens da lista agrupada, com estado da decisão separado da implementação. Próxima discussão: representação do identificador da primária NOT UNIQUE.

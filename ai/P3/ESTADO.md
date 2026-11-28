@@ -5,9 +5,12 @@
 - Branch local `p3/44-btree-bulk-loading` criada sobre `baae948`; comparação pelo conector GitHub confirmou que esse commit coincidia com `main` no início da sessão.
 - `docs/decisoes/P3.md`: D-P3-01 (§3.4.4: bulk loading; somente leitura após construção como limitação adicional), resumo, premissas de P1/P2, referências e pendências. É documentação, não prova de implementação.
 - D-P3-02 registrada: §3.4.1, um campo da tabela por B+ primária UNIQUE/NOT UNIQUE.
-- D-P3-03 registrada: primária NOT UNIQUE com desempate interno. Tamanho/geração/codificação do identificador e referência pública ainda pendentes. Primária UNIQUE e agrupamento do secundário não recebem essa obrigação.
+- D-P3-03 registrada: primária NOT UNIQUE com desempate interno. Tamanho/geração/codificação do identificador ainda pendentes; referência pública escolhida depois em D-P3-04. Primária UNIQUE e agrupamento do secundário não recebem essa obrigação.
 - `docs/implementacao/P3_PLANO_ATUAL.md`: roteiro parcial atualizado pelas decisões aprovadas, separado do guia histórico desatualizado.
 - Guia P3 com aviso do escopo revisto e resumo atualizado; `docs/estudo/P3.md` com explicação e perguntas de fixação.
+
+- D-P3-04 registrada: referência física bloco + slot, 6 B no formato de P2, para primária UNIQUE e NOT UNIQUE; ainda sem implementação.
+- Notion: mapa editável com 23 itens em cinco grupos, estados coloridos e implementação separada; base collection://4269ab02-1b6d-81f0-a41a-000bb0ca0dda.
 
 ## Em andamento
 
@@ -15,7 +18,7 @@
 
 ## Falta
 
-- Decidir referência pública da primária (próxima discussão), representação do identificador, layout de meta/nós, fan-out, ocupação/preenchimento e listas de referências do índice.
+- Decidir representação do identificador (próxima discussão), layout de meta/nós, fan-out, ocupação/preenchimento e listas de referências do índice.
 - Alinhar rejeição de manutenção com P2 e retirada da variante incremental com P6. Nenhum desses ajustes foi realizado.
 - Implementar `BTreeFile` e `BTreeIndex` com os acessos necessários, persistência, estatísticas e testes.
 - Atualizar critérios das issues afetadas com autorização de Gabriel antes de qualquer escrita no GitHub.
@@ -32,12 +35,14 @@
 
 ## Desvios ou dúvidas sobre o contrato
 
+- D-P3-04: alinhar P4 fetch_cost (access.py:112–114), ainda calculado pela altura para BTREE apesar de a referência física acessar diretamente a página. Comentário Ptr em contracts.py ainda prevê chave/seq; não foram alterados consumidores nesta sessão.
+
 - Guias/contratos e algumas issues ainda pressupõem insert/delete dinâmicos. D-P3-01 é decisão de P3; ainda falta alinhamento/alteração de consumidores. Não fingir conformidade integral com a API de mutação.
 - P2 já oferece SlottedPage com HEADER=10 e sem USER, chaves INT=4 B/FLOAT=8 B e RID heap/hash=6 B. Não recuperar layouts antigos sem nova decisão.
 
 ## Decisões provisórias a rever
 
-- Nenhuma nova escolha técnica provisória. D-P3-01, D-P3-02 e D-P3-03 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
+- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-04 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
 ## Testes e validação
 
