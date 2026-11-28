@@ -6,7 +6,7 @@
 - `docs/decisoes/P3.md`: D-P3-01 (§3.4.4: bulk loading; somente leitura após construção como limitação adicional), resumo, premissas de P1/P2, referências e pendências. É documentação, não prova de implementação.
 - D-P3-02 registrada: §3.4.1, um campo da tabela por B+ primária UNIQUE/NOT UNIQUE.
 - D-P3-03 registrada: primária NOT UNIQUE com desempate interno. Tamanho/geração/codificação do identificador definidos depois em D-P3-05; referência pública escolhida depois em D-P3-04. Primária UNIQUE e agrupamento do secundário não recebem essa obrigação.
-- `docs/implementacao/P3_PLANO_ATUAL.md`: roteiro parcial atualizado pelas decisões aprovadas, separado do guia histórico desatualizado.
+- `docs/implementacao/P3_PLANO_ATUAL.md`: especificação operacional parcial para implementação incremental, com formatos aprovados, comportamentos, invariantes, entregas e lacunas L01–L05. Separada do guia histórico desatualizado; não é código pronto.
 - Guia P3 com aviso do escopo revisto e resumo atualizado; `docs/estudo/P3.md` com explicação e perguntas de fixação.
 
 - D-P3-04 registrada: referência física bloco + slot, 6 B no formato de P2, para primária UNIQUE e NOT UNIQUE; ainda sem implementação.

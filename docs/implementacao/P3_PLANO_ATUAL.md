@@ -1,79 +1,191 @@
-# P3 — Roteiro atual de implementação
+# P3 — Especificação atual para implementação incremental
 
-Atualizado em 28/11/2026. **Roteiro parcial, não implementação nem especificação completa do formato em disco.** Mantido à medida que Gabriel aprova decisões. Não usar o guia antigo `P3_arvore_bplus.md` como referência técnica atual.
+Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel. **Especificação parcial, baseada nas escolhas aprovadas D-P3-01 a D-P3-08; não comprova implementação.** Substitui o roteiro anterior deste arquivo. O guia histórico `P3_arvore_bplus.md` não é fonte técnica atual.
 
-## Fontes e escolhas aprovadas
+## 1. Como usar esta especificação
 
-Requisitos: enunciado vigente; teoria: SKS/E&N; integração: código e interfaces verificados de P1/P2/P4. As justificativas completas estão em [decisões P3](../decisoes/P3.md).
+1. Ler os [cartões P3](../decisoes/P3.md) para justificativas e limites; este documento operacionaliza essas escolhas, não cria outras.
+2. Conferir [contracts.py](../../cbd/contracts.py), [catálogo P2](../../cbd/files/catalog.py), [codec](../../cbd/records/codec.py), [SlottedPage](../../cbd/records/slotted_page.py) e [buffer P1](../../cbd/storage/buffer_pool.py) antes de usar uma API. Assinaturas reais prevalecem sobre pseudocódigo.
+3. Implementar uma unidade pequena de comportamento e seus testes, preservando os formatos aprovados. Não implementar tudo num único passo.
+4. **Não preencher uma lacuna com um default silencioso.** Consultar a seção 8; uma proposta não aprovada não pode virar formato persistente. Uma lacuna dependente de nova decisão não impede código independente dela.
+5. Quando autorizado a começar código, registrar a primeira versão dos componentes importantes em `ai/P3/raw/` antes de refinar; nunca reescrever raw. Registrar revisão/defeitos conforme AGENTS.md.
+6. Ao terminar cada unidade, atualizar este documento e [ESTADO](../../ai/P3/ESTADO.md) com comportamento entregue, provas e lacunas remanescentes. Novas decisões precisam primeiro de aprovação e cartão.
 
-| Caso | Construção e consulta | Representação aprovada / pendente |
+**Código incompleto permitido:** quando Gabriel pedir implementação incremental, partes não decididas podem ter lacunas explícitas. Um método bloqueado pode levantar `NotImplementedError` indicando a lacuna; isso é provisório de desenvolvimento, não a API final de rejeição de manutenção. Não devolver resultados fictícios, não retornar iterador vazio por falta de implementação e não anunciar integração pronta. Evitar alocar/gravar estado persistente antes de descobrir uma lacuna que impede completar a operação. Não conectar uma classe incompleta à bancada como se funcionasse.
+
+## 2. Escopo e responsabilidades
+
+| Caso | Folha | Ordem e leitura |
 | :--- | :--- | :--- |
-| Primária UNIQUE | Bulk loading e leitura; um campo da tabela | Registros completos nas folhas; chave do campo única; recusar repetição. Referência física por D-P3-04; D-P3-07: folha SlottedPage com registro codificado por P2, sem cópia extra da chave |
-| Primária NOT UNIQUE | Bulk loading e leitura; um campo da tabela | D-P3-03: ordem interna `(valor, identificador)`. D-P3-05: contador por árvore desde 1, u32 big-endian de 4 B; referência física por D-P3-04; D-P3-07: ID de 4 B prefixa registro P2 dentro da SlottedPage, sem cópia extra da chave |
-| Secundária NOT UNIQUE | Bulk loading e leitura; uma coluna indexada | §4.2: uma entrada por chave na folha, associada a referências. D-P3-08: chave + quantidade total + início bloco/slot; RIDs em auxiliares SlottedPage compartilhadas. Largura do contador pendente |
+| Primária UNIQUE | Registro completo codificado por P2 | Campo escolhido; duplicata recusada; devolve `(RID, registro)` |
+| Primária NOT UNIQUE | ID u32 de 4 B big-endian + registro P2 | `(campo, ID)`; devolve `(RID, registro)` |
+| Secundária NOT UNIQUE | Chave codificada + quantidade total + início do grupo | Uma entrada por valor; search devolve RIDs; range devolve `(chave, RID)` |
+| Auxiliar do secundário | Um RID do arquivo de dados por slot | Grupos consecutivos por chave; percurso por slots/next limitado pela quantidade total |
 
-D-P3-01 corresponde ao método de carga de §3.4.4; somente leitura é limitação adicional. D-P3-02 corresponde a §3.4.1. D-P3-03 deriva de §3 e do layout de §3.4.2; não impõe desempate ao secundário. D-P3-04 define RID físico bloco u32 + slot u16 (6 B, formato de P2) para a primária UNIQUE e NOT UNIQUE.
+- D-P3-01: bulk loading bottom-up, seguido somente por leitura; sem insert/delete dinâmicos, splits/redistribuições/fusões por manutenção. Não implementar reconstrução automática.
+- D-P3-02: um campo da tabela por organização primária. ID auxiliar não é segundo campo escolhido da tabela.
+- D-P3-03/05: desempate apenas na primária NOT UNIQUE; contador por árvore na ordem da carga, desde 1 até 2³²−1, sem reiniciar por chave. Gerador em memória; IDs persistidos nas entradas/separadores. Sem próximo contador para futuras inserções.
+- D-P3-04: primária UNIQUE e NOT UNIQUE usam RID físico bloco u32 + slot u16, 6 B no formato little-endian de P2. Não gravar cópia do próprio endereço no registro. Após carga, não mover slots/registros de forma que invalide RIDs. Reconstrução pode invalidá-los; índices dependentes precisam ser refeitos.
+- D-P3-06: internos compactos compartilhados; D-P3-07: folhas primárias reutilizam P2; D-P3-08: grupos externos compartilhados no secundário.
 
-## Interfaces a fornecer
+### Arquivos e interfaces públicas
 
-As classes ainda não existem. As chamadas abaixo são consumidores reais no [catálogo](../../cbd/files/catalog.py), não implementações prontas:
+Mapa previsto na arquitetura existente, ainda sem código P3: `cbd/files/btree_node.py` (bytes/operações de nós), `btree_core.py` (navegação/construção comum), `btree_file.py` (DataFile) e `btree_index.py` (Index). Separar essas responsabilidades sem criar hierarquias genéricas ou APIs públicas novas para possibilidades hipotéticas. Helpers privados podem ser escolhidos durante a implementação.
 
-- `BTreeFile.create/open(bp, name, schema, spec)`; `bulk_load(recs)` recebe registros ordenados pelo campo. Fornecer `scan/search/range` com pares `(referência, registro)`, `fetch`, codificação da referência, `stats` e `close`.
-- `BTreeIndex.create/open(bp, name, spec, key_field, data)`; `bulk_load(pairs)` recebe pares ordenados `(chave, referência)`. `search` devolve referências e `range` devolve `(chave, referência)`; fornecer `stats` e `close`.
-- Os contratos atuais ainda incluem mutação/reorganização. Definir e alinhar a recusa antes de qualquer modificação parcial; o roteiro não altera contratos nem consumidores automaticamente.
+| Classe | Chamadas reais do catálogo e contrato |
+| :--- | :--- |
+| `BTreeFile` | `create(bp, name, schema, spec)` / `open(...)`; atributos `schema`, `spec`, `ptr_size`; `bulk_load(recs)`, `scan`, `search(key)`, `range(lo, hi, lo_inc=True, hi_inc=True)`, `fetch(ptr)`, `encode_ptr`, `decode_ptr`, `stats`, `close` |
+| `BTreeIndex` | `create(bp, name, spec, key_field, data)` / `open(...)`; atributo `spec`; `bulk_load(pairs)`, `search(key)`, `range(lo, hi, lo_inc=True, hi_inc=True)`, `stats`, `close` |
 
-## Base reutilizada
+As assinaturas completas e retornos são os de contracts.py. `lo/hi=None` indicam extremos abertos. As interfaces existentes também incluem insert/delete/reorganize: sua rejeição/capacidade final está em L05, não removê-las unilateralmente. O código de P4 fecha cursores antecipadamente; implementar iteradores com liberação garantida de recursos.
 
-- P1: configuração adotada B=4096, buffer, pin/unpin, dirty, alocação e contagem física de I/O. Acesso aos dados sempre pelo buffer.
-- P2: `RecordCodec`, `key_size/encode_key/decode_key`, `SlottedPage` para as folhas (cabeçalho 10 B, slots 4 B, `next`), codificação das referências heap/hash.
-- Catálogo de P2 ordena a preparação e cria/reabre estruturas. P4 acessa os registros via interfaces, inclusive `data.fetch(ptr)` após consultar um secundário.
-- Uma referência pública e uma chave interna têm funções distintas. Não fixar `(chave, identificador)` como referência apenas porque foi aprovado como desempate de ordenação.
+## 3. Base de P1/P2 a reutilizar
 
-## Sequência de decisões e implementação
+- Configuração adotada: B=4096, uma página por bloco, registros unspanned. Código de P1 permite outros tamanhos; não transformar isso em nova comparação experimental. Calcular limites a partir de B.
+- `RecordCodec.encode/decode`: respeitar esquema e campos variáveis/NULL; não alterar o codec. Os bytes do registro são diferentes da representação ordenável das chaves.
+- `key_size/encode_key/decode_key`: INT/DATE=4 B, FLOAT=8 B, texto conforme size; encode_key preserva a ordem com os ajustes por tipo. Não comparar diretamente campos numéricos little-endian do registro.
+- `SlottedPage`: cabeçalho 10 B, slots de 4 B, `next`, `get`, `insert_at`, `free_space`, `max_record`. Não implementar outra página de registros.
+- Catálogo: ordena registros B+ por campo antes da carga e pares `(chave, referência)` para secundários; fornece esquema/spec e arquivo de dados ao abrir. Não assumir que isso resolve validação do conteúdo recebido por uma chamada direta.
+- Acesso às páginas sempre pelo buffer; somente storage faz leitura/gravação física. P3 não conta manualmente I/O em substituição a P1.
 
-| Etapa | O que falta fechar | Comportamento a implementar/verificar depois |
+## 4. Formatos em bytes aprovados
+
+### 4.1 Internos — D-P3-06
+
+Definir `s = quantidade usada de separadores`, `k = tamanho de um separador naquela árvore`.
+
+| Offset | Bytes | Informação |
 | :--- | :--- | :--- |
-| Referência aprovada | D-P3-04: bloco + slot; implementar codificação e fetch | `scan/search` produzem referências que `fetch` recupera corretamente |
-| Identificador aprovado | D-P3-05: contador por árvore desde 1, u32 de 4 B big-endian; falta implementar | Ordem sem empates, recuperação após reabertura, erro em limites excedidos |
-| Internos aprovados | D-P3-06: contador u16, primeiro filho u32 e pares separador de k B/filho u32; mínimo da subárvore direita | Criar, carregar uma folha, percorrer e reabrir usando páginas reais |
-| Próximas decisões: contador e meta | Largura/codificação da quantidade total no secundário; conteúdo/validação do bloco 1, altura/perfil e árvore vazia | Carregar/percorrer/reabrir com formatos aprovados |
-| Construção completa | Preenchimento/ocupação, últimos grupos e memória usada; calcular capacidades | Vários níveis e folhas encadeadas; nenhuma página excede B |
-| Buscas | Convenções dos separadores e limites pelo campo original | Igualdade/faixas; duplicatas em várias folhas; limites inclusivos/exclusivos |
-| Secundário definido em D-P3-08 | Falta largura do contador; implementar folha chave/quantidade/início e fluxo de RIDs em auxiliares SlottedPage | Uma chave por entrada; todas as referências recuperadas, inclusive grupos grandes |
-| Integração e métricas | Recusa de manutenção com P2; bancada bulk-only com P6; estatísticas; fetch_cost de P4 ainda pressupõe descida pela altura | Testes reais com consumidores, pins liberados, cache frio e custos explicados |
+| 0 | 2 | Quantidade de separadores, u16 little-endian |
+| 2 | 4 | Bloco do primeiro filho, u32 little-endian |
+| 6 + i·(k+4) | k | Separador i, i=0…s−1 |
+| 6 + i·(k+4) + k | 4 | Bloco do filho à direita desse separador, u32 little-endian |
 
-São marcos de implementação, não uma exigência de decorar todo o layout antes de começar. Entregas parciais devem declarar seus limites; métodos incompletos nunca devem aparentar sucesso. Não criar abstrações genéricas só para antecipar formatos que ainda não foram escolhidos.
+Campos consecutivos; sem slots, pai, irmão interno ou cópia local do tamanho da chave. Filho é um bloco inteiro do mesmo arquivo, folha ou interno, nunca bloco+slot. A árvore aberta deve fornecer tamanho/perfil e nível conhecidos; origem persistente/validação desse contexto é L02.
 
-## Pendências explícitas
+- Primária UNIQUE e secundária NOT UNIQUE: `k = key_size(campo)`.
+- Primária NOT UNIQUE: `k = key_size(campo) + 4`; separador = chave ordenável seguida de ID u32 big-endian.
+- Separador é o mínimo da subárvore imediatamente à direita; comparação igual segue à direita. O mínimo de um filho interno é o mínimo de sua subárvore, não seu primeiro separador armazenado.
+- Uso: `6 + s·(k+4) ≤ B`; `s_max=(B−6)//(k+4)`; fan-out máximo=`s_max+1`.
+- Em B4096, k4/8/12: máximos de filhos 512/341/256. Não são ocupação mínima ou preenchimento.
+- Exemplo k4, s2: contador nos bytes 0–1; filho0 em 2–5; separador0 em 6–9; filho1 em 10–13; separador1 em 14–17; filho2 em 18–21.
 
-Sem defaults novos de 8 B para identificador, 90% de carga, 50% de ocupação ou limiares de overflow. Sem decisão de reconstrução automática, recarga no mesmo objeto, conteúdo completo do bloco 1 ou largura do contador de grupo no secundário. Cada escolha será justificada antes do código correspondente.
+### 4.2 SlottedPage compartilhada — sem alterações em P2
 
-## Validação planejada
+| Offset | Bytes | Informação |
+| :--- | :--- | :--- |
+| 0 | 2 | n_slots |
+| 2 | 2 | free_end |
+| 4 | 2 | holes |
+| 6 | 4 | next, bloco da próxima página na mesma sequência; zero=fim |
+| 10 + 4·i | 4 | slot i: offset u16 + comprimento u16 |
 
-Usar codec/páginas reais e buffer; testes de ordenação, duplicatas, igualdade/faixas, persistência, limites de entrada e liberação de pins. No secundário, conferir ausência de chave repetida nas folhas e recuperar todos os registros por suas referências. Não há testes de B+ executados nem implementação entregue por este documento.
+Controle little-endian; diretório cresce do início, entradas ocupam espaço a partir do fim. Ordem lógica é a dos slots; não a ordem física dos bytes. Durante a construção normal sem remoções, holes=0. next das folhas liga folhas; next das auxiliares liga auxiliares, sem cruzar as duas sequências.
 
-## Acompanhamento editável
+### 4.3 Folhas primárias — D-P3-07
 
-[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens da lista agrupada, com estado da decisão separado da implementação. Internos compartilhados e separadores aprovados por D-P3-06. Folhas primárias aprovadas por D-P3-07. Organização secundária definida em D-P3-08; faltam largura do contador e conteúdo/validação do bloco 1. O item amplo de layout permanece parcial.
+- UNIQUE: entrada = bytes de `codec.encode(registro)`.
+- NOT UNIQUE: entrada = ID u32 big-endian de 4 B + mesmos bytes do registro. Na leitura, retirar prefixo antes de `codec.decode`.
+- Sem segunda cópia da chave, do RID ou do comprimento dentro da entrada. Acessar campo com o codec existente e obter sua chave ordenável; comparar ID depois na NOT UNIQUE.
+- Preencher slots em ordem de campo/ID. `insert_at(n_slots, entrada)` permite append lógico; ele não sabe ordenar os dados por conta própria.
+- Encaixe pela entrada inteira: máximo de registro `B−14` UNIQUE e `B−18` NOT UNIQUE; em B4096, 4082/4078 B. Erro RecordTooLarge para registro que ultrapasse o limite correspondente. Política de fechar página antes de cheia é L03.
+- RID público vem do bloco/slot da entrada, inclusive quando a entrada possui prefixo; fetch devolve somente o registro decodificado.
 
-## Formato aprovado dos internos — D-P3-06
+### 4.4 Folhas secundárias e auxiliares — D-P3-08
 
-`quantidade u16 (2 B) | primeiro filho u32 (4 B) | [separador (k B) | próximo filho u32 (4 B)]…`
+Folha: SlottedPage, uma entrada por chave, com esta ordem lógica de bytes:
 
-Controle/blocos little-endian; separadores seguem encode_key de P2, com identificador u32 big-endian de 4 B apenas na primária NOT UNIQUE. Sem slot no ponteiro de filho. Sem pai/irmão interno, diretório de slots ou cabeçalho de tamanho de chave por nó; árvore aberta deve conhecer perfil e nível. Origem e validação desse contexto ainda serão definidas nos metadados.
+`encode_key(campo, valor) | quantidade TOTAL do grupo | início do grupo (bloco u32 + slot u16)`
 
-Fan-out máximo = `1 + (B−6)//(k+4)`. Em B=4096: k=4 dá 512 filhos; k=8 dá 341; k=12 dá 256. Primária UNIQUE DRE: k=4; primária NOT UNIQUE curso: k=8; primária NOT UNIQUE CR: k=12; secundária NOT UNIQUE CR: k=8. São limites dos internos, não quantidade de registros nas folhas nem ocupação mínima.
+**L01 bloqueia o formato binário final:** largura/codificação da quantidade ainda não aprovada. Proposta mais recente: u32 little-endian; não transformá-la em constante ou offset definitivo sem aprovação. Tamanho da entrada é `key_size + C + 6`, sendo C a largura ainda aberta. Não publicar capacidade numérica da folha sem C.
 
-## Folhas primárias aprovadas — D-P3-07
+Auxiliar: SlottedPage, um `data.encode_ptr(ptr)` por slot, com tamanho `data.ptr_size`. Para os arquivos atuais são 6 B; não reimplementar a codificação do arquivo de dados. Posição inicial bloco/slot aponta para o arquivo do índice; os RIDs armazenados apontam para o arquivo de dados. São contextos diferentes.
 
-Reutilizar SlottedPage de P2 (header 10 B, slots de 4 B, next). UNIQUE: entrada = registro codificado pelo RecordCodec. NOT UNIQUE: entrada = ID u32 de 4 B big-endian + registro codificado. Sem cópia extra da chave/RID/comprimento. Ordem lógica dos slots por campo e ID quando aplicável; next encadeia folhas para a frente. Extrair campo usando codec de P2; não comparar seus bytes de registro little-endian diretamente como chave.
+Grupos consecutivos por chave, preservando a ordem de entrada dentro do grupo. Catálogo atual ordena também por RID; a consulta não exige pesquisa binária por RID. Não exigir ordem global de RIDs entre chaves distintas.
 
-Máximo de registro codificado: B−14 UNIQUE e B−18 NOT UNIQUE, em B4096: 4082/4078 B. Política de preenchimento/ocupação e última folha ainda pendente. O secundário não foi definido por esse cartão.
+Procedimento de leitura de um grupo, independente da largura C:
 
-## Secundário e auxiliares — D-P3-08
+1. Receber localização inicial e quantidade total já decodificadas.
+2. Ir diretamente ao bloco/slot indicado; não começar no slot 0 se o grupo começa no meio da página.
+3. Decodificar e produzir um RID por slot, diminuindo o número restante.
+4. Ao acabar a página, seguir next e começar no slot 0 somente se ainda faltarem RIDs.
+5. Parar ao produzir a quantidade total, mesmo se houver mais slots/next. Cadeia que acaba antes é inconsistente; não devolver sucesso parcial silencioso. Política exata de exceções/validação é L05.
 
-Folha SlottedPage com uma entrada por chave: chave codificada + quantidade total de referências do valor + início (bloco u32, slot u16) no arquivo do índice. Largura/codificação da quantidade ainda pendente; capacidade exata das folhas secundárias depende disso.
+Auxiliares podem conter fim de um grupo e começo de outro. Não precisam armazenar a chave em cada RID. Em B4096, RID6+slot4 e header10 permitem no máximo 408 RIDs por página; isso não decide preenchimento nem tamanho total do grupo.
 
-Auxiliares SlottedPage: um RID por slot, codificado pelo arquivo de dados via encode_ptr/decode_ptr e ptr_size. Grupos consecutivos por chave; páginas compartilhadas entre grupos e ligadas por next. Início aponta para a primeira referência, inclusive no meio da página. Quantidade total delimita a parada; não é a quantidade de slots da auxiliar. Grupo continua em next/slot0 enquanto faltam referências. next da folha liga folhas; next da auxiliar liga auxiliares.
+## 5. Comportamentos a implementar e dependências
 
-E&N §17.1.3 opção3/fig17.5 apresenta explicitamente blocos de referências e encadeamento. Compartilhamento, SlottedPage e quantidade por grupo são adaptações do projeto. Nenhum limiar de grupos internos/externos: todos externos. Em B4096, uma auxiliar de RID6 comporta no máximo408 referências com slots4, sem decidir preenchimento.
+| Componente | Passos / invariantes | Dependências abertas |
+| :--- | :--- | :--- |
+| Bytes dos internos | Ler/escrever contador, primeiro filho, pares; conferir offsets/limites; comparar separadores completos | Não precisa de meta persistida em testes isolados que forneçam k e contexto explicitamente |
+| Entradas primárias | Codificar/decodificar os dois formatos; extrair chave/ID; aplicar limites; preencher SlottedPage mantendo ordem | Não precisa de escolha de preenchimento para testar entradas/páginas isoladas |
+| RID público e fetch de página | Reproduzir formato P2, localizar slot, remover prefixo quando aplicável e decodificar registro | Objeto de arquivo persistente e tratamento de referências inválidas dependem L02/L05 |
+| Percurso descendente | Em cada interno, escolher filho pela comparação completa e igualdade à direita; usar nível para interpretar página | Perfil e altura fornecidos pelo chamador em teste; abertura real depende L02 |
+| Igualdade/faixas primárias | Procurar início da faixa pelo campo; na NOT UNIQUE incluir/excluir todos os IDs de uma chave conforme os limites; seguir next até fim da faixa | Não inventar sentinelas persistidas; representação exata dos limites em memória e validação em L05 |
+| Scan primário | Percorrer folhas em ordem e emitir `(RID, registro)` sem vazar views; preservar identidade dos slots | Primeira folha/árvore vazia de L02; iteradores e pins em L04/L05 |
+| Leitura auxiliar | Procedimento da seção 4.4, retornando referências sem interpretar registros de dados | Decodificação da entrada de folha depende L01; política de erro/pins em L04/L05 |
+| Construção das folhas | Receber entradas ordenadas; IDs na primária NOT UNIQUE; ligações para a frente; limites de entrada | Política dos grupos finais/preenchimento L03; memória L04 |
+| Construção do secundário | Agrupar chaves iguais sem materializar implicitamente lista ilimitada; registrar primeiro slot e quantidade; gerar folhas distintas do fluxo auxiliar | L01/L03/L04; não prometer algoritmo com memória limitada antes de defini-lo |
+| Construção dos níveis internos | A partir dos filhos, representar cada mínimo e bloco; construir de baixo para cima até raiz | Distribuição dos últimos grupos L03; armazenamento de descritores L04; publicar meta em L02 |
+| create/open/close | Implementar chamadas reais do catálogo; persistir/reabrir o mesmo formato; limpar recursos | L02: não gravar um bloco1 inventado para declarar create/open prontos |
+| stats/recusa de manutenção | Cumprir forma consumida pelo catálogo/P4; recusar operações antes de alteração parcial | L05; não copiar expectativas de manutenção do guia antigo |
+
+A organização dos helpers privados não é outra API pública. Não criar um motor genérico separado para cada layout nem três implementações de internos. Também não pressupor que toda operação já esteja implementada só porque existe uma assinatura.
+
+## 6. Buffer, recursos e integração
+
+- Usar `bp.page(fid,bno,ptype)` para escopo de leitura quando apropriado ou pin/unpin em try/finally; `bp.new_page` devolve página fixada e dirty; liberar a página mesmo em erro.
+- Marcar alterações dirty. SlottedPage não faz isso; usar Page.mark_dirty ou unpin(dirty=True) conforme operação real de P1.
+- `SlottedPage.get` retorna memoryview da página, não registro independente. Não devolver view após liberar pin; copiar bytes quando forem sobreviver ao pin ou sofrer movimentação por compactação/inserção.
+- Fechar iteradores quando o consumidor abandona a consulta; não depender da coleta de lixo para unpin.
+- Sem acesso direto a fm.read/write; metadados de P3 também passam pelo buffer. Bloco0 permanece exclusivo de P1.
+- Mapeamento exato de tipos de página às áreas do buffer e número de pins simultâneos são parte de L04. Não adotar silenciosamente uma política herdada do guia antigo.
+- Catálogo de P2 precisa recusar carga incremental B+ e Table precisa barrar mutações incompatíveis antes de alterar dados/índices, inclusive heap/hash com secundário B+ somente leitura. Não modificar código de colegas sem alinhamento.
+- `cbd/exec/access.py::fetch_cost` ainda cobra altura da árvore para qualquer BTREE; alinhar o estimador de P4 ao fetch físico direto de D-P3-04. Comentário Ptr em contracts.py também prevê chave/seq. O repasse de Ptr em execução já é opaco.
+- P6 ainda prepara variante incremental e outros fatores históricos; sua presença no código não altera D-P3-01. A integração da bancada não é entregue por stubs.
+
+## 7. Estatísticas: contrato existente versus lacunas
+
+A arquitetura existente pede ao menos `blocks`, `records`, `overflow_blocks`, `levels`, `leaf_blocks`, `buckets`, `meta_blocks`. Catalog.analyze usa leaf_blocks para a B+ primária e calcula registros/blocos de dados e tamanho médio pelo codecP2. Não redefinir isso para usar capacidade máxima teórica.
+
+Contabilizar páginas de referências do secundário como auxiliares, não folhas. A convenção de altura da árvore vazia, contagens totais/distintas de índice e sua persistência/validação precisam ser fechadas em L02/L05. Não retornar zeros fictícios para satisfazer consumidores antes da implementação.
+
+## 8. Lacunas controladas — decisões ainda não aprovadas
+
+| ID | Falta decidir | Não fazer antes de fechar |
+| :--- | :--- | :--- |
+| L01 — Contador secundário | Largura, endianness e domínio da quantidade total. Proposta: u32 LE de 4 B | Não fixar offsets/capacidade nem persistir entradas secundárias completas |
+| L02 — Bloco1 e abertura | Localização bloco1 aceita; faltam campos/offsets, magic/versão, raiz/primeira folha/altura, contadores, perfil/tamanhos persistidos ou derivados, validação e árvore vazia | Não publicar create/open funcionais nem inventar root=0/altura=0 ou outro default |
+| L03 — Preenchimento/ocupação | Quanto ocupar folhas/internos e como distribuir últimos grupos/raiz com entradas variáveis; restrições para entradas grandes | Não adotar fill0.9/min_fill0.5 nem finalizar um builder multinível sem tratar grupos finais |
+| L04 — Construção e memória | Estratégia para descritores entre níveis, orçamento da carga, pins simultâneos, áreas para páginas e limpeza de falhas | Não guardar toda a árvore/grupo em listas por conveniência; não alegar respeito ao orçamento sem verificar |
+| L05 — Comportamento compartilhado | Recusa de mutação/recarga/reorganize, exceções/validação de referências e limites/NULL, semântica final das estatísticas e alinhamento de consumidores | Não remover contratos unilateralmente, fazer alterações parciais ou esconder falhas com respostas vazias |
+
+O estado de L02 pertence ao item do grupo 4 no Notion, não impede aprovar o formato dos nós/folhas. Esse último permanece Parcial somente pelo campo ainda aberto em L01. Implementação e decisão têm estados separados. A lista é um checklist de dependências, não compromisso de cinco novas discussões extensas: podemos fechar convenções relacionadas juntas.
+
+## 9. Sequência incremental e critérios de entrega
+
+| Entrega | Pode começar com escolhas atuais? | Evidência mínima antes de chamar de pronta |
+| :--- | :--- | :--- |
+| A. Formato interno e entradas primárias | Sim, quando Gabriel pedir código | Testes de bytes/limites; k4/8/12; round-trip do codec/ID; erros de tamanho |
+| B. Folhas primárias e fluxo auxiliar em páginas reais | Sim para unidades isoladas; políticas completas seguem lacunas | SlottedPage + buffer real; slots/next; grupos começando no meio e atravessando páginas; pins liberados |
+| C. Arquivo persistente mínimo | Depois L02; builder limitado deve declarar seu alcance e ser aprovado como entrega parcial | Criar/carregar/scan/fetch/fechar/reabrir com registros reais, sem formato temporário escondido |
+| D. Árvore multinível e acessos | Depois L03/L04, completando limites L05 | Separadores/mínimos corretos, igualdade/faixas e duplicatas entre folhas, grupos finais e reabertura |
+| E. Secundário completo e integração | Depois L01/L02 e fechamento das dependências acima | Uma entrada por chave, referências e grupos completos, fetch no arquivo real e comparação com referência |
+
+Não reimplementar componentes já entregues quando avançar de etapa: estender e testar os mesmos formatos. Lacunas devem ficar localizadas, com seu ID e motivo, sem uma infraestrutura genérica de placeholders. Testes com dublês provam lógica isolada, não medições de I/O.
+
+### Verificação por comportamento
+
+- Comparar multiconjuntos de registros, não apenas contagem; UNIQUE recusa valores repetidos e NOT UNIQUE preserva todas as ocorrências.
+- Testar igualdade/faixas com extremos abertos, inclusivos/exclusivos, chave ausente e duplicatas atravessando folhas/níveis. Confirmar propagação de mínimos no builder.
+- No secundário, verificar ausência de chave repetida e equivalência entre RIDs devolvidos e registros do arquivo de dados. Testar fronteira de grupo/página sem vazar grupo seguinte.
+- Conferir RID→fetch antes/depois de reabrir; não prometer estabilidade após reconstrução.
+- Toda operação/iterador, inclusive erro/abandono, termina sem pins vazando. Operação não suportada não pode modificar parte da tabela.
+- Medições com pilha real e cache frio; custos esperados calculados e explicados. Separar página de folha, interno, auxiliar e meta. Níveis aplicáveis e suíte completa antes de declarar entrega pronta, conforme AGENTS.md.
+- Antes de cada etapa, definir casos de borda relevantes; não escrever testes que apenas copiem a implementação.
+
+## 10. Fontes e acompanhamento
+
+Os cartões D-P3-01…08 contêm as justificativas: enunciado vigente, SKS §§13.2.2,14.3.1,14.3.5,14.4.1,14.4.4 e E&N §§17.1.3,17.3.2,17.6.1–2, mais decisões/código de P1/P2. Arquitetura/contratos existentes definem consumidores; divergências estão explicitadas acima, não resolvidas por copiar o guia antigo.
+
+[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens/cinco grupos, com estado da decisão separado da implementação. Esta revisão mudou a utilidade do documento, não aprovou escolhas pendentes nem iniciou código de execução.

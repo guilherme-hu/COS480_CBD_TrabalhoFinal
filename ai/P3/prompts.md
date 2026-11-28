@@ -59,3 +59,9 @@
 - **Pedido:** Gabriel autorizou registrar e commitar a escolha de auxiliares do secundário e atualizar Notion; pediu explicar a quantidade total e separar prova nos livros de adaptações nossas.
 - **Atuação:** D-P3-08: folha chave/quantidade/início; RIDs em auxiliares SlottedPage compartilhadas e encadeadas; parada pela quantidade. Livro E&N §17.1.3 opção3/fig17.5 descreve blocos de referências e cadeia; compartilhamento/quantidade são escolhas do projeto.
 - **Limite:** largura/codificação da quantidade total ainda não aprovadas; estado amplo permanece Parcial. Sem implementação ou mudança em código de colegas. Commit local só desta documentação autorizado; sem push.
+
+## 28/11/2026 — Codex — especificação para implementação incremental
+
+- **Pedido:** Gabriel quer implementar em etapas quando pedir, permitindo lacunas explícitas; solicitou que o documento atual sirva como especificação prática para o agente implementar, não apenas resumo didático. Considerar todas as decisões aprovadas e deixar pendências visíveis.
+- **Atuação:** reorganizado P3_PLANO_ATUAL.md em escopo/interfaces, bytes, procedimentos/invariantes, dependências, lacunas L01–L05 e entregas/testes por comportamento; estado atualizado.
+- **Limite:** não aprovado contador secundário4 B por inferência; continua proposta. Sem nova decisão técnica, código de execução, alteração no guia antigo, commit ou push.
