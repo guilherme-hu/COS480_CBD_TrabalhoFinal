@@ -5,12 +5,14 @@
 - Branch local `p3/44-btree-bulk-loading` criada sobre `baae948`; comparação pelo conector GitHub confirmou que esse commit coincidia com `main` no início da sessão.
 - `docs/decisoes/P3.md`: D-P3-01 (§3.4.4: bulk loading; somente leitura após construção como limitação adicional), resumo, premissas de P1/P2, referências e pendências. É documentação, não prova de implementação.
 - D-P3-02 registrada: §3.4.1, um campo da tabela por B+ primária UNIQUE/NOT UNIQUE.
-- D-P3-03 registrada: primária NOT UNIQUE com desempate interno. Tamanho/geração/codificação do identificador ainda pendentes; referência pública escolhida depois em D-P3-04. Primária UNIQUE e agrupamento do secundário não recebem essa obrigação.
+- D-P3-03 registrada: primária NOT UNIQUE com desempate interno. Tamanho/geração/codificação do identificador definidos depois em D-P3-05; referência pública escolhida depois em D-P3-04. Primária UNIQUE e agrupamento do secundário não recebem essa obrigação.
 - `docs/implementacao/P3_PLANO_ATUAL.md`: roteiro parcial atualizado pelas decisões aprovadas, separado do guia histórico desatualizado.
 - Guia P3 com aviso do escopo revisto e resumo atualizado; `docs/estudo/P3.md` com explicação e perguntas de fixação.
 
 - D-P3-04 registrada: referência física bloco + slot, 6 B no formato de P2, para primária UNIQUE e NOT UNIQUE; ainda sem implementação.
 - Notion: mapa editável com 23 itens em cinco grupos, estados coloridos e implementação separada; base collection://4269ab02-1b6d-81f0-a41a-000bb0ca0dda.
+
+- D-P3-05: contador global por árvore desde 1, u32 de 4 B big-endian, somente primária NOT UNIQUE. Persistir IDs nas entradas; sem contador de próximas inserções. Layout e implementação pendentes.
 
 ## Em andamento
 
@@ -18,7 +20,7 @@
 
 ## Falta
 
-- Decidir representação do identificador (próxima discussão), layout de meta/nós, fan-out, ocupação/preenchimento e listas de referências do índice.
+- Decidir layout de meta/nós (próxima discussão), fan-out, ocupação/preenchimento e listas de referências do índice.
 - Alinhar rejeição de manutenção com P2 e retirada da variante incremental com P6. Nenhum desses ajustes foi realizado.
 - Implementar `BTreeFile` e `BTreeIndex` com os acessos necessários, persistência, estatísticas e testes.
 - Atualizar critérios das issues afetadas com autorização de Gabriel antes de qualquer escrita no GitHub.
@@ -42,7 +44,7 @@
 
 ## Decisões provisórias a rever
 
-- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-04 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
+- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-05 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
 ## Testes e validação
 

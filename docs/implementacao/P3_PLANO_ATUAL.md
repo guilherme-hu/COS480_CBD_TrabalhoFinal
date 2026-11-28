@@ -9,7 +9,7 @@ Requisitos: enunciado vigente; teoria: SKS/E&N; integração: código e interfac
 | Caso | Construção e consulta | Representação aprovada / pendente |
 | :--- | :--- | :--- |
 | Primária UNIQUE | Bulk loading e leitura; um campo da tabela | Registros completos nas folhas; chave do campo única; recusar repetição. Referência física bloco + slot por D-P3-04; layout completo pendente |
-| Primária NOT UNIQUE | Bulk loading e leitura; um campo da tabela | D-P3-03: ordem interna `(valor, identificador)`. Tamanho/geração/codificação do identificador pendentes; referência física por D-P3-04 |
+| Primária NOT UNIQUE | Bulk loading e leitura; um campo da tabela | D-P3-03: ordem interna `(valor, identificador)`. D-P3-05: contador por árvore desde 1, u32 big-endian de 4 B; referência física por D-P3-04; offsets/layout pendentes |
 | Secundária NOT UNIQUE | Bulk loading e leitura; uma coluna indexada | §4.2: uma entrada por chave na folha, associada a referências. Representação do grupo e grupos grandes pendentes |
 
 D-P3-01 corresponde ao método de carga de §3.4.4; somente leitura é limitação adicional. D-P3-02 corresponde a §3.4.1. D-P3-03 deriva de §3 e do layout de §3.4.2; não impõe desempate ao secundário. D-P3-04 define RID físico bloco u32 + slot u16 (6 B, formato de P2) para a primária UNIQUE e NOT UNIQUE.
@@ -34,8 +34,8 @@ As classes ainda não existem. As chamadas abaixo são consumidores reais no [ca
 | Etapa | O que falta fechar | Comportamento a implementar/verificar depois |
 | :--- | :--- | :--- |
 | Referência aprovada | D-P3-04: bloco + slot; implementar codificação e fetch | `scan/search` produzem referências que `fetch` recupera corretamente |
-| Próxima decisão: identificador | Domínio, geração, tamanho, codificação e persistência | Ordem sem empates, recuperação após reabertura, erro em limites excedidos |
-| Layout | Entradas de folhas, nós internos, separadores, metadados/tipos e árvore vazia | Criar, carregar uma folha, percorrer e reabrir usando páginas reais |
+| Identificador aprovado | D-P3-05: contador por árvore desde 1, u32 de 4 B big-endian; falta implementar | Ordem sem empates, recuperação após reabertura, erro em limites excedidos |
+| Próxima decisão: layout | Formato comum de nós internos, folhas, separadores, metadados/tipos e árvore vazia. Convenção de meta no bloco 1 aceita por Gabriel; conteúdo ainda aberto | Criar, carregar uma folha, percorrer e reabrir usando páginas reais |
 | Construção completa | Preenchimento/ocupação, últimos grupos e memória usada; calcular capacidades | Vários níveis e folhas encadeadas; nenhuma página excede B |
 | Buscas | Convenções dos separadores e limites pelo campo original | Igualdade/faixas; duplicatas em várias folhas; limites inclusivos/exclusivos |
 | Secundário | Grupos de referências e páginas auxiliares | Uma chave por entrada; todas as referências recuperadas, inclusive grupos grandes |
@@ -53,4 +53,4 @@ Usar codec/páginas reais e buffer; testes de ordenação, duplicatas, igualdade
 
 ## Acompanhamento editável
 
-[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens da lista agrupada, com estado da decisão separado da implementação. Próxima discussão: representação do identificador da primária NOT UNIQUE.
+[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens da lista agrupada, com estado da decisão separado da implementação. Próxima discussão: formato dos nós internos e separadores para os três usos da B+. O compartilhamento de formato/código ainda é proposta, não layout aprovado.

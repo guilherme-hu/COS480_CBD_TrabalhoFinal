@@ -30,3 +30,9 @@
 - **Pedido:** Gabriel aprovou bloco + slot para referência da primária UNIQUE/NOT UNIQUE e pediu database dos mesmos itens da lista agrupada, ao fim de CBD — P2/P3: decisões e comparações; preservar descrições, origem, estado e espaço para notas.
 - **Atuação:** D-P3-04 e atualização do roteiro/estado/estudo. Database no Notion com 23 registros, mesmos cinco grupos, colunas de origem/escopo/decisão/pendências/notas e estados coloridos; implementação separada. Conteúdo anterior preservado.
 - **Referências:** E&N §17.6.1; P2 D-P2-10 e formato existente; consumidores P4 tratam Ptr como opaco. Sem mudança de código compartilhado, commit, push ou escrita no GitHub. Próxima decisão: representação do identificador interno NOT UNIQUE.
+
+## 28/11/2026 — Codex — representação do identificador
+
+- **Pedido:** Gabriel aprovou registrar no repositório e no mapa Notion a proposta de geração/armazenamento do identificador de desempate; perguntou sobre formato comum dos nós internos e capacidade com registros variáveis.
+- **Atuação:** D-P3-05: contador por árvore na carga desde 1, u32 de 4 B big-endian; somente primária NOT UNIQUE. Atualização de roteiro/estado/estudo e registro existente de duplicatas no Notion, preservando Notas e grupos.
+- **Limite:** nó interno compartilhado ainda é proposta; nenhum layout novo aprovado automaticamente. Sem implementação, commit, push ou alteração de código de colegas. Próximo debate: nós internos/separadores.
