@@ -1,6 +1,12 @@
 # P3 — Árvore B+: Arquivo Primário (UNIQUE e NOT UNIQUE) e Índice Secundário
 
-> Leia junto com [`00_ARQUITETURA_GERAL.md`](00_ARQUITETURA_GERAL.md). As assinaturas públicas estão no documento geral (§4, §5, §6) e só mudam combinando com quem usa a interface. Aqui está uma proposta de *como* implementar. **As tabelas de decisão trazem recomendações, não decisões fechadas:** o agente debate cada uma com você antes de codar ([`AGENTS.md`](../../AGENTS.md) §3), e este arquivo pode ser atualizado com o que for decidido.
+> **GUIA DESATUALIZADO — NÃO USAR COMO REFERÊNCIA PARA A IMPLEMENTAÇÃO ATUAL.** Aviso solicitado por Gabriel (P3), em 28/11/2026.
+>
+> Este material foi gerado por IA a partir de uma interpretação incorreta do escopo anterior do trabalho, antes do enunciado vigente e da revisão das escolhas por P3. Contém pressupostos de outra versão da atividade e escolhas sem justificativa clara; não incorpora de forma consistente as decisões atuais. As notas de revisão abaixo não validam o restante do guia.
+>
+> Pode ser lido como material histórico de estudo sobre o que a IA propôs, sempre conferindo com os livros e o PDF vigente. **Não usar seus layouts, números, algoritmos ou tabelas como decisões, requisitos ou recomendações atuais.** Cada decisão precisa de justificativa discutida com o integrante.
+>
+> Para o trabalho atual, consultar o enunciado vigente, os livros, as decisões aprovadas em [`docs/decisoes/P3.md`](../decisoes/P3.md) e as interfaces verificadas com seus responsáveis. Um novo guia poderá ser criado depois; este arquivo não é esse novo guia. Alterações de interfaces compartilhadas precisam de alinhamento com quem as usa.
 
 **Peso:** ~18%, a parte de algoritmo mais difícil. Você **consome** a camada 4 (P1) e utilitários do P2 (`encode_key`, `key_size`, `RecordCodec`, `SlottedPage`). Você **fornece** `BTreeFile` (organização primária) e `BTreeIndex` (índice secundário), que o catálogo do P2 instancia e que P4/P5 usam.
 
