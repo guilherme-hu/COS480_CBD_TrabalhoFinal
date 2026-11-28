@@ -47,3 +47,9 @@
 
 - **Pedido:** Gabriel pediu consistência entre separador/ponteiro para filho e as explicações simplificadas que usavam limite/destino.
 - **Atuação:** padronizados os nomes dos componentes nas explicações de estudo e no cartão. Preservado limite para faixa, capacidade e domínio, onde tem outro significado. Sem mudança técnica, staging ou commit.
+
+## 28/11/2026 — Codex — folhas primárias com formato de P2
+
+- **Pedido:** após fazer o commit anterior, Gabriel aprovou registrar a reutilização de SlottedPage/RecordCodec nas folhas primárias UNIQUE e NOT UNIQUE, com justificativa concisa nos livros e responsabilidade já exercida por P2.
+- **Atuação:** D-P3-07 no resumo/cartão; NOT UNIQUE prefixa ID4, UNIQUE só registro; sem chave duplicada. Atualizados roteiro/estado/estudo e acompanhamento Notion, preservando estado Parcial do layout amplo.
+- **Limite:** sem código compartilhado modificado, implementação B+, commit ou push. Preenchimento, metadados completos e secundário continuam abertos.

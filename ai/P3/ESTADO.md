@@ -16,13 +16,15 @@
 
 - D-P3-06 registrada: layout compacto dos internos comum aos três usos; k por perfil, fan-out calculado, sem irmãos/pai/slots. Código ainda inexistente. Layout amplo continua parcial.
 
+- D-P3-07 registrada: folhas primárias com SlottedPage/codecP2; UNIQUE só registro, NOT UNIQUE ID 4 B + registro. Sem cópia extra da chave; limites B−14/B−18. Ainda sem implementação.
+
 ## Em andamento
 
 - Issue #44: layout e decisões §3.4. Método de carga (§3.4.4) e campo único (§3.4.1) registrados; critérios de layout/implementação ainda não concluídos.
 
 ## Falta
 
-- Decidir entradas das folhas e conteúdo/validação do bloco 1 (próximas discussões), árvore vazia, ocupação/preenchimento e listas de referências do índice. Internos/fan-out máximo definidos em D-P3-06, ainda sem testes de implementação.
+- Decidir conteúdo/validação do bloco 1 e folhas secundárias (próximas discussões), árvore vazia, ocupação/preenchimento e listas de referências do índice. Internos/fan-out máximo definidos em D-P3-06, ainda sem testes de implementação.
 - Alinhar rejeição de manutenção com P2 e retirada da variante incremental com P6. Nenhum desses ajustes foi realizado.
 - Implementar `BTreeFile` e `BTreeIndex` com os acessos necessários, persistência, estatísticas e testes.
 - Atualizar critérios das issues afetadas com autorização de Gabriel antes de qualquer escrita no GitHub.
@@ -46,7 +48,7 @@
 
 ## Decisões provisórias a rever
 
-- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-06 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
+- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-07 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
 ## Testes e validação
 
