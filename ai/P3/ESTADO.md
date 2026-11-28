@@ -3,7 +3,7 @@
 ## Pronto
 
 - Branch local `p3/44-btree-bulk-loading` criada sobre `baae948`; comparação pelo conector GitHub confirmou que esse commit coincidia com `main` no início da sessão.
-- `docs/decisoes/P3.md`: D-P3-01 (bulk-only, somente leitura após construção), resumo, premissas de P1/P2, referências e pendências. É documentação, não prova de implementação.
+- `docs/decisoes/P3.md`: D-P3-01 (§3.4.4: bulk loading; somente leitura após construção como limitação adicional), resumo, premissas de P1/P2, referências e pendências. É documentação, não prova de implementação.
 - D-P3-02 registrada: §3.4.1, um campo da tabela por B+ primária UNIQUE/NOT UNIQUE; representação de duplicatas permanece pendente.
 - Guia P3 com aviso do escopo revisto e resumo atualizado; `docs/estudo/P3.md` com explicação e perguntas de fixação.
 

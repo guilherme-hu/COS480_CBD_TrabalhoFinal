@@ -13,3 +13,8 @@
 - **Verificação:** PDF vigente §§3.4.1, 5.1, 5.2 e exemplos de 6.4; SKS §§14.2.5 e 14.6.2; consultas, preparação e configuração atuais. Acesso por prefixo e outras utilidades de chaves compostas foram considerados; não se afirmou que exigem sempre dois filtros simultâneos.
 - **Atuação:** D-P3-02 no resumo e cartão; separação entre campo único e identificação de duplicatas; atualização do guia, estudo e estado. Sem alteração de implementação ou escrita no GitHub; issue #44 permanece aberta.
 - **Separação solicitada:** Gabriel pediu commit somente de D-P3-01 antes de continuar D-P3-02. Commit local `a05df15`; alterações de D-P3-02 mantidas fora dele, ainda sem commit.
+
+## 28/11/2026 — Codex — referência explícita de D-P3-01
+
+- **Pedido de Gabriel:** destacar que a decisão de bulk loading corresponde ao §3.4.4, assim como D-P3-02 identifica §3.4.1.
+- **Atuação:** referência explícita no título, resumo, abertura do cartão, acompanhamento, guia e estudo. Mantida a distinção entre escolha do método de carga e limitação adicional de manutenção. Alteração documental sem novo commit nem alteração do commit anterior.

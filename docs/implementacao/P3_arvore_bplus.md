@@ -4,7 +4,7 @@
 
 **Peso:** ~18%, a parte de algoritmo mais difícil. Você **consome** a camada 4 (P1) e utilitários do P2 (`encode_key`, `key_size`, `RecordCodec`, `SlottedPage`). Você **fornece** `BTreeFile` (organização primária) e `BTreeIndex` (índice secundário), que o catálogo do P2 instancia e que P4/P5 usam.
 
-> **Revisão de escopo por Gabriel em 28/11/2026 — [D-P3-01](../decisoes/P3.md):** a construção escolhida é exclusivamente por bulk loading bottom-up, com leitura após a carga. As instruções de inserção/remoção dinâmicas, split/redistribuição/fusão e comparação bulk × incremental abaixo pertencem ao plano anterior e não são o escopo atual de implementação de P3. Permanecem como referência da alternativa preterida. Os demais layouts, fan-out, `seq`, preenchimento e ocupação deste guia continuam propostas, não escolhas automaticamente aprovadas. Contratos, consumidores e critérios das issues ainda precisam de alinhamento; esta nota não implementa essa integração.
+> **Revisão de escopo por Gabriel em 28/11/2026 — [D-P3-01](../decisoes/P3.md), §3.4.4:** a construção escolhida é exclusivamente por bulk loading bottom-up, com leitura após a carga. As instruções de inserção/remoção dinâmicas, split/redistribuição/fusão e comparação bulk × incremental abaixo pertencem ao plano anterior e não são o escopo atual de implementação de P3. Permanecem como referência da alternativa preterida. Os demais layouts, fan-out, `seq`, preenchimento e ocupação deste guia continuam propostas, não escolhas automaticamente aprovadas. Contratos, consumidores e critérios das issues ainda precisam de alinhamento; esta nota não implementa essa integração.
 
 **Marcos do plano anterior (superados por D-P3-01):** até **09/11**: `BTreeFile` com `insert`/`search`/`range`/`scan`/`fetch` e split propagando até a raiz. Até **14/11**: `delete` com redistribuição e fusão, `bulk_load`, `BTreeIndex` não-unique, `reorganize`.
 
@@ -52,7 +52,7 @@ Até o P1 entregar (05/11), use a fixture `bp` do `tests/conftest.py`. Até o P2
 | Folha do índice | slotted page com entradas `(chave, carga)`; **sem repetição de chave** no índice NOT UNIQUE (§5) |
 | Ocupação mínima | internos: `⌈n/2⌉` filhos. Folhas (registros de tamanho variável): **≥ 50% dos bytes úteis** (`params["min_fill"]`, padrão 0.5). A raiz fica isenta |
 | Overflow do nó | **split** (não há redistribuição na inserção). Na remoção: **redistribuição** com o irmão se ele tiver sobra; senão **fusão** |
-| Carga | **D-P3-01: exclusivamente bulk loading bottom-up**, seguido de leitura. Sem carga incremental ou comparação bulk × incremental no escopo escolhido. Fator de preenchimento ainda a decidir; o 0.9 usado pela bancada é uma expectativa a alinhar, não uma decisão de P3 |
+| Carga | **D-P3-01 (§3.4.4): exclusivamente bulk loading bottom-up**, seguido de leitura. Sem carga incremental ou comparação bulk × incremental no escopo escolhido. Fator de preenchimento ainda a decidir; o 0.9 usado pela bancada é uma expectativa a alinhar, não uma decisão de P3 |
 | Ponteiros para pai | **não**: a descida guarda a pilha do caminho (`list[bno]`) |
 
 ---
