@@ -26,7 +26,7 @@
 
 ## Falta
 
-- Decidir conteúdo/validação do bloco 1, árvore vazia e ocupação/preenchimento. L01 fechada em D-P3-09: quantidade total secundária u32 LE de 4 B. Organização das listas auxiliares definida em D-P3-08. Internos/fan-out máximo D-P3-06 têm testes isolados; não há builder multinível.
+- Conteúdo lógico do bloco1 aprovado em D-P3-10; decidir sua especificação binária/validação, árvore vazia e ocupação/preenchimento. L01 fechada em D-P3-09: quantidade total secundária u32 LE de 4 B. Organização das listas auxiliares definida em D-P3-08. Internos/fan-out máximo D-P3-06 têm testes isolados; não há builder multinível.
 - Alinhar rejeição de manutenção com P2 e retirada da variante incremental com P6. Nenhum desses ajustes foi realizado.
 - Implementar `BTreeFile` e `BTreeIndex` com os acessos necessários, persistência, estatísticas e testes.
 - Atualizar critérios das issues afetadas com autorização de Gabriel antes de qualquer escrita no GitHub.
@@ -52,7 +52,7 @@
 
 ## Decisões provisórias a rever
 
-- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-09 têm escolhas aprovadas; L01 fechada; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
+- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-10 têm escolhas aprovadas (D10 fecha conteúdo lógico, não todos os bytes de L02); L01 fechada; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
 ## Testes e validação — histórico documental
 
@@ -88,3 +88,11 @@
 
 - Após D-P3-09, formato dos nós/folhas e grupos secundários passaram de Parcial para Aprovada. O item de formato indica Base disponível (componentes isolados), não árvore completa. Removidas pendências de largura também do item de grupos maiores que uma página.
 - Metadados: raiz, altura e primeira folha (Bloco1) continuam Pendentes no grupo4; corpo desse registro foi alinhado à convenção de localização já aceita. Nenhuma decisão nova de metadados tomada. Próxima prioridade proposta: L02.
+
+## D-P3-10 — Conteúdo dos metadados aprovado, 28/11/2026
+
+- Bloco1: formato/perfil/chave, raiz/altura/primeira folha, contagens de páginas e entradas; extras de auxiliares/referências só no secundário. Prefixo lógico comum; não copiar esquema inteiro nem descritor P1.
+- Justificativa separa livros (catálogo, raiz, balanceamento e folhas), inspiração P2 (meta por arquivo/identificação/conferência) e necessidade local (resumos/atalhos para ocupação e acesso). Contagens persistidas têm custo de coerência; não são exigência dos livros.
+- L02 Parcial: detalhes binários, literal de identificação/versão, representação de vazio e validação concreta ainda abertos. Sem implementação, novo teste de execução, stage ou commit desta decisão.
+- Notion: item de metadados passou de Pendente a Parcial, com conteúdo lógico D10 aprovado e pendências físicas explícitas; Notas preservadas.
+- Revisão independente documental sem achados materiais: conferiu P1/P2, páginas locais do enunciado/SKS/E&N e limites das inferências. Links relativos e git diff --check passaram; sem execução de testes porque só houve documentação.

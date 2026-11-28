@@ -1,6 +1,6 @@
 # P3 — Especificação atual para implementação incremental
 
-Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel. **Especificação parcial, baseada nas escolhas aprovadas D-P3-01 a D-P3-09. Componentes isolados implementados; árvore completa ainda indisponível.** Substitui o roteiro anterior deste arquivo. O guia histórico `P3_arvore_bplus.md` não é fonte técnica atual.
+Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel. **Especificação parcial, baseada nas escolhas aprovadas D-P3-01 a D-P3-10. Componentes isolados implementados; árvore completa ainda indisponível.** Substitui o roteiro anterior deste arquivo. O guia histórico `P3_arvore_bplus.md` não é fonte técnica atual.
 
 ## 1. Como usar esta especificação
 
@@ -113,6 +113,23 @@ Procedimento de leitura de um grupo (quantidade decodificada conforme D-P3-09):
 
 Auxiliares podem conter fim de um grupo e começo de outro. Não precisam armazenar a chave em cada RID. Em B4096, RID6+slot4 e header10 permitem no máximo 408 RIDs por página; isso não decide preenchimento nem tamanho total do grupo.
 
+### 4.5 Bloco 1 — conteúdo lógico aprovado, bytes ainda pendentes (D-P3-10)
+
+Prefixo comum aos três perfis:
+
+`magic_version | profile | key_idx | key_type | key_size | root | height | first_leaf | n_leaf_pages | n_internal_pages | n_leaf_entries`
+
+Somente no secundário, acrescentar `n_aux_pages | n_references`. profile distingue PRIMARY_UNIQUE, PRIMARY_NOT_UNIQUE e SECONDARY_NOT_UNIQUE; esses nomes não são strings persistidas já escolhidas. Os primários compartilham o mesmo formato de metadados, distinguido pelo perfil.
+
+- key_idx: posição desde zero no esquema da tabela; no secundário, esquema de data. key_type/key_size conferidos com o contexto recebido do catálogo; não copiar esquema inteiro. key_size exclui o ID; largura de separador derivada: +4 apenas na primária NOT UNIQUE.
+- root/first_leaf são blocos do próprio arquivo, sem slot. height inclui folhas; não acrescentar is_leaf nos nós para substituir a altura.
+- n_leaf_entries conta entradas das folhas: registros nos primários, chaves distintas no secundário. n_references conta todos os RIDs auxiliares; não presumir igualdade ao total da tabela se NULL foi excluído.
+- Contagens por classe são resumos para estatísticas, não listas de endereços. Não duplicar high_water/livres/B de P1 nem contador de próxima inserção/ID. data.ptr_size e seus codecs continuam vindo do arquivo de dados.
+- Ler meta via buffer ao abrir e manter contexto no objeto; não introduzir leitura automática do bloco1 a cada consulta. Conferência de chave/perfil não garante detectar alterações arbitrárias do resto do esquema ou associação errada do arquivo de dados.
+- **Não criar struct ainda:** larguras/códigos/offsets, literal de identificação/versão e representação de vazio aguardam fechamento de L02. Nem strings de perfil nem proposta raiz/altura/primeira folha zero viram formato sem aprovação. Falhas de carga/publicação e estatísticas finais seguem L04/L05.
+
+Critérios para testes futuros: ida/volta dos três perfis; resumo persistido versus páginas reais; raiz folha/interna; key_idx2 no esquema `(dre,nome,cr)`; chave/perfil incompatíveis; duas chaves e cinco referências; NULL fora do secundário; leitura meta fria contada e pins liberados. Não fixar bytes esperados antes de aprová-los.
+
 ## 5. Comportamentos a implementar e dependências
 
 | Componente | Passos / invariantes | Dependências abertas |
@@ -155,7 +172,7 @@ Contabilizar páginas de referências do secundário como auxiliares, não folha
 | ID | Falta decidir | Não fazer antes de fechar |
 | :--- | :--- | :--- |
 | L01 — Contador secundário — FECHADA | D-P3-09: u32 LE de 4 B, domínio1…2³²−1; formato K+10 B | Abertura/construção/validação continuam L02–L05; não confundir decisão com código entregue |
-| L02 — Bloco1 e abertura | Localização bloco1 aceita; faltam campos/offsets, magic/versão, raiz/primeira folha/altura, contadores, perfil/tamanhos persistidos ou derivados, validação e árvore vazia | Não publicar create/open funcionais nem inventar root=0/altura=0 ou outro default |
+| L02 — Bloco1 e abertura — PARCIAL | D-P3-10 aprova campos e organização lógica. Faltam larguras/códigos/offsets, valor de magic_version, vazio e validação concreta; estatísticas/publicação articuladas a L04/L05 | Não publicar create/open funcionais nem inventar bytes, root=0/altura=0 ou outro default |
 | L03 — Preenchimento/ocupação | Quanto ocupar folhas/internos e como distribuir últimos grupos/raiz com entradas variáveis; restrições para entradas grandes | Não adotar fill0.9/min_fill0.5 nem finalizar um builder multinível sem tratar grupos finais |
 | L04 — Construção e memória | Estratégia para descritores entre níveis, orçamento da carga, pins simultâneos, áreas para páginas e limpeza de falhas | Não guardar toda a árvore/grupo em listas por conveniência; não alegar respeito ao orçamento sem verificar |
 | L05 — Comportamento compartilhado | Recusa de mutação/recarga/reorganize, exceções/validação de referências e limites/NULL, semântica final das estatísticas e alinhamento de consumidores | Não remover contratos unilateralmente, fazer alterações parciais ou esconder falhas com respostas vazias |
@@ -205,6 +222,6 @@ Não reimplementar componentes já entregues quando avançar de etapa: estender 
 
 ## 10. Fontes e acompanhamento
 
-Os cartões D-P3-01…09 contêm as justificativas: enunciado vigente, SKS §§13.2.2,14.3.1,14.3.5,14.4.1,14.4.4 e E&N §§17.1.3,17.3.2,17.6.1–2, mais decisões/código de P1/P2. Arquitetura/contratos existentes definem consumidores; divergências estão explicitadas acima, não resolvidas por copiar o guia antigo.
+Os cartões D-P3-01…10 contêm as justificativas: enunciado vigente, SKS §§13.2.2,14.3.1,14.3.5,14.4.1,14.4.4 e E&N §§17.1.3,17.3.2,17.6.1–2, mais decisões/código de P1/P2. Arquitetura/contratos existentes definem consumidores; divergências estão explicitadas acima, não resolvidas por copiar o guia antigo.
 
 [Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens/cinco grupos, com estado da decisão separado da implementação. A entrega parcial acima não aprova as lacunas; o estado executável deste documento é mais específico que o estado amplo de decisão no mapa.

@@ -83,3 +83,9 @@
 
 - **Pedido:** Gabriel pediu conferir atualização do Notion, fechar o estado de formatos após D09 e identificar a próxima decisão prioritária, mantendo metadados no grupo4.
 - **Atuação:** atualizadas propriedades e textos dos registros de formato, grupos secundários, grupos grandes e metadados; preservadas Notas e demais propriedades. Formato e grupos aprovados; bloco1 ainda pendente. Proposta de próxima discussão: L02, sem aprovação/registro de layout novo.
+
+## 28/11/2026 — Codex — registrar conteúdo lógico do bloco1
+
+- **Pedido:** Gabriel aprovou os campos exibidos nos três layouts e pediu decisão documentada sem commit, justificando livros, P1/P2 e necessidades do projeto.
+- **Atuação:** D-P3-10 registra prefixo lógico comum, contagens e extras do secundário; distingue referência bibliográfica de convenção de P2 e escolhas locais. Plano/estado/estudo e item de metadados no Notion alinhados.
+- **Limite:** larguras/códigos/offsets, literal de magic_version, vazio e validação concreta não foram aprovados por inferência. L02 Parcial. Nenhum código/raw/teste de execução modificado, nem stage/commit.
