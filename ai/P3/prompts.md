@@ -36,3 +36,14 @@
 - **Pedido:** Gabriel aprovou registrar no repositório e no mapa Notion a proposta de geração/armazenamento do identificador de desempate; perguntou sobre formato comum dos nós internos e capacidade com registros variáveis.
 - **Atuação:** D-P3-05: contador por árvore na carga desde 1, u32 de 4 B big-endian; somente primária NOT UNIQUE. Atualização de roteiro/estado/estudo e registro existente de duplicatas no Notion, preservando Notas e grupos.
 - **Limite:** nó interno compartilhado ainda é proposta; nenhum layout novo aprovado automaticamente. Sem implementação, commit, push ou alteração de código de colegas. Próximo debate: nós internos/separadores.
+
+## 28/11/2026 — Codex — formato dos internos
+
+- **Pedido:** Gabriel aprovou registrar o formato proposto dos internos e pediu exemplos de tamanhos reais para DRE/CR; esclarecimento de que k é variável em bytes, não kilobytes. Autorizou atualizar o item de layout no Notion, mantendo Parcial e ajustando Falta definir. Sem commit.
+- **Atuação:** D-P3-06, resumo/roteiro/estado/estudo, fórmula e exemplos 4/8/12 B com fan-out 512/341/256 para B4096. Não aprovar layouts de folhas, metadados completos, ocupação ou construção dos últimos grupos.
+- **Fontes:** enunciado §3.4.2; SKS §§14.3.1 e inserção p642; E&N §17.3.2; codecP2. Os livros não determinam o contador u16 nem offsets: são escolhas aprovadas do projeto.
+
+## 28/11/2026 — Codex — terminologia de D-P3-06
+
+- **Pedido:** Gabriel pediu consistência entre separador/ponteiro para filho e as explicações simplificadas que usavam limite/destino.
+- **Atuação:** padronizados os nomes dos componentes nas explicações de estudo e no cartão. Preservado limite para faixa, capacidade e domínio, onde tem outro significado. Sem mudança técnica, staging ou commit.

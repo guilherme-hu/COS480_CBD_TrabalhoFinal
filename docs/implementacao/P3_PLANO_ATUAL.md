@@ -35,7 +35,8 @@ As classes ainda não existem. As chamadas abaixo são consumidores reais no [ca
 | :--- | :--- | :--- |
 | Referência aprovada | D-P3-04: bloco + slot; implementar codificação e fetch | `scan/search` produzem referências que `fetch` recupera corretamente |
 | Identificador aprovado | D-P3-05: contador por árvore desde 1, u32 de 4 B big-endian; falta implementar | Ordem sem empates, recuperação após reabertura, erro em limites excedidos |
-| Próxima decisão: layout | Formato comum de nós internos, folhas, separadores, metadados/tipos e árvore vazia. Convenção de meta no bloco 1 aceita por Gabriel; conteúdo ainda aberto | Criar, carregar uma folha, percorrer e reabrir usando páginas reais |
+| Internos aprovados | D-P3-06: contador u16, primeiro filho u32 e pares separador de k B/filho u32; mínimo da subárvore direita | Criar, carregar uma folha, percorrer e reabrir usando páginas reais |
+| Próximas decisões: folhas e meta | Entradas das folhas, conteúdo/validação do bloco 1, altura/perfil e árvore vazia | Carregar/percorrer/reabrir com formatos aprovados |
 | Construção completa | Preenchimento/ocupação, últimos grupos e memória usada; calcular capacidades | Vários níveis e folhas encadeadas; nenhuma página excede B |
 | Buscas | Convenções dos separadores e limites pelo campo original | Igualdade/faixas; duplicatas em várias folhas; limites inclusivos/exclusivos |
 | Secundário | Grupos de referências e páginas auxiliares | Uma chave por entrada; todas as referências recuperadas, inclusive grupos grandes |
@@ -45,7 +46,7 @@ São marcos de implementação, não uma exigência de decorar todo o layout ant
 
 ## Pendências explícitas
 
-Sem defaults novos de 8 B para identificador, 90% de carga, 50% de ocupação ou limiares de overflow. Sem decisão de reconstrução automática, recarga no mesmo objeto, nó interno compartilhado ou diferente por uso. Cada escolha será justificada antes do código correspondente.
+Sem defaults novos de 8 B para identificador, 90% de carga, 50% de ocupação ou limiares de overflow. Sem decisão de reconstrução automática, recarga no mesmo objeto, conteúdo completo do bloco 1 ou formatos das folhas. Cada escolha será justificada antes do código correspondente.
 
 ## Validação planejada
 
@@ -53,4 +54,12 @@ Usar codec/páginas reais e buffer; testes de ordenação, duplicatas, igualdade
 
 ## Acompanhamento editável
 
-[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens da lista agrupada, com estado da decisão separado da implementação. Próxima discussão: formato dos nós internos e separadores para os três usos da B+. O compartilhamento de formato/código ainda é proposta, não layout aprovado.
+[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens da lista agrupada, com estado da decisão separado da implementação. Internos compartilhados e separadores aprovados por D-P3-06. Próximas discussões: entradas das folhas e conteúdo/validação do bloco 1. O item amplo de layout permanece parcial.
+
+## Formato aprovado dos internos — D-P3-06
+
+`quantidade u16 (2 B) | primeiro filho u32 (4 B) | [separador (k B) | próximo filho u32 (4 B)]…`
+
+Controle/blocos little-endian; separadores seguem encode_key de P2, com identificador u32 big-endian de 4 B apenas na primária NOT UNIQUE. Sem slot no ponteiro de filho. Sem pai/irmão interno, diretório de slots ou cabeçalho de tamanho de chave por nó; árvore aberta deve conhecer perfil e nível. Origem e validação desse contexto ainda serão definidas nos metadados.
+
+Fan-out máximo = `1 + (B−6)//(k+4)`. Em B=4096: k=4 dá 512 filhos; k=8 dá 341; k=12 dá 256. Primária UNIQUE DRE: k=4; primária NOT UNIQUE curso: k=8; primária NOT UNIQUE CR: k=12; secundária NOT UNIQUE CR: k=8. São limites dos internos, não quantidade de registros nas folhas nem ocupação mínima.
