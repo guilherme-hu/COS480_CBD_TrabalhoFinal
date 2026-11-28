@@ -18,3 +18,9 @@
 
 - **Pedido de Gabriel:** destacar que a decisão de bulk loading corresponde ao §3.4.4, assim como D-P3-02 identifica §3.4.1.
 - **Atuação:** referência explícita no título, resumo, abertura do cartão, acompanhamento, guia e estudo. Mantida a distinção entre escolha do método de carga e limitação adicional de manutenção. Alteração documental sem novo commit nem alteração do commit anterior.
+
+## 28/11/2026 — Codex — desempate da primária e roteiro atual
+
+- **Pedido de Gabriel:** registrar a escolha de desempate interno para a primária NOT UNIQUE, esclarecer os três casos de B+ e iniciar um roteiro atual se útil. Antecipar a próxima decisão no chat enquanto os arquivos são atualizados.
+- **Atuação:** D-P3-03, roteiro parcial `P3_PLANO_ATUAL.md`, estudo e estado. Identificador interno não determina a referência pública; a próxima discussão compara referência física/lógica. Não aprovar silenciosamente seq de 8 B, geração de IDs, referência, layout ou preenchimento.
+- **Limite:** sem código de implementação, commit, push ou alteração de issues. Guia antigo não usado como fundamento técnico. Roteiro novo registra obrigações e pendências, não funcionamento já entregue.

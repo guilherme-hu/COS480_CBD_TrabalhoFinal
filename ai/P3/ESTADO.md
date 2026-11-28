@@ -4,7 +4,9 @@
 
 - Branch local `p3/44-btree-bulk-loading` criada sobre `baae948`; comparação pelo conector GitHub confirmou que esse commit coincidia com `main` no início da sessão.
 - `docs/decisoes/P3.md`: D-P3-01 (§3.4.4: bulk loading; somente leitura após construção como limitação adicional), resumo, premissas de P1/P2, referências e pendências. É documentação, não prova de implementação.
-- D-P3-02 registrada: §3.4.1, um campo da tabela por B+ primária UNIQUE/NOT UNIQUE; representação de duplicatas permanece pendente.
+- D-P3-02 registrada: §3.4.1, um campo da tabela por B+ primária UNIQUE/NOT UNIQUE.
+- D-P3-03 registrada: primária NOT UNIQUE com desempate interno. Tamanho/geração/codificação do identificador e referência pública ainda pendentes. Primária UNIQUE e agrupamento do secundário não recebem essa obrigação.
+- `docs/implementacao/P3_PLANO_ATUAL.md`: roteiro parcial atualizado pelas decisões aprovadas, separado do guia histórico desatualizado.
 - Guia P3 com aviso do escopo revisto e resumo atualizado; `docs/estudo/P3.md` com explicação e perguntas de fixação.
 
 ## Em andamento
@@ -13,7 +15,7 @@
 
 ## Falta
 
-- Decidir layout de meta/nós, duplicatas e referências, fan-out, ocupação/preenchimento e listas de referências do índice.
+- Decidir referência pública da primária (próxima discussão), representação do identificador, layout de meta/nós, fan-out, ocupação/preenchimento e listas de referências do índice.
 - Alinhar rejeição de manutenção com P2 e retirada da variante incremental com P6. Nenhum desses ajustes foi realizado.
 - Implementar `BTreeFile` e `BTreeIndex` com os acessos necessários, persistência, estatísticas e testes.
 - Atualizar critérios das issues afetadas com autorização de Gabriel antes de qualquer escrita no GitHub.
@@ -24,6 +26,7 @@
 | :--- | :--- | :--- |
 | §3.4.4 e justificativa §7.2.2.a | `docs/decisoes/P3.md`, D-P3-01 | Escolha documentada; nenhum teste de B+ ainda |
 | §3.4.1 | `docs/decisoes/P3.md`, D-P3-02 | Escolha documentada; nenhum teste de B+ ainda |
+| §3 / parte de §3.4.2: duplicatas da primária | `docs/decisoes/P3.md`, D-P3-03 | Desempate escolhido; formato completo e testes ainda pendentes |
 | §3.4.2–3, §4.2 e acessos §5 | Pendentes | Nenhum teste de B+ ainda |
 | §6.1.1 manutenção | Limitação do recorte registrada em D-P3-01 | Sem alegação de manutenção dinâmica implementada |
 
@@ -34,7 +37,7 @@
 
 ## Decisões provisórias a rever
 
-- Nenhuma nova escolha técnica provisória. D-P3-01 e D-P3-02 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
+- Nenhuma nova escolha técnica provisória. D-P3-01, D-P3-02 e D-P3-03 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
 ## Testes e validação
 
