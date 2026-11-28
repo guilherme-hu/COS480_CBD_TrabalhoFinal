@@ -1,6 +1,6 @@
 ## Índice dos cartões de decisão
 
-Gerado de `docs/decisoes/`: 45 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
+Gerado de `docs/decisoes/`: 59 cartões, 0 provisórios. A última coluna diz em que item da seção anterior o cartão é justificado.
 
 | Cartão | Decisão | Status | Item |
 | :--- | :--- | :--- | :--- |
@@ -38,6 +38,20 @@ Gerado de `docs/decisoes/`: 45 cartões, 0 provisórios. A última coluna diz em
 | D-P4-01 | Escolha do externo no nested-loop | decidida | Demais escolhas |
 | D-P4-02 | Tamanho do lote externo do BNL | decidida | Demais escolhas |
 | D-P4-03 | Lotes por bytes e fusão final da ordenação externa | decidida | Demais escolhas |
+| D-P5-01 | Execução direta quando o construtor cabe na memória | decidida | Funções de hash; Escolhas da P5 — hash join e sort-merge |
+| D-P5-02 | Fan-out limitado e término após três níveis | decidida | Funções de hash; Escolhas da P5 — hash join e sort-merge |
+| D-P5-03 | Limite lógico com bfr nos testes isolados | revista | Escolhas da P5 — hash join e sort-merge |
+| D-P5-04 | Custo por rodadas uniformes e arredondamento explícito | decidida | Escolhas da P5 — hash join e sort-merge |
+| D-P5-05 | Plano vazio por quantidade de registros | decidida | Escolhas da P5 — hash join e sort-merge |
+| D-P5-06 | Mínimo de um registro por página para bfr esparso em N1 | decidida | Escolhas da P5 — hash join e sort-merge |
+| D-P5-07 | HASH primários incompatíveis não usam reaproveitamento | decidida | Escolhas da P5 — hash join e sort-merge |
+| D-P5-08 | Alinhar o lado externo pelo bucket físico | decidida | Funções de hash; Escolhas da P5 — hash join e sort-merge |
+| D-P5-09 | Excesso em par alinhado sem novas gravações | decidida | Escolhas da P5 — hash join e sort-merge |
+| D-P5-10 | Teto físico de WORK e estatísticas correntes | decidida | Escolhas da P5 — hash join e sort-merge |
+| D-P5-11 | Reutilizar ordem e dividir WORK entre os sorts | decidida | Demais escolhas; Escolhas da P5 — hash join e sort-merge |
+| D-P5-12 | Fusão PK→FK sem acumular grupos | decidida | Escolhas da P5 — hash join e sort-merge |
+| D-P5-13 | Custos por entrada do sort-merge | decidida | Demais escolhas; Escolhas da P5 — hash join e sort-merge |
+| D-P5-14 | Validação com multiconjunto, cache frio e estresse separado | decidida | Escolhas da P5 — hash join e sort-merge |
 | D-P6-01 | Número de buckets comum nos pares hash do bucket-join | decidida | Funções de hash |
 | D-P6-02 | Memória do buffer constante em bytes no experimento de tamanho de bloco | decidida | Tamanhos de bloco; Descrição da base, dos campos e das chaves |
 | D-P6-03 | Seeds por tabela e distribuições dos dados | decidida | Descrição da base, dos campos e das chaves |

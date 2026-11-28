@@ -4,6 +4,12 @@
 
 **Peso:** ~16%. Você **consome** o P4 (`access.py`, `external_sort`, `select_eq_cost`), a camada 3 (P2/P3: `Table`, `HashFile.bucket_of/scan_bucket`, `Catalog.temp`, `hash_value`) e o P1 (`reserve_work`). Você **fornece** os dois joins e suas funções de custo para o P6.
 
+**Implementação P5 em 27/11.** As decisões vigentes estão em
+[`Enzo_decisoes.md`](../../Enzo_decisoes.md) e
+[`docs/decisoes/P5.md`](../decisoes/P5.md). O hash join mede espaço com o
+codec e o layout de página, guarda a saída em fluxo e usa os totais mantidos
+pelos arquivos. O sort-merge usa o adaptador e a ordenação real do P4.
+
 **Dependências e marcos:** o `access.py` do P4 sai até **09/11** e o `external_sort` até **12/11**. Até lá, escreva o hash join, que não depende do sort, e teste o sort-merge com um `external_sort` provisório (`sorted()`, só em teste e marcado como tal). Até **14/11**: os dois joins sobre heap, com testes. Até **16/11**: as variantes que aproveitam índices e as funções de custo.
 
 ---
@@ -36,7 +42,11 @@
 
 ## 2. Regras que valem para os dois joins
 
-- **Memória:** geral §3.4 e P4 §2. Toda estrutura Python que acumula registros fica dentro de `eng.bp.reserve_work(k)`, com no máximo `k · bfr` registros. O `bfr` de uma tabela vem de `table.stats().bfr`; o de uma partição ou fluxo vem da amostra (`_bfr_from_sample` do P4: importe de `cbd.exec.external_sort`).
+- **Memória:** geral §3.4 e P4 §2. O hash join usa `eng.bp.reserve_work(k)`
+  para o construtor ou lote. O teto por registros usa o bfr calculado com
+  os totais do arquivo ou da partição, e o codec verifica os bytes com o slot
+  e o cabeçalho de cada página (D-P5-10). A ordenação externa do P4 administra
+  a própria reserva, dentro do orçamento atribuído pelo sort-merge.
 - **Saída:** `r_rec + s_rec` na ordem dos **argumentos**, mesmo quando o algoritmo inverte os lados (geral §7.3).
 - **Chave `None`** nunca casa: descarte esses registros na entrada.
 - **`info`:** `variant`, `build` ("r"/"s"), `partitions`, `levels` (profundidade de recursão), `sorted_r`/`sorted_s` (bool: precisou ordenar?), `index_used` (bool).
@@ -63,7 +73,7 @@ Para cada lado:
 need = [side for side in (r, s) if read_ordered(side) is None]
 mem_each = eng.M // max(1, len(need))
 if need and mem_each < 3:
-    raise ValueError(f"sort-merge precisa de M >= {3 * len(need)}")
+    raise NotApplicable(f"sort-merge precisa de M >= {3 * len(need)}")
 ```
 
 Isso aumenta o número de passadas de cada sort em relação à fórmula com `M` inteiro. O `*_cost` usa o **mesmo** `mem_each`, então estimado e medido continuam comparáveis. Explique no relatório.
@@ -98,7 +108,7 @@ A fusão do join **é** a última passada de cada sort (pipeline), então:
 custo = Σ_lados  C(lado)
 C(lado) = external_sort_cost(eng, b_lado, mem=mem_each)           se precisa ordenar  (já inclui a leitura da fusão final)
         = h − 1 + b_lado                                          se PRIMARY BTREE (folhas)
-        = h_i − 1 + folhas_índice + n_lado · fetch_cost(tabela)   se SECONDARY BTREE
+        = h_i − 1 + folhas_índice + postagens + n_lado · fetch_cost(tabela)   se SECONDARY BTREE
 ```
 
 Compare com a fórmula do livro `b_r + b_s + custo dos sorts` (SKS), que materializa a saída do sort. Explique a diferença de `b_r + b_s` no relatório: o pipeline economiza uma gravação e uma leitura de cada lado.
@@ -114,10 +124,14 @@ Compare com a fórmula do livro `b_r + b_s + custo dos sorts` (SKS), que materia
 
 | Variante | Condição | Fases |
 | :--- | :--- | :--- |
+| `empty` | um lado tem zero registros | custo zero, inclusive se houver blocos alocados |
 | `in-memory` | `b_build ≤ M − 2` | sem partição: carrega o build num dict e varre o probe |
 | `bucket-join` | **os dois** lados `PRIMARY` em HASH, com mesmos `n_buckets` e `seed` e mesmo tipo de chave | sem partição: bucket `i` de r × bucket `i` de s |
-| `prepartitioned` | **um** lado `PRIMARY` em HASH | só o outro lado é particionado, alinhado aos buckets (§4.3) |
+| `prepartitioned` | **exatamente um** lado `PRIMARY` em HASH na coluna do join | só o outro lado é particionado, alinhado aos buckets, com `n_h ≤ N` |
 | `grace` | demais casos (inclusive índices B+ e secundários, que não ajudam o hash join) | particiona os dois |
+
+Após os atalhos vazio/direto, arquivos HASH primários com N ou seed
+incompatíveis entram em GRACE comum (D-P5-07, aceite #65).
 
 3. **Número de partições:** `n_h = ⌈1.2 · b_build / (M − 2)⌉` (fator de folga do SKS para partições desiguais), limitado a `M − 1`. Se o cálculo der mais que `M − 1`, use `M − 1` e conte com a recursão (§4.4).
 
@@ -134,7 +148,9 @@ def _partition(eng, side_iter, schema, col, n_h, seed):
     return parts
 ```
 
-- A **seed** do particionamento é `100 + nível`, sempre **diferente** da seed de um `HashFile` e da do nível anterior. Com a mesma função, a recursão não separaria nada.
+- A **seed** do GRACE é `100 + nível`. A seed muda entre níveis e é
+  independente da função de organização do arquivo. Seeds distintas oferecem
+  outra distribuição, mas chaves iguais continuam juntas.
 - **Build/probe** da partição `i`:
 
 ```python
@@ -149,6 +165,8 @@ with bp.reserve_work(M - 2) as k:            # sobra 1 frame para ler o probe e 
         for b in table.get(rec[kp], ()): yield orient(b, rec)
 ```
 
+Além do teto por bfr mostrado no esboço, a implementação cobra os bytes
+codificados, diretório de slots e espaço útil por página (D-P5-10).
 O `_Overflow` precisa ser tratado **antes** de qualquer `yield` daquela partição, senão haveria resultados duplicados. Por isso a construção é completa antes da sondagem.
 
 ### 4.3 Aproveitando o hash primário (`prepartitioned` e `bucket-join`)
@@ -157,14 +175,18 @@ O `HashFile` já divide os dados por `bucket_of(k)` (`(k + seed) % N` para chave
 
 - O lado HASH **não é particionado**: a partição `j` dele é lida com `scan_bucket(i)` para cada `i ≡ j (mod n_h)`. Economiza `2·b` (gravar e reler as partições desse lado).
 - O outro lado é particionado com a **mesma** regra: `hf.bucket_of(rec[k]) % n_h`, usando o `bucket_of` do arquivo hash e não o `hash_value` com seed própria.
-- Se o lado HASH for o build e a partição `j` não couber, materialize-a num temporário e caia na recursão do §4.4 (rara: só com skew).
+- Se o construtor de um par alinhado exceder a reserva, repita aquele par com
+  laço em blocos. A escolha D-P5-09 mantém bucket-join sem gravações e
+  prepartitioned com temporários apenas no lado externo.
 - **`bucket-join`:** com N e seed iguais nos dois lados, o bucket `i` de r só casa com o bucket `i` de s. Cost = `b_r + b_s` (sem gravações). O P6 configura esse caso forçando `OrgSpec.params["buckets"]` e `params["seed"]` iguais nas duas tabelas. **Avise o P2** para aceitar `params["seed"]`.
 
 Índices B+, índices secundários HASH e B+ primário **não** são usados pelo hash join (ler pelo índice só acrescentaria acessos aleatórios). Rode `grace` e marque `index_used=False`. Essa conclusão vai para o relatório e é legítima: o enunciado pede a comparação, não que todo índice ajude.
 
 ### 4.4 Recursão e skew
 
-Com o build no lado mestre (UNIQUE), não há skew: chaves distintas se espalham entre as partições. O skew só aparece se o build for forçado para o lado detalhe (`build=` explícito), como no experimento do lado construtor (P6 §4.2).
+O mestre UNIQUE evita concentração por repetição de uma mesma chave, mas
+chaves distintas também podem colidir. Skew total por uma chave repetida
+aparece no detalhe quando este é o construtor.
 
 Se uma partição de build não couber (`_Overflow`):
 
@@ -198,7 +220,7 @@ Seeks (SKS): `2(⌈b_r / b_b⌉ + ⌈b_s / b_b⌉) + 2·n_h` com `b_b = 1`. Pree
 | :--- | :--- | :--- |
 | a (nenhum índice) | ordena os dois | grace (ou in-memory) |
 | b (r PRIMARY) | r BTREE: sem sort em r; r HASH: ordena r | r HASH: prepartitioned; r BTREE: grace |
-| c (ambos PRIMARY) | BTREE: nenhum sort | HASH: bucket-join (N/seed iguais) ou prepartitioned |
+| c (ambos PRIMARY) | BTREE: nenhum sort; com um HASH, ordena esse lado | HASH: bucket-join (N/seed iguais) ou GRACE; se só um for HASH, prepartitioned |
 | d (r PRIMARY, s SECONDARY) | r BTREE: sem sort; s índice BTREE: ordem pelo índice | r HASH: prepartitioned; resto grace |
 | e (ambos SECONDARY) | ordem pelos índices BTREE (ou sort, se HASH) | grace (`index_used=False`) |
 
