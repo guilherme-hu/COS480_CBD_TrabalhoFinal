@@ -33,3 +33,8 @@
 - **Demais revisões:** corretude, contratos e recursos não apontaram bugs concretos nos componentes atuais. Validação pública de corrupção/NULL e orçamento da construção seguem L05/L04, não foram fechados nesta entrega.
 - **Integração incompleta conhecida:** criar btree_file.py faz importorskip deixar de ignorar o teste real de P4; create levanta NotImplementedError(L02). Essa falha não foi escondida nem corrigida com metadados inventados. Não é evidência de integração funcional.
 - **Falha anterior à implementação, detectada na suíte:** `bench.report.decision_cards` exige títulos `### D-Px-NN` e status reconhecido; cartões P3 existentes usam títulos `##` e D08 inicia status por “organização decidida”. A leitura do mesmo arquivo no HEAD anterior confirma a incompatibilidade. Dois testes de relatório falham por essa causa; não foi alterado relatório ou conteúdo das decisões nesta entrega. É pendência documental de integração, não defeito da navegação B+.
+
+## 28/11/2026 — Revisão documental de D-P3-09
+
+- **Achado confirmado antes da correção:** linha de acompanhamento do fan-out mantinha todas as capacidades de folhas como pendentes depois de D09 calcular o máximo físico secundário. Categoria: resumo desatualizado, gravidade baixa, revisor independente.
+- **Correção:** distinguir capacidade física secundária fechada, folhas primárias variáveis e preenchimento ainda aberto. Revisão conferiu offsets/capacidades e separação de livros versus convenção P2. Nenhum código alterado.

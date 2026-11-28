@@ -72,3 +72,14 @@
 - **Atuação:** quatro módulos P3 nos nomes previstos pela arquitetura; helpers operacionais de formato, chave/RID, descida/fetch isolados; interfaces públicas com NotImplementedError explícito. Testes com bytes literais, limites, duplicatas, páginas reais, cache frio, pins e erros; não inventar asserts para L01–L05.
 - **Rastreabilidade:** código inicial preservado em raw; revisões independentes nos quatro focos do AGENTS; cobertura de internos cheios fortalecida após achado registrado em review.md; plano/estado/estudo atualizados.
 - **Limite:** B+ persistente, carga, consultas públicas e secundário não implementados. Não fechar decisões, enfraquecer teste de colega, simular integração pronta ou commitar/push sem pedido.
+
+## 28/11/2026 — Codex — contador secundário e justificativa de P2
+
+- **Pedido:** Gabriel aprovou u32 LE e pediu pesquisar o motivo de P2 nos HTMLs externos ao repo. Pediu título/descrição para ele commitar a implementação parcial já staged; novas alterações da decisão não devem ser staged nem commitadas.
+- **Atuação:** pesquisa dos HTMLs e D-P2-05/código; D-P3-09 registra convenção LE para quantidade numérica, sem alegar desempenho ou recomendação dos livros; offsets/capacidades e L01 fechados no plano/estado.
+- **Limite:** nenhuma mudança de código, raw, index ou decisões além da aprovada. Site contém exemplo INT8 antigo; vale INT4 do cartão/código revisados.
+
+## 28/11/2026 — Codex — sincronizar estados e próxima prioridade
+
+- **Pedido:** Gabriel pediu conferir atualização do Notion, fechar o estado de formatos após D09 e identificar a próxima decisão prioritária, mantendo metadados no grupo4.
+- **Atuação:** atualizadas propriedades e textos dos registros de formato, grupos secundários, grupos grandes e metadados; preservadas Notas e demais propriedades. Formato e grupos aprovados; bloco1 ainda pendente. Proposta de próxima discussão: L02, sem aprovação/registro de layout novo.

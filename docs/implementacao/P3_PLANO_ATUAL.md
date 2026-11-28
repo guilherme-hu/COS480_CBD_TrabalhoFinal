@@ -1,6 +1,6 @@
 # P3 — Especificação atual para implementação incremental
 
-Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel. **Especificação parcial, baseada nas escolhas aprovadas D-P3-01 a D-P3-08. Componentes isolados implementados; árvore completa ainda indisponível.** Substitui o roteiro anterior deste arquivo. O guia histórico `P3_arvore_bplus.md` não é fonte técnica atual.
+Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel. **Especificação parcial, baseada nas escolhas aprovadas D-P3-01 a D-P3-09. Componentes isolados implementados; árvore completa ainda indisponível.** Substitui o roteiro anterior deste arquivo. O guia histórico `P3_arvore_bplus.md` não é fonte técnica atual.
 
 ## 1. Como usar esta especificação
 
@@ -97,13 +97,13 @@ Folha: SlottedPage, uma entrada por chave, com esta ordem lógica de bytes:
 
 `encode_key(campo, valor) | quantidade TOTAL do grupo | início do grupo (bloco u32 + slot u16)`
 
-**L01 bloqueia o formato binário final:** largura/codificação da quantidade ainda não aprovada. Proposta mais recente: u32 little-endian; não transformá-la em constante ou offset definitivo sem aprovação. Tamanho da entrada é `key_size + C + 6`, sendo C a largura ainda aberta. Não publicar capacidade numérica da folha sem C.
+**L01 fechada por D-P3-09:** quantidade total u32 little-endian, 4 B, domínio 1…2³²−1; recusar excesso sem wrap. Entrada de `K+10` B: chave em0…K−1, quantidade emK…K+3, bloco u32 LE emK+4…K+7, slot u16 LE emK+8…K+9. Em B4096, máximos físicos de 227 entradas K4 e 185 K8; preenchimento ainda é L03. Isso autoriza o formato, não comprova sua implementação.
 
 Auxiliar: SlottedPage, um `data.encode_ptr(ptr)` por slot, com tamanho `data.ptr_size`. Para os arquivos atuais são 6 B; não reimplementar a codificação do arquivo de dados. Posição inicial bloco/slot aponta para o arquivo do índice; os RIDs armazenados apontam para o arquivo de dados. São contextos diferentes.
 
 Grupos consecutivos por chave, preservando a ordem de entrada dentro do grupo. Catálogo atual ordena também por RID; a consulta não exige pesquisa binária por RID. Não exigir ordem global de RIDs entre chaves distintas.
 
-Procedimento de leitura de um grupo, independente da largura C:
+Procedimento de leitura de um grupo (quantidade decodificada conforme D-P3-09):
 
 1. Receber localização inicial e quantidade total já decodificadas.
 2. Ir diretamente ao bloco/slot indicado; não começar no slot 0 se o grupo começa no meio da página.
@@ -123,9 +123,9 @@ Auxiliares podem conter fim de um grupo e começo de outro. Não precisam armaze
 | Percurso descendente | Em cada interno, escolher filho pela comparação completa e igualdade à direita; usar nível para interpretar página | Perfil e altura fornecidos pelo chamador em teste; abertura real depende L02 |
 | Igualdade/faixas primárias | Procurar início da faixa pelo campo; na NOT UNIQUE incluir/excluir todos os IDs de uma chave conforme os limites; seguir next até fim da faixa | Não inventar sentinelas persistidas; representação exata dos limites em memória e validação em L05 |
 | Scan primário | Percorrer folhas em ordem e emitir `(RID, registro)` sem vazar views; preservar identidade dos slots | Primeira folha/árvore vazia de L02; iteradores e pins em L04/L05 |
-| Leitura auxiliar | Procedimento da seção 4.4, retornando referências sem interpretar registros de dados | Decodificação da entrada de folha depende L01; política de erro/pins em L04/L05 |
+| Leitura auxiliar | Procedimento da seção 4.4, retornando referências sem interpretar registros de dados | Formato da entrada fechado D09; política de erro/pins em L04/L05 |
 | Construção das folhas | Receber entradas ordenadas; IDs na primária NOT UNIQUE; ligações para a frente; limites de entrada | Política dos grupos finais/preenchimento L03; memória L04 |
-| Construção do secundário | Agrupar chaves iguais sem materializar implicitamente lista ilimitada; registrar primeiro slot e quantidade; gerar folhas distintas do fluxo auxiliar | L01/L03/L04; não prometer algoritmo com memória limitada antes de defini-lo |
+| Construção do secundário | Agrupar chaves iguais sem materializar implicitamente lista ilimitada; registrar primeiro slot e quantidade; gerar folhas distintas do fluxo auxiliar | L03/L04; formato fechado D09; não prometer algoritmo com memória limitada antes de defini-lo |
 | Construção dos níveis internos | A partir dos filhos, representar cada mínimo e bloco; construir de baixo para cima até raiz | Distribuição dos últimos grupos L03; armazenamento de descritores L04; publicar meta em L02 |
 | create/open/close | Implementar chamadas reais do catálogo; persistir/reabrir o mesmo formato; limpar recursos | L02: não gravar um bloco1 inventado para declarar create/open prontos |
 | stats/recusa de manutenção | Cumprir forma consumida pelo catálogo/P4; recusar operações antes de alteração parcial | L05; não copiar expectativas de manutenção do guia antigo |
@@ -154,13 +154,13 @@ Contabilizar páginas de referências do secundário como auxiliares, não folha
 
 | ID | Falta decidir | Não fazer antes de fechar |
 | :--- | :--- | :--- |
-| L01 — Contador secundário | Largura, endianness e domínio da quantidade total. Proposta: u32 LE de 4 B | Não fixar offsets/capacidade nem persistir entradas secundárias completas |
+| L01 — Contador secundário — FECHADA | D-P3-09: u32 LE de 4 B, domínio1…2³²−1; formato K+10 B | Abertura/construção/validação continuam L02–L05; não confundir decisão com código entregue |
 | L02 — Bloco1 e abertura | Localização bloco1 aceita; faltam campos/offsets, magic/versão, raiz/primeira folha/altura, contadores, perfil/tamanhos persistidos ou derivados, validação e árvore vazia | Não publicar create/open funcionais nem inventar root=0/altura=0 ou outro default |
 | L03 — Preenchimento/ocupação | Quanto ocupar folhas/internos e como distribuir últimos grupos/raiz com entradas variáveis; restrições para entradas grandes | Não adotar fill0.9/min_fill0.5 nem finalizar um builder multinível sem tratar grupos finais |
 | L04 — Construção e memória | Estratégia para descritores entre níveis, orçamento da carga, pins simultâneos, áreas para páginas e limpeza de falhas | Não guardar toda a árvore/grupo em listas por conveniência; não alegar respeito ao orçamento sem verificar |
 | L05 — Comportamento compartilhado | Recusa de mutação/recarga/reorganize, exceções/validação de referências e limites/NULL, semântica final das estatísticas e alinhamento de consumidores | Não remover contratos unilateralmente, fazer alterações parciais ou esconder falhas com respostas vazias |
 
-O estado de L02 pertence ao item do grupo 4 no Notion, não impede aprovar o formato dos nós/folhas. Esse último permanece Parcial somente pelo campo ainda aberto em L01. Implementação e decisão têm estados separados. A lista é um checklist de dependências, não compromisso de cinco novas discussões extensas: podemos fechar convenções relacionadas juntas.
+O estado de L02 pertence ao item do grupo 4 no Notion, não impede aprovar o formato dos nós/folhas. Com L01 fechada, o formato dos internos e das três folhas está decidido; metadados, preenchimento e construção continuam itens separados. Implementação e decisão têm estados separados. A lista é um checklist de dependências, não compromisso de cinco novas discussões extensas: podemos fechar convenções relacionadas juntas.
 
 ## 9. Sequência incremental e critérios de entrega
 
@@ -177,7 +177,7 @@ O estado de L02 pertence ao item do grupo 4 no Notion, não impede aprovar o for
 
 **Não confundir testes de componentes com integração pronta.** `tests/test_btree_node.py` e `tests/test_btree_partial.py` testam bytes literais, nós cheios, prefixos/limites/RIDs, descida multinível, fetch, páginas encadeadas de teste e liberação em erros. As páginas/raízes dos testes são preparadas explicitamente; não existe builder, scan público, leitor de grupos auxiliares ou BTreeFile.open funcional. Reabertura testada é a de P1, não a árvore completa.
 
-Os testes dos esqueletos provam somente que falham claramente antes de I/O/consumo de entradas. Não provam os comportamentos futuros. Para L01–L05, manter os critérios abaixo como checklist até aprovar resultados esperados; não criar asserts de valores escolhidos por conveniência.
+Os testes dos esqueletos provam somente que falham claramente antes de I/O/consumo de entradas. Não provam os comportamentos futuros. Para as lacunas ainda abertas L02–L05, manter os critérios abaixo como checklist até aprovar resultados esperados; não criar asserts de valores escolhidos por conveniência.
 
 **Efeito sobre teste existente:** a presença de `btree_file.py` ativa `tests/test_access.py::test_access_with_real_btree`, anteriormente ignorado por ausência do módulo. Ele continua falhando em create por L02. Não foi alterado nem enfraquecido. Não anunciar suíte ou integração verdes enquanto essa dependência persistir.
 
@@ -189,7 +189,7 @@ Os testes dos esqueletos provam somente que falham claramente antes de I/O/consu
 | B. Folhas primárias e fluxo auxiliar em páginas reais | Sim para unidades isoladas; políticas completas seguem lacunas | SlottedPage + buffer real; slots/next; grupos começando no meio e atravessando páginas; pins liberados |
 | C. Arquivo persistente mínimo | Depois L02; builder limitado deve declarar seu alcance e ser aprovado como entrega parcial | Criar/carregar/scan/fetch/fechar/reabrir com registros reais, sem formato temporário escondido |
 | D. Árvore multinível e acessos | Depois L03/L04, completando limites L05 | Separadores/mínimos corretos, igualdade/faixas e duplicatas entre folhas, grupos finais e reabertura |
-| E. Secundário completo e integração | Depois L01/L02 e fechamento das dependências acima | Uma entrada por chave, referências e grupos completos, fetch no arquivo real e comparação com referência |
+| E. Secundário completo e integração | Depois L02 e fechamento das dependências acima; L01 já fechada | Uma entrada por chave, referências e grupos completos, fetch no arquivo real e comparação com referência |
 
 Não reimplementar componentes já entregues quando avançar de etapa: estender e testar os mesmos formatos. Lacunas devem ficar localizadas, com seu ID e motivo, sem uma infraestrutura genérica de placeholders. Testes com dublês provam lógica isolada, não medições de I/O.
 
@@ -205,6 +205,6 @@ Não reimplementar componentes já entregues quando avançar de etapa: estender 
 
 ## 10. Fontes e acompanhamento
 
-Os cartões D-P3-01…08 contêm as justificativas: enunciado vigente, SKS §§13.2.2,14.3.1,14.3.5,14.4.1,14.4.4 e E&N §§17.1.3,17.3.2,17.6.1–2, mais decisões/código de P1/P2. Arquitetura/contratos existentes definem consumidores; divergências estão explicitadas acima, não resolvidas por copiar o guia antigo.
+Os cartões D-P3-01…09 contêm as justificativas: enunciado vigente, SKS §§13.2.2,14.3.1,14.3.5,14.4.1,14.4.4 e E&N §§17.1.3,17.3.2,17.6.1–2, mais decisões/código de P1/P2. Arquitetura/contratos existentes definem consumidores; divergências estão explicitadas acima, não resolvidas por copiar o guia antigo.
 
 [Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens/cinco grupos, com estado da decisão separado da implementação. A entrega parcial acima não aprova as lacunas; o estado executável deste documento é mais específico que o estado amplo de decisão no mapa.

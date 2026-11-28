@@ -18,7 +18,7 @@
 
 - D-P3-07 registrada: folhas primárias com SlottedPage/codecP2; UNIQUE só registro, NOT UNIQUE ID 4 B + registro. Sem cópia extra da chave; limites B−14/B−18. Codec de entradas implementado; builder e consultas públicas pendentes.
 
-- D-P3-08 registrada: folha secundária com chave/quantidade total/início bloco-slot e auxiliares SlottedPage compartilhadas/encadeadas. Quantidade delimita grupos, não páginas. Largura/codificação dessa quantidade ainda pendente; sem implementação.
+- D-P3-08 registrada: folha secundária com chave/quantidade total/início bloco-slot e auxiliares SlottedPage compartilhadas/encadeadas. Quantidade delimita grupos, não páginas. Largura/codificação fechadas por D-P3-09: u32 LE de 4 B; secundário sem implementação.
 
 ## Em andamento
 
@@ -26,7 +26,7 @@
 
 ## Falta
 
-- Decidir largura/codificação da quantidade total no secundário e conteúdo/validação do bloco 1 (próximas discussões), árvore vazia e ocupação/preenchimento. Organização das listas auxiliares definida em D-P3-08. Internos/fan-out máximo D-P3-06 têm testes isolados; não há builder multinível.
+- Decidir conteúdo/validação do bloco 1, árvore vazia e ocupação/preenchimento. L01 fechada em D-P3-09: quantidade total secundária u32 LE de 4 B. Organização das listas auxiliares definida em D-P3-08. Internos/fan-out máximo D-P3-06 têm testes isolados; não há builder multinível.
 - Alinhar rejeição de manutenção com P2 e retirada da variante incremental com P6. Nenhum desses ajustes foi realizado.
 - Implementar `BTreeFile` e `BTreeIndex` com os acessos necessários, persistência, estatísticas e testes.
 - Atualizar critérios das issues afetadas com autorização de Gabriel antes de qualquer escrita no GitHub.
@@ -52,7 +52,7 @@
 
 ## Decisões provisórias a rever
 
-- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-08 têm escolhas aprovadas; D-P3-08 ainda depende da largura do contador total; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
+- Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-09 têm escolhas aprovadas; L01 fechada; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
 ## Testes e validação — histórico documental
 
@@ -77,3 +77,14 @@
 - Primeira execução sem `-X utf8` também revelou falhas por leitura cp1252 de fontes UTF-8; repetir em modo UTF-8 removeu esses erros sem mudar arquivos de colegas. Usar esse modo nas próximas verificações em Windows.
 - Suíte completa iniciada, mas interrompida sem resumo final; não declarar que o estresse completo passou. Esta entrega parcial não implementa construção, manutenção ou concorrência de iteradores.
 - Revisão independente e simulação de regressão em nós cheios concluídas; `git diff --check` e fronteiras de camada conferidos. Nenhum commit/push.
+
+## D-P3-09 — Contador secundário aprovado, 28/11/2026
+
+- Quantidade total do grupo: u32 little-endian, 4 B, 1…2³²−1, sem wrap. Entrada K+10 B; máximos físicos em B4096: 227 para K4, 185 para K8. Não é preenchimento nem medição. Formato dos nós/folhas decidido; bloco1 segue item separado.
+- Site de P2 confirma LE nos controles e explica BE nas chaves. Não foi encontrada justificativa comparativa para LE ou ganho nativo; não atribuir isso a Guilherme. Livro fundamenta os grupos externos, não endianness/contador.
+- Documentação e plano atualizados; código, testes e raw da entrega parcial não alterados. Novas alterações ficam somente na árvore de trabalho, sem stage/commit. Commit da implementação anterior fica a cargo de Gabriel.
+
+## Sincronização do mapa Notion — 28/11/2026
+
+- Após D-P3-09, formato dos nós/folhas e grupos secundários passaram de Parcial para Aprovada. O item de formato indica Base disponível (componentes isolados), não árvore completa. Removidas pendências de largura também do item de grupos maiores que uma página.
+- Metadados: raiz, altura e primeira folha (Bloco1) continuam Pendentes no grupo4; corpo desse registro foi alinhado à convenção de localização já aceita. Nenhuma decisão nova de metadados tomada. Próxima prioridade proposta: L02.
