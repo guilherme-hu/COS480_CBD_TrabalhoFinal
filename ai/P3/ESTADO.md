@@ -4,11 +4,12 @@
 
 - Branch local `p3/44-btree-bulk-loading` criada sobre `baae948`; comparação pelo conector GitHub confirmou que esse commit coincidia com `main` no início da sessão.
 - `docs/decisoes/P3.md`: D-P3-01 (bulk-only, somente leitura após construção), resumo, premissas de P1/P2, referências e pendências. É documentação, não prova de implementação.
+- D-P3-02 registrada: §3.4.1, um campo da tabela por B+ primária UNIQUE/NOT UNIQUE; representação de duplicatas permanece pendente.
 - Guia P3 com aviso do escopo revisto e resumo atualizado; `docs/estudo/P3.md` com explicação e perguntas de fixação.
 
 ## Em andamento
 
-- Issue #44: layout e decisões §3.4. A decisão de carga está registrada, mas os demais critérios não estão concluídos.
+- Issue #44: layout e decisões §3.4. Método de carga (§3.4.4) e campo único (§3.4.1) registrados; critérios de layout/implementação ainda não concluídos.
 
 ## Falta
 
@@ -22,7 +23,8 @@
 | Enunciado § | Onde está | Teste/prova |
 | :--- | :--- | :--- |
 | §3.4.4 e justificativa §7.2.2.a | `docs/decisoes/P3.md`, D-P3-01 | Escolha documentada; nenhum teste de B+ ainda |
-| §3.4.1–3, §4.2 e acessos §5 | Pendentes | Nenhum teste de B+ ainda |
+| §3.4.1 | `docs/decisoes/P3.md`, D-P3-02 | Escolha documentada; nenhum teste de B+ ainda |
+| §3.4.2–3, §4.2 e acessos §5 | Pendentes | Nenhum teste de B+ ainda |
 | §6.1.1 manutenção | Limitação do recorte registrada em D-P3-01 | Sem alegação de manutenção dinâmica implementada |
 
 ## Desvios ou dúvidas sobre o contrato
@@ -32,7 +34,7 @@
 
 ## Decisões provisórias a rever
 
-- Nenhuma nova escolha técnica provisória. D-P3-01 é decidida; seus detalhes pendentes estão enumerados no cartão e não devem ser preenchidos silenciosamente.
+- Nenhuma nova escolha técnica provisória. D-P3-01 e D-P3-02 são decididas; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
 ## Testes e validação
 

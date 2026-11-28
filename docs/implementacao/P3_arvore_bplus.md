@@ -8,6 +8,8 @@
 
 **Marcos do plano anterior (superados por D-P3-01):** até **09/11**: `BTreeFile` com `insert`/`search`/`range`/`scan`/`fetch` e split propagando até a raiz. Até **14/11**: `delete` com redistribuição e fusão, `bulk_load`, `BTreeIndex` não-unique, `reorganize`.
 
+> **Chave de ordenação — [D-P3-02](../decisoes/P3.md), §3.4.1:** cada B+ primária usa um único campo da tabela, tanto em UNIQUE quanto em NOT UNIQUE. Não oferecer combinação de campos da tabela. A representação interna das duplicatas, inclusive eventual `seq`, permanece pendente; esta escolha não a resolve.
+
 ---
 
 ## Em resumo (leia primeiro)
