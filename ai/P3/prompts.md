@@ -53,3 +53,9 @@
 - **Pedido:** após fazer o commit anterior, Gabriel aprovou registrar a reutilização de SlottedPage/RecordCodec nas folhas primárias UNIQUE e NOT UNIQUE, com justificativa concisa nos livros e responsabilidade já exercida por P2.
 - **Atuação:** D-P3-07 no resumo/cartão; NOT UNIQUE prefixa ID4, UNIQUE só registro; sem chave duplicada. Atualizados roteiro/estado/estudo e acompanhamento Notion, preservando estado Parcial do layout amplo.
 - **Limite:** sem código compartilhado modificado, implementação B+, commit ou push. Preenchimento, metadados completos e secundário continuam abertos.
+
+## 28/11/2026 — Codex — secundário com auxiliares, commit autorizado
+
+- **Pedido:** Gabriel autorizou registrar e commitar a escolha de auxiliares do secundário e atualizar Notion; pediu explicar a quantidade total e separar prova nos livros de adaptações nossas.
+- **Atuação:** D-P3-08: folha chave/quantidade/início; RIDs em auxiliares SlottedPage compartilhadas e encadeadas; parada pela quantidade. Livro E&N §17.1.3 opção3/fig17.5 descreve blocos de referências e cadeia; compartilhamento/quantidade são escolhas do projeto.
+- **Limite:** largura/codificação da quantidade total ainda não aprovadas; estado amplo permanece Parcial. Sem implementação ou mudança em código de colegas. Commit local só desta documentação autorizado; sem push.
