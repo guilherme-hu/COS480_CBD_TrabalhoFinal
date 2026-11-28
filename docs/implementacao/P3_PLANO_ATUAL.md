@@ -1,11 +1,11 @@
 # P3 — Especificação atual para implementação incremental
 
-Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel. **Especificação parcial, baseada nas escolhas aprovadas D-P3-01 a D-P3-08; não comprova implementação.** Substitui o roteiro anterior deste arquivo. O guia histórico `P3_arvore_bplus.md` não é fonte técnica atual.
+Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel. **Especificação parcial, baseada nas escolhas aprovadas D-P3-01 a D-P3-08. Componentes isolados implementados; árvore completa ainda indisponível.** Substitui o roteiro anterior deste arquivo. O guia histórico `P3_arvore_bplus.md` não é fonte técnica atual.
 
 ## 1. Como usar esta especificação
 
 1. Ler os [cartões P3](../decisoes/P3.md) para justificativas e limites; este documento operacionaliza essas escolhas, não cria outras.
-2. Conferir [contracts.py](../../cbd/contracts.py), [catálogo P2](../../cbd/files/catalog.py), [codec](../../cbd/records/codec.py), [SlottedPage](../../cbd/records/slotted_page.py) e [buffer P1](../../cbd/storage/buffer_pool.py) antes de usar uma API. Assinaturas reais prevalecem sobre pseudocódigo.
+2. Antes de usar uma função de P1/P2, conferir no código seu nome, os parâmetros que recebe e o que devolve: [contracts.py](../../cbd/contracts.py), [catálogo P2](../../cbd/files/catalog.py), [codec](../../cbd/records/codec.py), [SlottedPage](../../cbd/records/slotted_page.py) e [buffer P1](../../cbd/storage/buffer_pool.py). As descrições deste plano não substituem essa conferência.
 3. Implementar uma unidade pequena de comportamento e seus testes, preservando os formatos aprovados. Não implementar tudo num único passo.
 4. **Não preencher uma lacuna com um default silencioso.** Consultar a seção 8; uma proposta não aprovada não pode virar formato persistente. Uma lacuna dependente de nova decisão não impede código independente dela.
 5. Quando autorizado a começar código, registrar a primeira versão dos componentes importantes em `ai/P3/raw/` antes de refinar; nunca reescrever raw. Registrar revisão/defeitos conforme AGENTS.md.
@@ -30,7 +30,7 @@ Atualizada em 28/11/2026. Destinatário: agente que implementará P3 com Gabriel
 
 ### Arquivos e interfaces públicas
 
-Mapa previsto na arquitetura existente, ainda sem código P3: `cbd/files/btree_node.py` (bytes/operações de nós), `btree_core.py` (navegação/construção comum), `btree_file.py` (DataFile) e `btree_index.py` (Index). Separar essas responsabilidades sem criar hierarquias genéricas ou APIs públicas novas para possibilidades hipotéticas. Helpers privados podem ser escolhidos durante a implementação.
+Mapa previsto na arquitetura existente, agora com componentes parciais e esqueletos: `cbd/files/btree_node.py` (bytes/operações de nós), `btree_core.py` (navegação/construção comum), `btree_file.py` (DataFile) e `btree_index.py` (Index). Separar essas responsabilidades sem criar hierarquias genéricas ou APIs públicas novas para possibilidades hipotéticas. Helpers privados podem ser escolhidos durante a implementação.
 
 | Classe | Chamadas reais do catálogo e contrato |
 | :--- | :--- |
@@ -164,6 +164,25 @@ O estado de L02 pertence ao item do grupo 4 no Notion, não impede aprovar o for
 
 ## 9. Sequência incremental e critérios de entrega
 
+### Estado executável atual — primeira entrega parcial
+
+| Componente | Implementado e verificado | Ainda não entregue |
+| :--- | :--- | :--- |
+| `btree_node.py::_InternalPage` | Formato D06, leitura/escrita, limite físico, busca pelo separador completo com igualdade à direita | Construção/ocupação da árvore, identificação de níveis por metadados |
+| `btree_node.py::_PrimaryEntries` | Registro P2, prefixo opcional D05/D07, extração de chave completa, limites de tamanho | Gerador global de IDs na carga, divisão/distribuição das folhas, recusa UNIQUE na carga |
+| `btree_node.py::_encode_rid/_decode_rid` | Bytes D04, também usados por encode_ptr/decode_ptr de BTreeFile | API final de referência inválida em L05 |
+| `btree_core.py::_descend` | Navegação por contexto explícito (fid/raiz/altura/k/área), sem ler folha; no máximo um pin | Descobrir esse contexto ao abrir bloco1; limites de busca por campo L05 |
+| `btree_core.py::_fetch_primary` | Fetch físico e retirada de prefixo antes do codec, sem devolver view | Ligação a objeto de arquivo aberto e validação pública L02/L05 |
+| `BTreeFile`, `BTreeIndex`, `expected_height` | Superfícies conhecidas com NotImplementedError referindo lacunas; sem respostas fictícias | Criar/abrir/carregar/consultar/estatísticas/fechar; estimativa de altura; rejeição final de manutenção |
+
+**Não confundir testes de componentes com integração pronta.** `tests/test_btree_node.py` e `tests/test_btree_partial.py` testam bytes literais, nós cheios, prefixos/limites/RIDs, descida multinível, fetch, páginas encadeadas de teste e liberação em erros. As páginas/raízes dos testes são preparadas explicitamente; não existe builder, scan público, leitor de grupos auxiliares ou BTreeFile.open funcional. Reabertura testada é a de P1, não a árvore completa.
+
+Os testes dos esqueletos provam somente que falham claramente antes de I/O/consumo de entradas. Não provam os comportamentos futuros. Para L01–L05, manter os critérios abaixo como checklist até aprovar resultados esperados; não criar asserts de valores escolhidos por conveniência.
+
+**Efeito sobre teste existente:** a presença de `btree_file.py` ativa `tests/test_access.py::test_access_with_real_btree`, anteriormente ignorado por ausência do módulo. Ele continua falhando em create por L02. Não foi alterado nem enfraquecido. Não anunciar suíte ou integração verdes enquanto essa dependência persistir.
+
+### Próximas entregas
+
 | Entrega | Pode começar com escolhas atuais? | Evidência mínima antes de chamar de pronta |
 | :--- | :--- | :--- |
 | A. Formato interno e entradas primárias | Sim, quando Gabriel pedir código | Testes de bytes/limites; k4/8/12; round-trip do codec/ID; erros de tamanho |
@@ -188,4 +207,4 @@ Não reimplementar componentes já entregues quando avançar de etapa: estender 
 
 Os cartões D-P3-01…08 contêm as justificativas: enunciado vigente, SKS §§13.2.2,14.3.1,14.3.5,14.4.1,14.4.4 e E&N §§17.1.3,17.3.2,17.6.1–2, mais decisões/código de P1/P2. Arquitetura/contratos existentes definem consumidores; divergências estão explicitadas acima, não resolvidas por copiar o guia antigo.
 
-[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens/cinco grupos, com estado da decisão separado da implementação. Esta revisão mudou a utilidade do documento, não aprovou escolhas pendentes nem iniciou código de execução.
+[Mapa de decisões no Notion](https://app.notion.com/p/4269ab021b6d81508de1d7317021236f): mesmos 23 itens/cinco grupos, com estado da decisão separado da implementação. A entrega parcial acima não aprova as lacunas; o estado executável deste documento é mais específico que o estado amplo de decisão no mapa.

@@ -9,14 +9,14 @@
 - `docs/implementacao/P3_PLANO_ATUAL.md`: especificação operacional parcial para implementação incremental, com formatos aprovados, comportamentos, invariantes, entregas e lacunas L01–L05. Separada do guia histórico desatualizado; não é código pronto.
 - Guia P3 com aviso do escopo revisto e resumo atualizado; `docs/estudo/P3.md` com explicação e perguntas de fixação.
 
-- D-P3-04 registrada: referência física bloco + slot, 6 B no formato de P2, para primária UNIQUE e NOT UNIQUE; ainda sem implementação.
+- D-P3-04 registrada: referência física bloco + slot, 6 B no formato de P2, para primária UNIQUE e NOT UNIQUE; codificação e fetch isolados implementados, integração pública pendente.
 - Notion: mapa editável com 23 itens em cinco grupos, estados coloridos e implementação separada; base collection://4269ab02-1b6d-81f0-a41a-000bb0ca0dda.
 
 - D-P3-05: contador global por árvore desde 1, u32 de 4 B big-endian, somente primária NOT UNIQUE. Persistir IDs nas entradas; sem contador de próximas inserções. Layout e implementação pendentes.
 
-- D-P3-06 registrada: layout compacto dos internos comum aos três usos; k por perfil, fan-out calculado, sem irmãos/pai/slots. Código ainda inexistente. Layout amplo continua parcial.
+- D-P3-06 registrada: layout compacto dos internos comum aos três usos; k por perfil, fan-out calculado, sem irmãos/pai/slots. Codec de página e roteamento isolados agora implementados; árvore persistente pendente. Layout amplo continua parcial.
 
-- D-P3-07 registrada: folhas primárias com SlottedPage/codecP2; UNIQUE só registro, NOT UNIQUE ID 4 B + registro. Sem cópia extra da chave; limites B−14/B−18. Ainda sem implementação.
+- D-P3-07 registrada: folhas primárias com SlottedPage/codecP2; UNIQUE só registro, NOT UNIQUE ID 4 B + registro. Sem cópia extra da chave; limites B−14/B−18. Codec de entradas implementado; builder e consultas públicas pendentes.
 
 - D-P3-08 registrada: folha secundária com chave/quantidade total/início bloco-slot e auxiliares SlottedPage compartilhadas/encadeadas. Quantidade delimita grupos, não páginas. Largura/codificação dessa quantidade ainda pendente; sem implementação.
 
@@ -26,7 +26,7 @@
 
 ## Falta
 
-- Decidir largura/codificação da quantidade total no secundário e conteúdo/validação do bloco 1 (próximas discussões), árvore vazia e ocupação/preenchimento. Organização das listas auxiliares definida em D-P3-08. Internos/fan-out máximo definidos em D-P3-06, ainda sem testes de implementação.
+- Decidir largura/codificação da quantidade total no secundário e conteúdo/validação do bloco 1 (próximas discussões), árvore vazia e ocupação/preenchimento. Organização das listas auxiliares definida em D-P3-08. Internos/fan-out máximo D-P3-06 têm testes isolados; não há builder multinível.
 - Alinhar rejeição de manutenção com P2 e retirada da variante incremental com P6. Nenhum desses ajustes foi realizado.
 - Implementar `BTreeFile` e `BTreeIndex` com os acessos necessários, persistência, estatísticas e testes.
 - Atualizar critérios das issues afetadas com autorização de Gabriel antes de qualquer escrita no GitHub.
@@ -35,10 +35,12 @@
 
 | Enunciado § | Onde está | Teste/prova |
 | :--- | :--- | :--- |
-| §3.4.4 e justificativa §7.2.2.a | `docs/decisoes/P3.md`, D-P3-01 | Escolha documentada; nenhum teste de B+ ainda |
-| §3.4.1 | `docs/decisoes/P3.md`, D-P3-02 | Escolha documentada; nenhum teste de B+ ainda |
-| §3 / parte de §3.4.2: duplicatas da primária | `docs/decisoes/P3.md`, D-P3-03 | Desempate escolhido; formato completo e testes ainda pendentes |
-| §3.4.2–3, §4.2 e acessos §5 | Pendentes | Nenhum teste de B+ ainda |
+| §3.4.4 e justificativa §7.2.2.a | `docs/decisoes/P3.md`, D-P3-01 | Escolha documentada; bulk loading ainda não implementado |
+| §3.4.1 | `docs/decisoes/P3.md`, D-P3-02 | Codec usa um campo; não há árvore pública funcional |
+| §3 / parte de §3.4.2: duplicatas da primária | D-P3-03/05/07 e `btree_node.py` | `test_btree_node.py` prova prefixo e comparação; `test_btree_partial.py` preserva duplicatas em folhas de teste |
+| Parte de §3.4.2: internos/fan-out | D-P3-06 e `_InternalPage` | Bytes literais k4/8/12, nós cheios e roteamento; construção permanece pendente |
+| Referências físicas e parte dos acessos §5 | D-P3-04, `_fetch_primary`, `_descend` | Fetch frio = 1 folha; altura3 = 2 internos + 1 folha nos testes isolados |
+| §3.4.3, §4.2 e acessos públicos §5 | Pendentes | Sem alegação de construção, secundário ou integração completos |
 | §6.1.1 manutenção | Limitação do recorte registrada em D-P3-01 | Sem alegação de manutenção dinâmica implementada |
 
 ## Desvios ou dúvidas sobre o contrato
@@ -52,9 +54,26 @@
 
 - Nenhuma nova escolha técnica provisória. D-P3-01 a D-P3-08 têm escolhas aprovadas; D-P3-08 ainda depende da largura do contador total; detalhes pendentes estão enumerados nos cartões e não devem ser preenchidos silenciosamente.
 
-## Testes e validação
+## Testes e validação — histórico documental
 
 - Nenhuma implementação B+ foi entregue nesta sessão. Não usar este documento para afirmar que a B+ já funciona.
 - `git diff --check`: sem erros. Links relativos dos documentos novos conferidos.
 - Revisor independente, somente leitura, conferiu as premissas atribuídas a P1/P2 contra cartões e código e não apontou divergências.
 - `python -X utf8 -m pytest -q` foi iniciado como referência, mas interrompido sem resumo final: a suíte inclui estresse de um milhão de operações de buffer. Não há resultado completo aprovado nesta sessão; a entrega altera apenas documentação.
+
+## Primeira implementação parcial — 28/11/2026
+
+- Autorizada por Gabriel: componentes aprovados e esqueletos para lacunas conhecidas, sem escolher resultados/formatos pendentes. Nenhum código de P1/P2/P4/P6 modificado.
+- Arquivos `cbd/files/btree_node.py` e `btree_core.py`: internos, codec de entradas, RID, descida por contexto explícito e fetch físico. Interfaces públicas em `btree_file.py` e `btree_index.py` permanecem esqueletos, exceto codificação do RID.
+- Primeiras versões completas preservadas em `ai/P3/raw/*_v1.py` antes de refinamentos. Não editar raw.
+- Quatro focos de revisão independente: corretude, contratos, recursos e testes. Sem bugs concretos nos componentes; lacunas de cobertura corrigidas e registradas em review.md.
+- NÃO afirmar que colegas já podem usar a B+. `create/open` falham em L02 antes de I/O; `test_access_with_real_btree` agora é ativado pelo módulo e falha nessa dependência. Nenhum teste antigo alterado.
+- Validação final desta entrega será registrada abaixo; sem commit/push automático.
+
+### Resultado desta entrega parcial
+
+- `python -m pytest -q tests/test_btree_node.py tests/test_btree_partial.py`: **46 passaram**. Testes de bytes/formato, componentes com P1/P2 reais e falha explícita dos esqueletos; não provam uma árvore pública utilizável.
+- `python -X utf8 -m pytest -q -m 'not stress'`: **758 passaram, 3 falharam, 1 ignorado, 57 desmarcados**. Falha B+ esperada em `test_access_with_real_btree` por create/L02. Duas falhas em `test_report.py`: parser rejeita os cartões P3, cujos títulos/status já estavam fora de seu formato no HEAD anterior à implementação. Documentação dos cartões e relatório não alterados nesta entrega.
+- Primeira execução sem `-X utf8` também revelou falhas por leitura cp1252 de fontes UTF-8; repetir em modo UTF-8 removeu esses erros sem mudar arquivos de colegas. Usar esse modo nas próximas verificações em Windows.
+- Suíte completa iniciada, mas interrompida sem resumo final; não declarar que o estresse completo passou. Esta entrega parcial não implementa construção, manutenção ou concorrência de iteradores.
+- Revisão independente e simulação de regressão em nós cheios concluídas; `git diff --check` e fronteiras de camada conferidos. Nenhum commit/push.

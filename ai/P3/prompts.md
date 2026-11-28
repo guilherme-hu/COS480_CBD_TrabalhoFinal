@@ -65,3 +65,10 @@
 - **Pedido:** Gabriel quer implementar em etapas quando pedir, permitindo lacunas explícitas; solicitou que o documento atual sirva como especificação prática para o agente implementar, não apenas resumo didático. Considerar todas as decisões aprovadas e deixar pendências visíveis.
 - **Atuação:** reorganizado P3_PLANO_ATUAL.md em escopo/interfaces, bytes, procedimentos/invariantes, dependências, lacunas L01–L05 e entregas/testes por comportamento; estado atualizado.
 - **Limite:** não aprovado contador secundário4 B por inferência; continua proposta. Sem nova decisão técnica, código de execução, alteração no guia antigo, commit ou push.
+
+## 28/11/2026 — Codex — primeira implementação incremental autorizada
+
+- **Pedido:** Gabriel autorizou começar internos, entradas primárias e testes, além de esqueletos cujas superfícies já são conhecidas. Partes pendentes devem indicar a decisão/lacuna e o plano/Notion; não assumir métodos nem resultados ainda não especificados.
+- **Atuação:** quatro módulos P3 nos nomes previstos pela arquitetura; helpers operacionais de formato, chave/RID, descida/fetch isolados; interfaces públicas com NotImplementedError explícito. Testes com bytes literais, limites, duplicatas, páginas reais, cache frio, pins e erros; não inventar asserts para L01–L05.
+- **Rastreabilidade:** código inicial preservado em raw; revisões independentes nos quatro focos do AGENTS; cobertura de internos cheios fortalecida após achado registrado em review.md; plano/estado/estudo atualizados.
+- **Limite:** B+ persistente, carga, consultas públicas e secundário não implementados. Não fechar decisões, enfraquecer teste de colega, simular integração pronta ou commitar/push sem pedido.
